@@ -1,0 +1,190 @@
+---
+# ansible/roles/lxd/tasks/main.yml - Modified to not initialize LXD
+
+# Pre-flight checks to ensure required variables are set
+- name: Check if LXD password is defined in vault
+  set_fact:
+    _password_defined: "{{ lxd_password is defined and lxd_password | length > 0 }}"
+
+# Get LXD password from environment if not set in vault
+- name: Get LXD password from environment if not defined in vault
+  set_fact:
+    lxd_password: "{{ lookup('env', 'LXD_PASSWORD') }}"
+  when: not _password_defined or lxd_password | length == 0
+
+# Verify password is set properly
+- name: Verify LXD password is set properly
+  assert:
+    that: lxd_password is defined and lxd_password | length > 0
+    fail_msg: "LXD password must be defined in vault.yml as 'lxd_password' or in the LXD_PASSWORD environment variable"
+    success_msg: "LXD password is properly set"
+
+# Verify OS is Ubuntu Noble
+- name: Verify OS is Ubuntu Noble
+  assert:
+    that: 
+      - ansible_distribution == 'Ubuntu'
+      - ansible_distribution_release == 'noble'
+    fail_msg: "This role only supports Ubuntu Noble (24.04). Detected: {{ ansible_distribution }} {{ ansible_distribution_release }}"
+    success_msg: "OS is supported: {{ ansible_distribution }} {{ ansible_distribution_release }}"
+
+# Verify sufficient disk space - using a more reliable method
+- name: Check available disk space
+  shell: df -BG / | awk 'NR==2 {gsub("G","",$4); print $4}' 
+  register: available_space
+  changed_when: false
+
+- name: Debug disk space calculation
+  debug:
+    msg: "Available space calculation: {{ available_space.stdout }}"
+
+- name: Verify sufficient disk space
+  assert:
+    that: available_space.stdout | int >= lxd_min_disk_size_gb
+    fail_msg: "Insufficient disk space. Required: {{ lxd_min_disk_size_gb }}GB, Available: {{ available_space.stdout }}GB"
+    success_msg: "Sufficient disk space available: {{ available_space.stdout }}GB"
+
+# Ensure storage driver has a value (using hardcoded default if needed)
+- name: Set storage driver from environment variable or default
+  set_fact:
+    lxd_storage_driver: "zfs"  # Hardcoded default
+
+- name: Debug storage driver
+  debug:
+    msg: "Using storage driver: {{ lxd_storage_driver }}"
+
+# Verify storage driver is supported
+- name: Verify storage driver is supported
+  assert:
+    that: lxd_storage_driver in supported_storage_drivers
+    fail_msg: "Unsupported storage driver: {{ lxd_storage_driver }}. Supported drivers: {{ supported_storage_drivers | join(', ') }}"
+    success_msg: "Storage driver {{ lxd_storage_driver }} is supported"
+
+# Install common packages
+- name: Install common required packages
+  apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: yes
+  register: common_packages_install
+
+- name: Verify common packages installation
+  assert:
+    that: common_packages_install is success
+    fail_msg: "Failed to install common packages"
+    success_msg: "Common packages installed successfully"
+
+# Install storage driver specific packages
+- name: Install required packages for selected storage driver
+  apt:
+    name: "{{ driver_packages[lxd_storage_driver] }}"
+    state: present
+    update_cache: yes
+  register: driver_packages_install
+  when: driver_packages[lxd_storage_driver] | length > 0
+
+- name: Verify driver packages installation
+  assert:
+    that: not (driver_packages[lxd_storage_driver] | length > 0) or driver_packages_install is success
+    fail_msg: "Failed to install packages for {{ lxd_storage_driver }} storage driver"
+    success_msg: "Packages for {{ lxd_storage_driver }} storage driver installed successfully"
+  when: driver_packages[lxd_storage_driver] | length > 0
+
+# Check if ZFS is being used and kernel modules are available
+- name: Check if ZFS kernel module is available
+  command: modprobe zfs
+  register: zfs_module_check
+  changed_when: false
+  failed_when: false
+  when: lxd_storage_driver == 'zfs'
+
+- name: Verify ZFS kernel module
+  assert:
+    that: zfs_module_check.rc == 0
+    fail_msg: "ZFS kernel module is not available. Please ensure the system is rebooted after installing ZFS packages."
+    success_msg: "ZFS kernel module is available"
+  when: lxd_storage_driver == 'zfs'
+
+# Install LXD via snap
+- name: Check if LXD is already installed
+  command: snap list lxd
+  register: lxd_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install LXD snap
+  command: snap install lxd --channel={{ lxd_snap_channel }}
+  register: lxd_install
+  changed_when: "'installed' in lxd_install.stdout"
+  when: lxd_installed.rc != 0
+
+- name: Update LXD snap if already installed
+  command: snap refresh lxd --channel={{ lxd_snap_channel }}
+  register: lxd_refresh
+  changed_when: "'refreshed' in lxd_refresh.stdout"
+  when: lxd_installed.rc == 0
+
+- name: Verify LXD installation
+  assert:
+    that: (lxd_installed.rc == 0) or (lxd_install is defined and lxd_install is success)
+    fail_msg: "LXD installation failed"
+    success_msg: "LXD installed successfully"
+
+# Set proper permissions for the LXD socket if it exists
+- name: Ensure LXD socket has proper permissions if it exists
+  file:
+    path: /var/snap/lxd/common/lxd/unix.socket
+    owner: root
+    group: lxd
+    mode: '0660'
+  failed_when: false
+  when: ansible_check_mode is not defined or not ansible_check_mode
+
+# Ensure the correct user is in the lxd group
+- name: Get the actual username when running with sudo
+  shell: "echo ${SUDO_USER:-$(who am i | awk '{print $1}')}"
+  register: actual_user
+  changed_when: false
+
+- name: Add actual user to lxd group
+  user:
+    name: "{{ actual_user.stdout }}"
+    groups: lxd
+    append: yes
+  register: user_added_to_group
+  when: actual_user.stdout != "" and actual_user.stdout != "root"
+
+- name: Display group membership notice
+  debug:
+    msg: "User {{ actual_user.stdout }} has been added to the lxd group. You may need to log out and back in for this to take effect."
+  when: user_added_to_group.changed
+
+# Configure firewall for LXD if UFW is installed
+- name: Check if UFW is installed
+  command: which ufw
+  register: ufw_check
+  changed_when: false
+  failed_when: false
+
+- name: Configure firewall for LXD API
+  ufw:
+    rule: allow
+    port: 8443
+    proto: tcp
+  when: ufw_check.rc == 0
+  register: firewall_config
+
+- name: Verify firewall configuration
+  assert:
+    that: not (ufw_check.rc == 0) or firewall_config is success
+    fail_msg: "Failed to configure firewall for LXD API"
+    success_msg: "Firewall configured for LXD API"
+  when: ufw_check.rc == 0
+
+# Display final status
+- name: Display LXD installation status
+  debug:
+    msg: |
+      LXD has been successfully installed.
+      The playbook will initialize LXD in the next steps.
+      Storage driver prepared: {{ lxd_storage_driver }}

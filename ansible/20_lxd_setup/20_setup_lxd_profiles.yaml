@@ -1,0 +1,145 @@
+---
+# 20_setup_lxd_profiles.yaml - Create LXD profiles for VM configuration
+# Run with: ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
+
+- name: Create LXD profiles for VM configuration
+  hosts: baremetal
+  become: true
+  gather_facts: true
+  
+  tasks:
+    # Create profiles on all baremetal hosts
+    - name: Create and configure LXD profiles
+      block:
+        # Check LXD status
+        - name: Verify LXD is running
+          ansible.builtin.command: snap services lxd
+          register: lxd_status
+          changed_when: false
+        
+        - name: Display LXD status
+          ansible.builtin.debug:
+            msg: "LXD status: {{ lxd_status.stdout }}"
+        
+        # Create vm-networks profile
+        - name: Create VM networks profile
+          ansible.builtin.command: lxc profile create vm-networks
+          register: profile_create
+          changed_when: profile_create.rc == 0
+          failed_when: profile_create.rc != 0 and "already exists" not in profile_create.stderr
+        
+        - name: Configure VM networks profile
+          ansible.builtin.copy:
+            dest: /tmp/vm-networks.yaml
+            content: |
+              name: vm-networks
+              description: "Network configuration for VMs"
+              config:
+                security.nesting: "true"
+              devices:
+                eth0:
+                  name: eth0
+                  nictype: bridged
+                  parent: lxdbr0
+                  type: nic
+                eth1:
+                  name: eth1
+                  nictype: bridged
+                  parent: br0
+                  type: nic
+            mode: '0644'
+            
+        - name: Apply VM networks profile
+          ansible.builtin.shell: cat /tmp/vm-networks.yaml | lxc profile edit vm-networks
+          register: profile_edit
+          changed_when: profile_edit.rc == 0
+          
+        # Create vm-resources profile
+        - name: Create VM resources profile
+          ansible.builtin.command: lxc profile create vm-resources
+          register: resource_profile_create
+          changed_when: resource_profile_create.rc == 0
+          failed_when: resource_profile_create.rc != 0 and "already exists" not in resource_profile_create.stderr
+        
+        - name: Configure VM resources profile
+          ansible.builtin.copy:
+            dest: /tmp/vm-resources.yaml
+            content: |
+              name: vm-resources
+              description: "Resource limits for VMs"
+              config:
+                limits.cpu: "4"
+                limits.memory: "4GB"
+                limits.memory.enforce: "hard"
+                security.secureboot: "false"
+                boot.autostart: "true"
+              devices: {}
+            mode: '0644'
+            
+        - name: Apply VM resources profile
+          ansible.builtin.shell: cat /tmp/vm-resources.yaml | lxc profile edit vm-resources
+          register: resource_profile_edit
+          changed_when: resource_profile_edit.rc == 0
+          
+        # Create vm-gpu profile
+        - name: Create VM GPU profile
+          ansible.builtin.command: lxc profile create vm-gpu
+          register: gpu_profile_create
+          changed_when: gpu_profile_create.rc == 0
+          failed_when: gpu_profile_create.rc != 0 and "already exists" not in gpu_profile_create.stderr
+        
+        - name: Configure VM GPU profile
+          ansible.builtin.copy:
+            dest: /tmp/vm-gpu.yaml
+            content: |
+              name: vm-gpu
+              description: "GPU passthrough for VMs"
+              config:
+                nvidia.driver.capabilities: "all"
+                nvidia.runtime: "true"
+              devices: {}
+            mode: '0644'
+            
+        - name: Apply VM GPU profile
+          ansible.builtin.shell: cat /tmp/vm-gpu.yaml | lxc profile edit vm-gpu
+          register: gpu_profile_edit
+          changed_when: gpu_profile_edit.rc == 0
+          
+        # Clean up temporary files
+        - name: Clean up temporary files
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/vm-networks.yaml
+            - /tmp/vm-resources.yaml
+            - /tmp/vm-gpu.yaml
+    
+    # Verify profiles on all hosts
+    - name: List LXD profiles
+      ansible.builtin.command: lxc profile list
+      register: profile_list
+      changed_when: false
+      
+    - name: Display profiles
+      ansible.builtin.debug:
+        msg: "LXD profiles on {{ inventory_hostname }}: {{ profile_list.stdout }}"
+    
+    # Display completion message
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          ✅ LXD Profiles Created Successfully
+          ════════════════════════════════════════════════════════════════════════
+          
+          Created profiles:
+            - vm-networks: Network configuration for VMs
+            - vm-resources: Resource limits for VMs
+            - vm-gpu: GPU passthrough configuration
+          
+          NEXT STEPS:
+            Run the VM creation playbook:
+            $ ansible-playbook -i inventory/inventory.yaml ansible/vm_deployment/20_create_microk8s_vms.yaml
+          
+          ════════════════════════════════════════════════════════════════════════

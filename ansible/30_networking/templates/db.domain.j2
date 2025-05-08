@@ -1,0 +1,34 @@
+$TTL    604800
+@       IN      SOA     dns.{{ domain_name }}. admin.{{ domain_name }}. (
+                         {{ ansible_date_time.epoch }}  ; Serial
+                         604800     ; Refresh
+                         86400      ; Retry
+                         2419200    ; Expire
+                         604800 )   ; Negative Cache TTL
+
+; Name servers
+@       IN      NS      dns.{{ domain_name }}.
+
+; A records for main services
+@               IN      A       {{ hostvars['tkc']['zerotier_ip'] }}
+dns             IN      A       {{ hostvars['dns1']['zerotier_ip'] }}
+
+; Controller and worker nodes
+tkc             IN      A       {{ hostvars['tkc']['zerotier_ip'] }}
+{% if 'tkw1' in hostvars %}
+tkw1            IN      A       {{ hostvars['tkw1']['zerotier_ip'] }}
+{% endif %}
+{% if 'tkw2' in hostvars %}
+tkw2            IN      A       {{ hostvars['tkw2']['zerotier_ip'] }}
+{% endif %}
+
+; Baremetal hosts
+{% if 'bcn1' in hostvars %}
+bcn1            IN      A       {{ hostvars['bcn1']['zerotier_ip'] }}
+{% endif %}
+{% if 'bcn2' in hostvars %}
+bcn2            IN      A       {{ hostvars['bcn2']['zerotier_ip'] }}
+{% endif %}
+
+; Wildcard record for all services
+*               IN      A       {{ ingress_ip }}

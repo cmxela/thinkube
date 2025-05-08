@@ -1,0 +1,22 @@
+---
+# ansible/roles/lxd/meta/main.yml
+galaxy_info:
+  role_name: lxd
+  author: Homelab Deployment Team
+  description: Installs and configures LXD with optimal storage settings for MicroCloud
+  license: MIT
+  min_ansible_version: 2.9
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+  
+  galaxy_tags:
+    - lxd
+    - containers
+    - virtualization
+    - zfs
+    - homelab
+    - microcloud
+
+dependencies: []

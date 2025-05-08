@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Add route for Kubernetes API server subnet via ZeroTier interface
+# This script runs during network interface startup to ensure connectivity
+
+# Get ZeroTier interface name if not provided
+ZT_IF="{{ zt_interface }}"
+if [ -z "$ZT_IF" ]; then
+  ZT_IF=$(ip addr | grep zt | grep -v vir | head -n1 | awk '{print $2}' | sed 's/://')
+fi
+
+if [ -n "$ZT_IF" ]; then
+  # Add Kubernetes API subnet route via ZeroTier
+  echo "Adding Kubernetes API route: {{ k8s_api_subnet }} via $ZT_IF"
+  ip route replace {{ k8s_api_subnet }} dev $ZT_IF
+else
+  echo "ERROR: ZeroTier interface not found. Kubernetes API routing not configured."
+  exit 1
+fi

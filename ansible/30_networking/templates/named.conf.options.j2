@@ -1,0 +1,45 @@
+options {
+    directory "/var/cache/bind";
+    
+    // Configure recursion
+    recursion yes;
+    allow-recursion { any; };
+    
+    // Listen on all interfaces
+    listen-on {
+        {% for interface in dns_interfaces %}
+        {{ interface }};
+        {% endfor %}
+    };
+    
+    // Forward DNS queries for external domains to these servers
+    forwarders {
+        {% for forwarder in dns_forwarders %}
+        {{ forwarder }};
+        {% endfor %}
+    };
+    
+    // DNSSEC validation
+    dnssec-validation auto;
+    
+    // Performance tuning
+    max-cache-size 256M;
+    prefetch 2;
+    
+    // Security settings
+    allow-transfer { none; };
+    version "DNS Server";
+};
+
+// Main logging configuration
+logging {
+    channel default_log {
+        file "/var/log/named/default.log" versions 3 size 5m;
+        severity info;
+        print-time yes;
+        print-severity yes;
+        print-category yes;
+    };
+    category default { default_log; };
+    category queries { default_log; };
+};

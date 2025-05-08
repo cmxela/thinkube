@@ -1,0 +1,71 @@
+---
+# 20_setup_env.yaml - Set up environment variables from inventory
+# Run with: ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/20_setup_env.yaml
+
+- name: Setup Environment Variables from Inventory
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Check if .env file already exists
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.env"
+      register: env_file
+
+    - name: Backup existing .env file if it exists
+      ansible.builtin.copy:
+        src: "{{ lookup('env', 'HOME') }}/.env"
+        dest: "{{ lookup('env', 'HOME') }}/.env.bak"
+        mode: '0600'
+        remote_src: yes
+      when: env_file.stat.exists
+      
+    - name: Read existing .env file if it exists
+      ansible.builtin.slurp:
+        src: "{{ lookup('env', 'HOME') }}/.env"
+      register: existing_env
+      when: env_file.stat.exists
+      
+    - name: Create a temporary file with existing environment variables
+      ansible.builtin.copy:
+        content: "{{ existing_env['content'] | b64decode }}"
+        dest: "/tmp/env_parse_temp"
+        mode: '0600'
+      when: env_file.stat.exists and existing_env is defined
+
+    - name: Extract variable names from env file
+      ansible.builtin.shell: |
+        grep -v "^#" /tmp/env_parse_temp | grep "=" | sed 's/=.*//' | tr -d ' '
+      register: var_names
+      when: env_file.stat.exists and existing_env is defined
+      
+    - name: Create a dictionary with existing variables
+      ansible.builtin.set_fact:
+        existing_env_vars: "{{ existing_env_vars | default({}) | combine({ item: lookup('env', item) }) }}"
+      with_items: "{{ var_names.stdout_lines | default([]) }}"
+      when: env_file.stat.exists and existing_env is defined and var_names.stdout_lines | default([]) | length > 0
+      
+    # Removed redundant dictionary initialization and processing steps
+      
+    - name: Create .env file while preserving existing variables
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/env_file.j2"
+        dest: "{{ lookup('env', 'HOME') }}/.env"
+        mode: '0600'
+      vars:
+        existing_variables: "{{ existing_env_vars | default({}) }}"
+      
+    - name: Display environment setup message
+      ansible.builtin.debug:
+        msg: "Environment variables have been set up in ~/.env"
+        
+    - name: Remind to source the environment file
+      ansible.builtin.debug:
+        msg: "Remember to run 'source ~/.env' to load these variables in your current shell"
+        
+    - name: Clean up temporary files
+      ansible.builtin.file:
+        path: "/tmp/env_parse_temp"
+        state: absent
+      when: env_file.stat.exists and existing_env is defined

@@ -1,0 +1,19 @@
+---
+# ansible/roles/lxd/handlers/main.yml
+
+- name: Restart LXD
+  systemd:
+    name: snap.lxd.daemon
+    state: restarted
+  listen: "restart lxd"
+
+- name: Restart ZFS service
+  systemd:
+    name: zfs-mount
+    state: restarted
+  listen: "restart zfs"
+  when: lxd_storage_driver == 'zfs'
+
+- name: Update initramfs
+  command: update-initramfs -u
+  listen: "update initramfs"

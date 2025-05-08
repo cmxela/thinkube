@@ -1,0 +1,377 @@
+---
+# 30_setup_zerotier.yaml - Configure ZeroTier networking for MicroK8s VMs
+# Run with: ansible-playbook -i inventory/inventory.yaml ansible/vm_deployment/30_setup_zerotier.yaml
+
+- name: Configure ZeroTier Networking for MicroK8s VMs
+  hosts: baremetal
+  become: false
+  gather_facts: true
+  
+  vars:
+    zerotier_network_id: "{{ lookup('env', 'ZEROTIER_NETWORK_ID') }}"
+    fixed_dns_ip: "192.168.191.1"
+  
+  tasks:
+    # Phase 1: Verify ZeroTier network ID is available
+    - name: Verify ZeroTier network ID
+      ansible.builtin.fail:
+        msg: "ZeroTier network ID not found. Please define zerotier_network_id in inventory variables or set ZEROTIER_NETWORK_ID environment variable."
+      when: zerotier_network_id == ""
+    
+    - name: Display ZeroTier network ID
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════
+          ZeroTier Network Configuration
+          ════════════════════════════════════════════════════════
+          
+          Using ZeroTier Network ID: {{ zerotier_network_id }}
+          Expected ZeroTier Subnet: {{ zerotier_cidr | default('auto-assigned') }}
+          
+          ════════════════════════════════════════════════════════
+    
+    # Phase 2: Install ZeroTier on VMs using direct commands
+    - name: Install and Configure ZeroTier on VMs
+      block:
+        # First check if VMs exist
+        - name: Check if VMs exist
+          ansible.builtin.command: >
+            lxc list {{ item }} --format json
+          register: vm_exists
+          changed_when: false
+          failed_when: false
+          loop: "{{ groups['microk8s_control_plane'] + groups['microk8s_workers'] }}"
+          when: inventory_hostname == hostvars[item]['parent_host'] | default('none')
+          become: true
+          
+        # Check if ZeroTier is already installed (only for VMs that exist)
+        - name: Check if ZeroTier is already installed
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- which zerotier-cli
+          register: zerotier_check
+          changed_when: false
+          failed_when: false
+          loop: "{{ vm_exists.results | default([]) }}"
+          when: 
+            - vm_exists is defined and vm_exists.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.stdout != '[]' and item.stdout != ''
+          become: true
+        
+        # Install required packages for ZeroTier
+        - name: Install required packages for ZeroTier
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- bash -c "apt-get update && apt-get install -y curl gnupg apt-transport-https"
+          register: pkg_install
+          loop: "{{ zerotier_check.results | default([]) }}"
+          when: 
+            - zerotier_check is defined and zerotier_check.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.rc is defined and item.rc != 0
+            - '"Error: Instance not found" not in item.stderr'
+          become: true
+          
+        # Add ZeroTier repository key
+        - name: Add ZeroTier repository key
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- bash -c "curl -s 'https://raw.githubusercontent.com/zerotier/ZeroTierOne/master/doc/contact%40zerotier.com.gpg' | gpg --dearmor > /usr/share/keyrings/zerotier.gpg"
+          register: key_add
+          loop: "{{ zerotier_check.results | default([]) }}"
+          when: 
+            - zerotier_check is defined and zerotier_check.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.rc is defined and item.rc != 0
+            - '"Error: Instance not found" not in item.stderr'
+          become: true
+          
+        # Add ZeroTier repository
+        - name: Add ZeroTier repository
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- bash -c "echo 'deb [signed-by=/usr/share/keyrings/zerotier.gpg] http://download.zerotier.com/debian/jammy jammy main' > /etc/apt/sources.list.d/zerotier.list"
+          register: repo_add
+          loop: "{{ zerotier_check.results | default([]) }}"
+          when: 
+            - zerotier_check is defined and zerotier_check.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.rc is defined and item.rc != 0
+            - '"Error: Instance not found" not in item.stderr'
+          become: true
+          
+        # Install ZeroTier package
+        - name: Install ZeroTier package
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- bash -c "apt-get update && apt-get install -y zerotier-one"
+          register: zerotier_install
+          loop: "{{ zerotier_check.results | default([]) }}"
+          when: 
+            - zerotier_check is defined and zerotier_check.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.rc is defined and item.rc != 0
+            - '"Error: Instance not found" not in item.stderr'
+          become: true
+          
+        # Start and enable ZeroTier service
+        - name: Start and enable ZeroTier service
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- systemctl enable --now zerotier-one
+          register: service_start
+          loop: "{{ zerotier_check.results | default([]) }}"
+          when: 
+            - zerotier_check is defined and zerotier_check.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.rc is defined and item.rc != 0
+            - '"Error: Instance not found" not in item.stderr'
+          become: true
+      tags: install_zerotier
+      
+    # Phase 3: Join ZeroTier network
+    - name: Join ZeroTier Network
+      block:
+        # Wait for ZeroTier service to start
+        - name: Wait for ZeroTier service to start
+          ansible.builtin.pause:
+            seconds: 5
+          when: zerotier_install is defined and zerotier_install is changed
+    
+        # Get ZeroTier node ID
+        - name: Get ZeroTier node ID
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- zerotier-cli info
+          register: zerotier_info
+          changed_when: false
+          failed_when: false
+          loop: "{{ vm_exists.results | default([]) }}"
+          when: 
+            - vm_exists is defined and vm_exists.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.stdout != '[]' and item.stdout != ''
+          become: true
+        
+        # Join ZeroTier network
+        - name: Join ZeroTier network
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- zerotier-cli join {{ zerotier_network_id }}
+          register: join_network
+          loop: "{{ zerotier_info.results | default([]) }}"
+          when: 
+            - zerotier_info is defined and zerotier_info.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - '"Error: Instance not found" not in item.stderr'
+            - item.rc is defined and item.rc == 0
+          become: true
+          failed_when: false  # Some nodes might already be in the network
+          
+        # Display ZeroTier setup results
+        - name: Display ZeroTier setup results
+          ansible.builtin.debug:
+            msg: |
+              ════════════════════════════════════════════════════════════════════════
+              ZEROTIER SETUP RESULTS FOR {{ item.item }}
+              ════════════════════════════════════════════════════════════════════════
+              
+              STATUS: {% if item.rc is defined and item.rc == 0 %}✅ SUCCESS{% else %}❌ ERROR{% if item.rc is defined %} (exit code: {{ item.rc }}){% endif %}{% endif %}
+              
+              STDOUT:
+              {{ item.stdout_lines | default(['No output']) | join('\n') }}
+              
+              {% if item.stderr is defined and item.stderr and item.stderr | length > 0 %}
+              STDERR:
+              {{ item.stderr_lines | default(['No error output']) | join('\n') }}
+              {% endif %}
+              
+              ════════════════════════════════════════════════════════════════════════
+          loop: "{{ join_network.results | default([]) }}"
+          when: 
+            - join_network is defined and join_network.results is defined
+            - item.item is defined
+      tags: join_network
+    
+    # Phase 4: Wait for ZeroTier to fully initialize
+    - name: Wait for ZeroTier to initialize
+      ansible.builtin.pause:
+        seconds: 30
+      when: zerotier_install is defined and zerotier_install is changed
+    
+    # Phase 5: Verify ZeroTier connectivity
+    - name: Verify ZeroTier connectivity
+      block:
+        # Check ZeroTier status in VMs
+        - name: Check ZeroTier status in VMs
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- zerotier-cli info
+          register: zerotier_info
+          failed_when: false
+          loop: "{{ vm_exists.results | default([]) }}"
+          when: 
+            - vm_exists is defined and vm_exists.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.stdout != '[]' and item.stdout != ''
+          become: true
+          
+        # Display ZeroTier info
+        - name: Display ZeroTier info
+          ansible.builtin.debug:
+            msg: |
+              ZeroTier status for {{ item.item }}:
+              {{ item.stdout_lines | join('\n') }}
+          loop: "{{ zerotier_info.results | default([]) }}"
+          when: 
+            - zerotier_info is defined and zerotier_info.results is defined
+            - item.stderr is defined
+            - '"Error: Instance not found" not in item.stderr'
+          
+        # Check ZeroTier networks
+        - name: Check ZeroTier networks
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- zerotier-cli listnetworks
+          register: zerotier_networks
+          failed_when: false
+          loop: "{{ vm_exists.results | default([]) }}"
+          when: 
+            - vm_exists is defined and vm_exists.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.stdout != '[]' and item.stdout != ''
+          become: true
+          
+        # Display ZeroTier networks
+        - name: Display ZeroTier networks
+          ansible.builtin.debug:
+            msg: |
+              ZeroTier networks for {{ item.item }}:
+              {{ item.stdout_lines | join('\n') }}
+          loop: "{{ zerotier_networks.results | default([]) }}"
+          when: 
+            - zerotier_networks is defined and zerotier_networks.results is defined
+            - item.stderr is defined
+            - '"Error: Instance not found" not in item.stderr'
+      tags: verify_zerotier
+    
+    # Phase 6: Test connectivity between VMs using ZeroTier
+    - name: Test ZeroTier connectivity between nodes
+      block:
+        # Get ZeroTier IPs from inventory
+        - name: Extract VM ZeroTier IPs
+          ansible.builtin.set_fact:
+            zerotier_ips: "{{ zerotier_ips | default([]) + [{'host': item, 'ip': hostvars[item]['zerotier_ip']}] }}"
+          loop: "{{ (groups['microk8s_control_plane'] + groups['microk8s_workers']) | default([]) }}"
+          when: hostvars[item]['zerotier_ip'] is defined
+          run_once: true
+          
+        # Display VM ZeroTier IPs
+        - name: Display VM ZeroTier IPs
+          ansible.builtin.debug:
+            msg: |
+              ZeroTier IPs for VMs:
+              {% for vm in zerotier_ips | default([]) %}
+              - {{ vm.host }}: {{ vm.ip }}
+              {% endfor %}
+          run_once: true
+          
+        # Test connectivity to each VM from each VM
+        - name: Test connectivity between VMs
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- ping -c 3 {{ target.ip }}
+          register: ping_test
+          failed_when: false
+          loop: "{{ vm_exists.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when: 
+            - vm_exists is defined and vm_exists.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.stdout != '[]' and item.stdout != ''
+            - zerotier_ips is defined and zerotier_ips | length > 0
+            - groups['microk8s_control_plane'] is defined and groups['microk8s_control_plane'] | length > 0
+          vars:
+            target: "{{ zerotier_ips | selectattr('host', 'equalto', groups['microk8s_control_plane'][0]) | first | default({'ip': '127.0.0.1'}) }}"
+          become: true
+          
+        # Display ping test results
+        - name: Display ping test results
+          ansible.builtin.debug:
+            msg: |
+              Ping from {{ item.item }} to {{ target.host }} ({{ target.ip }}):
+              {% if item.rc == 0 %}
+              ✅ Success
+              {% else %}
+              ❌ Failed
+              {% endif %}
+              {{ item.stdout_lines | default([]) | join('\n') }}
+          loop: "{{ ping_test.results | default([]) }}"
+          when: 
+            - ping_test is defined and ping_test.results is defined
+            - item.stderr is defined
+            - '"Error: Instance not found" not in item.stderr'
+          vars:
+            target: "{{ zerotier_ips | selectattr('host', 'equalto', groups['microk8s_control_plane'][0]) | first | default({'host': 'unknown', 'ip': '127.0.0.1'}) }}"
+          
+        # Test connectivity to DNS1
+        - name: Test connectivity to DNS server
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- ping -c 3 {{ fixed_dns_ip }}
+          register: dns_ping_test
+          failed_when: false
+          loop: "{{ vm_exists.results | default([]) }}"
+          when: 
+            - vm_exists is defined and vm_exists.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.stdout != '[]' and item.stdout != ''
+          become: true
+          
+        # Display DNS ping test results
+        - name: Display DNS ping test results
+          ansible.builtin.debug:
+            msg: |
+              Ping from {{ item.item }} to DNS server ({{ fixed_dns_ip }}):
+              {% if item.rc == 0 %}
+              ✅ Success
+              {% else %}
+              ❌ Failed
+              {% endif %}
+              {{ item.stdout_lines | default([]) | join('\n') }}
+          loop: "{{ dns_ping_test.results | default([]) }}"
+          when: 
+            - dns_ping_test is defined and dns_ping_test.results is defined
+            - item.stderr is defined
+            - '"Error: Instance not found" not in item.stderr'
+      tags: test_connectivity
+    
+    # Phase 7: Clean up temporary files
+    - name: Clean up temporary files
+      block:
+        # Clean up ZeroTier temp files if any
+        - name: Clean up temporary files
+          ansible.builtin.command: >
+            lxc exec {{ item.item }} -- rm -f /tmp/zerotier_*
+          loop: "{{ vm_exists.results | default([]) }}"
+          when: 
+            - vm_exists is defined and vm_exists.results is defined
+            - inventory_hostname == hostvars[item.item]['parent_host'] | default('none')
+            - item.stdout != '[]' and item.stdout != ''
+          become: true
+          changed_when: false
+          failed_when: false
+      tags: cleanup
+    
+    # Phase 8: Display completion message
+    - name: Display ZeroTier setup completion message
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          ✅ ZeroTier Configuration Completed
+          ════════════════════════════════════════════════════════════════════════
+          
+          All VMs have been configured with ZeroTier for overlay networking.
+          Network ID: {{ zerotier_network_id }}
+          
+          IMPORTANT:
+          1. Verify all nodes are authorized in ZeroTier Central
+          2. Confirm nodes have received their expected IP addresses
+          3. Check that nodes can ping each other using ZeroTier IPs
+          
+          NEXT STEPS:
+            Run the MicroK8s installation playbook:
+            ansible-playbook -i inventory/inventory.yaml ansible/vm_deployment/40_setup_microk8s.yaml
+          
+          ════════════════════════════════════════════════════════════════════════
+      run_once: true

@@ -1,0 +1,128 @@
+#!/bin/bash
+# Network diagnostics script for MicroK8s VMs
+# This script tests various network connectivity aspects
+
+# Don't exit on errors, we want to collect all diagnostics
+set +e
+
+# Function to log with timestamp
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+log "Starting network diagnostics for {{ inventory_hostname }}"
+
+# Display system information 
+log "System information:"
+uname -a
+echo ""
+
+# Display interface information
+log "Network interfaces:"
+ip -c addr show
+echo ""
+
+# Display routing table
+log "Routing table:"
+ip -c route
+echo ""
+
+# Attempt to fix DNS resolution if needed
+log "Ensuring correct DNS configuration:"
+if ! grep -q "nameserver 8.8.8.8" /etc/resolv.conf; then
+    echo "Fixing DNS resolution by updating /etc/resolv.conf..."
+    echo "nameserver 8.8.8.8" > /tmp/resolv.conf.new
+    echo "nameserver 8.8.4.4" >> /tmp/resolv.conf.new
+    cat /tmp/resolv.conf.new > /etc/resolv.conf
+    rm /tmp/resolv.conf.new
+    echo "DNS configuration updated."
+else
+    echo "DNS configuration looks good."
+fi
+echo ""
+
+# Test DNS resolution
+log "Testing DNS resolution:"
+echo "Resolving google.com:"
+host google.com || echo "DNS resolution failed"
+echo ""
+
+echo "Resolving thinkube.com:"
+host thinkube.com || echo "DNS resolution failed"
+echo ""
+
+# Test internet connectivity
+log "Testing internet connectivity:"
+echo "Pinging 8.8.8.8:"
+ping -c 4 8.8.8.8 || echo "Ping to 8.8.8.8 failed"
+echo ""
+
+echo "Pinging google.com:"
+ping -c 4 google.com || echo "Ping to google.com failed"
+echo ""
+
+# Test internal network connectivity
+log "Testing internal network connectivity:"
+echo "Pinging lxdbr0 gateway (192.168.100.1):"
+ping -c 4 192.168.100.1 || echo "Ping to lxdbr0 gateway failed"
+echo ""
+
+# Test local DNS server connectivity
+log "Testing local DNS server connectivity:"
+echo "Pinging {{ fixed_dns_ip }}:"
+ping -c 4 {{ fixed_dns_ip }} || echo "Ping to local DNS server failed"
+echo ""
+
+# Display resolv.conf
+log "Current resolv.conf content:"
+cat /etc/resolv.conf
+echo ""
+
+# Display netplan config
+log "Current netplan configuration:"
+cat /etc/netplan/50-cloud-init.yaml
+echo ""
+
+# Display systemd-resolved status
+log "Systemd-resolved status:"
+systemctl status systemd-resolved || echo "systemd-resolved service status check failed"
+echo ""
+
+# Display iptables NAT rules 
+log "Iptables NAT rules:"
+iptables -t nat -L -v || echo "iptables command failed"
+echo ""
+
+# Test ZeroTier connectivity
+log "ZeroTier status:"
+if command -v zerotier-cli &> /dev/null; then
+    zerotier-cli info
+    zerotier-cli listnetworks
+else
+    echo "ZeroTier not installed"
+fi
+echo ""
+
+# Display a summary of network checks
+log "NETWORK DIAGNOSTICS SUMMARY:"
+echo "============================================================"
+if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+    echo "✅ Internet connectivity: WORKING"
+else
+    echo "❌ Internet connectivity: FAILED"
+fi
+
+if ping -c 1 -W 2 192.168.100.1 >/dev/null 2>&1; then
+    echo "✅ Internal network (lxdbr0): WORKING"
+else  
+    echo "❌ Internal network (lxdbr0): FAILED"
+fi
+
+if host google.com >/dev/null 2>&1; then
+    echo "✅ DNS resolution: WORKING"
+else
+    echo "❌ DNS resolution: FAILED"
+fi
+echo "============================================================"
+
+log "Network diagnostics completed for {{ inventory_hostname }}"

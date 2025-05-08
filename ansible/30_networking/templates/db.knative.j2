@@ -1,0 +1,13 @@
+$TTL    604800
+@       IN      SOA     dns.{{ domain_name }}. admin.{{ domain_name }}. (
+                         {{ ansible_date_time.epoch }}  ; Serial
+                         604800     ; Refresh
+                         86400      ; Retry
+                         2419200    ; Expire
+                         604800 )   ; Negative Cache TTL
+
+; Name servers
+@       IN      NS      dns.{{ domain_name }}.
+
+; Wildcard record for all Knative services
+*       IN      A       {{ knative_ingress_ip }}

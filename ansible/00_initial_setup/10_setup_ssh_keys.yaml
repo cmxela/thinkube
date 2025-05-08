@@ -1,0 +1,125 @@
+---
+# 10_setup_ssh_keys.yaml - Establishes bidirectional SSH access between all baremetal servers
+# Run with: ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/10_setup_ssh_keys.yaml --ask-pass --ask-become-pass
+
+- name: Setup SSH Keys for Baremetal Servers
+  hosts: baremetal
+  gather_facts: true
+  become: false
+  vars:
+    ssh_key_name: "thinkube_cluster_key"
+    ssh_key_type: "ed25519"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+  
+  handlers:
+    - name: Restart SSH service
+      become: true
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+
+  tasks:
+    - name: Ensure openssh-server is installed
+      become: true
+      ansible.builtin.apt:
+        name: openssh-server
+        state: present
+        update_cache: yes
+      
+    - name: Ensure SSH service is running
+      become: true
+      ansible.builtin.service:
+        name: ssh
+        state: started
+        enabled: true
+        
+    - name: Configure SSH to allow password authentication
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication yes'
+        state: present
+      notify: Restart SSH service
+
+    - name: Check for cloud-init SSH config
+      become: true
+      ansible.builtin.stat:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+      register: cloud_init_conf
+      
+    - name: Configure SSH cloud-init to allow password authentication
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication yes'
+        state: present
+      when: cloud_init_conf.stat.exists
+      notify: Restart SSH service
+        
+    - name: Force SSH configuration to take effect
+      become: true 
+      ansible.builtin.meta: flush_handlers
+        
+    - name: Ensure .ssh directory exists
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.ssh"
+        state: directory
+        mode: '0700'
+
+    - name: Generate SSH key for each host
+      ansible.builtin.shell: |
+        if [ ! -f {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} ]; then
+          ssh-keygen -t {{ ssh_key_type }} -f {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} -C "thinkube_cluster_{{ ansible_hostname }}" -N ""
+          echo "Key generated"
+        else
+          echo "Key already exists"
+        fi
+      register: ssh_key_result
+      changed_when: "'Key generated' in ssh_key_result.stdout"
+
+    - name: Ensure correct permissions on SSH keys
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: file
+        mode: "{{ '0600' if item.endswith('/thinkube_cluster_key') else '0644' }}"
+      with_items:
+        - "{{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}"
+        - "{{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}.pub"
+
+    - name: Get public key content
+      ansible.builtin.command: cat {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}.pub
+      register: pubkey_content
+      changed_when: false
+
+    # Simple approach - add all public keys to all hosts directly
+    - name: Add public keys to authorized_keys from all hosts
+      ansible.builtin.authorized_key:
+        user: "{{ ansible_user_id }}"
+        key: "{{ hostvars[item]['pubkey_content']['stdout'] }}"
+        state: present
+      loop: "{{ groups['baremetal'] }}"
+      when: hostvars[item]['pubkey_content'] is defined
+
+    - name: Set up SSH config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/ssh_config.j2"
+        dest: "{{ ansible_user_dir }}/.ssh/config"
+        mode: '0600'
+        backup: yes
+
+    - name: Test SSH connection to other hosts
+      ansible.builtin.shell: |
+        if [ "{{ item }}" != "{{ inventory_hostname }}" ]; then
+          echo "Testing SSH connection to {{ item }} at IP {{ hostvars[item]['ansible_host'] }}..."
+          ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ hostvars[item]['ansible_host'] }} "echo Successfully connected from {{ inventory_hostname }} to {{ item }}"
+          exit $?
+        else
+          echo "Skipping test to self ({{ inventory_hostname }})"
+          exit 0
+        fi
+      register: ssh_test
+      changed_when: false
+      failed_when: "ssh_test.rc != 0"
+      loop: "{{ groups['baremetal'] }}"

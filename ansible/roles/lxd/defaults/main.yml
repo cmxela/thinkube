@@ -1,0 +1,22 @@
+---
+# ansible/roles/lxd/defaults/main.yml
+
+# Default values that can be overridden - explicitly set to avoid empty values
+lxd_storage_pool: "{{ lookup('env', 'LXD_STORAGE_POOL') | default('default', true) }}"
+lxd_storage_driver: "{{ lookup('env', 'LXD_STORAGE_DRIVER') | default('zfs', true) }}"
+lxd_address: "[::]:8443"  # Default LXD API address
+lxd_network_name: "lxdbr0"  # Default bridge name
+lxd_network_ipv4_address: "auto"  # Auto-configure IPv4
+lxd_network_ipv6_address: "none"  # Disable IPv6 by default
+
+# Storage sizing - use environment variables if defined, otherwise defaults
+lxd_ceph_pool_size: "{{ lookup('env', 'LXD_CEPH_POOL_SIZE') | default('500GB') }}"
+lxd_zfs_pool_size: "{{ lookup('env', 'LXD_ZFS_POOL_SIZE') | default('80%') }}"
+
+# Host-specific storage settings - will be used in MicroCloud setup
+lxd_bcn1_local_storage: "{{ lookup('env', 'LXD_BCN1_LOCAL_STORAGE') | default('300GB', true) }}"
+lxd_bcn2_local_storage: "{{ lookup('env', 'LXD_BCN2_LOCAL_STORAGE') | default('750GB', true) }}"
+
+# Validation settings
+lxd_min_disk_size_gb: 50  # Minimum disk size in GB required for installation
+lxd_validation_wait_time: 5  # Seconds to wait for validation checks

@@ -1,0 +1,36 @@
+---
+# ansible/roles/lxd/vars/main.yml
+
+# OS-specific variables - Only supporting Ubuntu Noble (24.04)
+# These variables should not be overridden by users
+
+# Supported storage drivers by OS
+supported_storage_drivers:
+  - zfs
+  - dir
+  - btrfs
+  - lvm
+
+# Packages required for each storage driver
+driver_packages:
+  zfs:
+    - zfsutils-linux
+  btrfs:
+    - btrfs-progs
+  lvm:
+    - lvm2
+  dir: []  # No additional packages needed for directory backend
+
+# Common packages required regardless of storage driver
+common_packages:
+  - snapd
+  - curl
+  - gnupg
+  - jq
+  - python3-pip
+
+# LXD snap channels
+lxd_snap_channel: "latest/stable"
+
+# Validation timeout settings
+setup_validation_timeout: 30  # seconds to wait for socket to become available

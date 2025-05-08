@@ -1,0 +1,19 @@
+//
+// Thinkube DNS zone configuration
+//
+
+// Main domain zone
+zone "{{ domain_name }}" {
+    type master;
+    file "/etc/bind/zones/db.{{ domain_name }}";
+    allow-query { any; };
+    allow-update { none; };
+};
+
+// Knative subdomain zone
+zone "kn.{{ domain_name }}" {
+    type master;
+    file "/etc/bind/zones/db.kn.{{ domain_name }}";
+    allow-query { any; };
+    allow-update { none; };
+};

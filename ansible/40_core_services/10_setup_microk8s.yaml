@@ -1,0 +1,237 @@
+---
+# 40_setup_microk8s.yaml - Install MicroK8s on LXD VMs
+# Run with: ansible-playbook -i inventory/inventory.yaml ansible/vm_deployment/40_setup_microk8s.yaml
+
+- name: Install MicroK8s on VM Nodes
+  hosts: baremetal
+  become: false
+  gather_facts: true
+  
+  vars:
+    microk8s_channel: "1.28/stable"
+    admin_username: "thinkube"
+    metallb_range: "192.168.191.200-192.168.191.205"
+  
+  tasks:
+    # Phase 1: Check VMs are ready
+    - name: Check VMs are ready
+      block:
+        - name: Verify VMs are running
+          ansible.builtin.command: lxc list "{{ item }}" --format json
+          register: vm_status_json
+          changed_when: false
+          loop: "{{ (groups['microk8s_control_plane'] + groups['microk8s_workers']) | default([]) }}"
+          when: inventory_hostname == hostvars[item]['parent_host'] | default('none')
+          become: true
+          
+        - name: Parse VM status and verify running state
+          ansible.builtin.set_fact:
+            "vm_status_{{ item }}": "{{ hostvars[inventory_hostname]['vm_status_json']['results'] | selectattr('item', 'equalto', item) | first | default({}) }}"
+          when: 
+            - inventory_hostname == hostvars[item]['parent_host'] | default('none')
+            - hostvars[inventory_hostname]['vm_status_json'] is defined
+            - hostvars[inventory_hostname]['vm_status_json']['results'] is defined
+          loop: "{{ (groups['microk8s_control_plane'] + groups['microk8s_workers']) | default([]) }}"
+      tags: verify_vms
+    
+    # Phase 2: Generate MicroK8s installation script
+    - name: Generate MicroK8s installation script
+      block:
+        # Generate installation script from template
+        - name: Generate installation script from template
+          ansible.builtin.template:
+            src: "templates/microk8s_install.j2"
+            dest: "/tmp/microk8s_install_{{ item }}.sh"
+            mode: '0755'
+          loop: "{{ (groups['microk8s_control_plane'] + groups['microk8s_workers']) | default([]) }}"
+          when: inventory_hostname == hostvars[item]['parent_host'] | default('none')
+          vars:
+            is_control_node: "{{ item in groups['microk8s_control_plane'] }}"
+          
+        # Copy MicroK8s installation script to VMs
+        - name: Copy MicroK8s installation script to VMs
+          ansible.builtin.command: >
+            lxc file push /tmp/microk8s_install_{{ item }}.sh {{ item }}/tmp/microk8s_install.sh
+          loop: "{{ (groups['microk8s_control_plane'] + groups['microk8s_workers']) | default([]) }}"
+          when: inventory_hostname == hostvars[item]['parent_host'] | default('none')
+          become: true
+          
+        # Make script executable
+        - name: Make MicroK8s installation script executable
+          ansible.builtin.command: >
+            lxc exec {{ item }} -- chmod +x /tmp/microk8s_install.sh
+          loop: "{{ (groups['microk8s_control_plane'] + groups['microk8s_workers']) | default([]) }}"
+          when: inventory_hostname == hostvars[item]['parent_host'] | default('none')
+          become: true
+      tags: generate_script
+    
+    # Phase 3: Install MicroK8s on control plane nodes
+    - name: Install MicroK8s on control plane nodes
+      block:
+        # Run MicroK8s installation script on control plane nodes
+        - name: Run MicroK8s installation script on control plane nodes
+          ansible.builtin.command: >
+            lxc exec {{ item }} -- /tmp/microk8s_install.sh
+          register: microk8s_install_control
+          failed_when: microk8s_install_control.rc != 0
+          loop: "{{ groups['microk8s_control_plane'] | default([]) }}"
+          when: 
+            - "'microk8s_control_plane' in groups"
+            - inventory_hostname == hostvars[item]['parent_host'] | default('none')
+          become: true
+          
+        # Display MicroK8s installation results for control plane
+        - name: Display MicroK8s installation results for control plane
+          ansible.builtin.debug:
+            msg: |
+              ════════════════════════════════════════════════════════════════════════
+              MICROK8S INSTALLATION RESULTS FOR {{ item.item }} (CONTROL PLANE)
+              ════════════════════════════════════════════════════════════════════════
+              
+              {{ item.stdout_lines | join('\n') }}
+              
+              ════════════════════════════════════════════════════════════════════════
+          loop: "{{ microk8s_install_control.results | default([]) }}"
+          when: microk8s_install_control is defined and microk8s_install_control.results is defined
+      tags: install_control
+    
+    # Phase 4: Wait for control plane to be ready
+    - name: Wait for control plane to be ready
+      ansible.builtin.pause:
+        seconds: 60
+      when: 
+        - "'microk8s_control_plane' in groups" 
+        - inventory_hostname == hostvars[groups['microk8s_control_plane'][0]]['parent_host'] | default('none')
+        - microk8s_install_control is defined and microk8s_install_control is changed
+      tags: wait_control
+    
+    # Phase 5: Install MicroK8s on worker nodes
+    - name: Install MicroK8s on worker nodes
+      block:
+        # Run MicroK8s installation script on worker nodes
+        - name: Run MicroK8s installation script on worker nodes
+          ansible.builtin.command: >
+            lxc exec {{ item }} -- /tmp/microk8s_install.sh
+          register: microk8s_install_worker
+          failed_when: microk8s_install_worker.rc != 0
+          loop: "{{ groups['microk8s_workers'] | default([]) }}"
+          when: 
+            - "'microk8s_workers' in groups"
+            - inventory_hostname == hostvars[item]['parent_host'] | default('none')
+          become: true
+          
+        # Display MicroK8s installation results for workers
+        - name: Display MicroK8s installation results for workers
+          ansible.builtin.debug:
+            msg: |
+              ════════════════════════════════════════════════════════════════════════
+              MICROK8S INSTALLATION RESULTS FOR {{ item.item }} (WORKER)
+              ════════════════════════════════════════════════════════════════════════
+              
+              {{ item.stdout_lines | join('\n') }}
+              
+              ════════════════════════════════════════════════════════════════════════
+          loop: "{{ microk8s_install_worker.results | default([]) }}"
+          when: microk8s_install_worker is defined and microk8s_install_worker.results is defined
+      tags: install_workers
+    
+    # Phase 6: Clean up temporary files
+    - name: Clean up temporary files
+      block:
+        # Clean up MicroK8s installation script from VMs
+        - name: Clean up MicroK8s installation script from VMs
+          ansible.builtin.command: >
+            lxc exec {{ item }} -- rm -f /tmp/microk8s_install.sh
+          loop: "{{ (groups['microk8s_control_plane'] + groups['microk8s_workers']) | default([]) }}"
+          when: inventory_hostname == hostvars[item]['parent_host'] | default('none')
+          become: true
+          
+        # Clean up local temporary files
+        - name: Clean up local temporary files
+          ansible.builtin.file:
+            path: "/tmp/microk8s_install_{{ item }}.sh"
+            state: absent
+          loop: "{{ (groups['microk8s_control_plane'] + groups['microk8s_workers']) | default([]) }}"
+          when: inventory_hostname == hostvars[item]['parent_host'] | default('none')
+      tags: cleanup
+    
+    # Phase 7: Verify MicroK8s status on control plane
+    - name: Verify MicroK8s status on control plane
+      block:
+        # Check MicroK8s status
+        - name: Check MicroK8s status
+          ansible.builtin.command: >
+            lxc exec {{ groups['microk8s_control_plane'][0] }} -- microk8s status
+          register: microk8s_status
+          failed_when: false
+          when: 
+            - "'microk8s_control_plane' in groups"
+            - groups['microk8s_control_plane'] | length > 0
+            - inventory_hostname == hostvars[groups['microk8s_control_plane'][0]]['parent_host'] | default('none')
+          become: true
+          
+        # Display MicroK8s status
+        - name: Display MicroK8s status
+          ansible.builtin.debug:
+            msg: |
+              ════════════════════════════════════════════════════════════════════════
+              MICROK8S STATUS
+              ════════════════════════════════════════════════════════════════════════
+              
+              {{ microk8s_status.stdout_lines | join('\n') }}
+              
+              ════════════════════════════════════════════════════════════════════════
+          when: 
+            - "'microk8s_control_plane' in groups"
+            - groups['microk8s_control_plane'] | length > 0
+            - inventory_hostname == hostvars[groups['microk8s_control_plane'][0]]['parent_host'] | default('none')
+            - microk8s_status is defined
+          
+        # Check nodes
+        - name: Check Kubernetes nodes
+          ansible.builtin.command: >
+            lxc exec {{ groups['microk8s_control_plane'][0] }} -- microk8s kubectl get nodes
+          register: k8s_nodes
+          failed_when: false
+          when: 
+            - "'microk8s_control_plane' in groups"
+            - groups['microk8s_control_plane'] | length > 0
+            - inventory_hostname == hostvars[groups['microk8s_control_plane'][0]]['parent_host'] | default('none')
+          become: true
+          
+        # Display Kubernetes nodes
+        - name: Display Kubernetes nodes
+          ansible.builtin.debug:
+            msg: |
+              ════════════════════════════════════════════════════════════════════════
+              KUBERNETES NODES
+              ════════════════════════════════════════════════════════════════════════
+              
+              {{ k8s_nodes.stdout_lines | join('\n') }}
+              
+              ════════════════════════════════════════════════════════════════════════
+          when: 
+            - "'microk8s_control_plane' in groups"
+            - groups['microk8s_control_plane'] | length > 0
+            - inventory_hostname == hostvars[groups['microk8s_control_plane'][0]]['parent_host'] | default('none')
+            - k8s_nodes is defined
+      tags: verify_status
+    
+    # Phase 8: Display completion message
+    - name: Display MicroK8s installation completion message
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          ✅ MicroK8s Installation Completed
+          ════════════════════════════════════════════════════════════════════════
+          
+          MicroK8s has been installed on:
+          - Control plane: {{ groups['microk8s_control_plane'] | join(', ') }}
+          - Workers: {{ groups['microk8s_workers'] | join(', ') }}
+          
+          NEXT STEPS:
+            Run the worker join playbook:
+            ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/50_vm_join_workers.yaml
+          
+          ════════════════════════════════════════════════════════════════════════
+      run_once: true

@@ -1,0 +1,225 @@
+---
+# 08_check_environment.yaml - Check the environment status before LXD setup
+# Run with: ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/08_check_environment.yaml
+
+- name: Check environment status before VM deployment
+  hosts: baremetal
+  become: true
+  gather_facts: true
+  
+  tasks:
+    - name: Display host information
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          HOST INFORMATION: {{ inventory_hostname }}
+          ════════════════════════════════════════════════════════════════════════
+          
+          Hostname: {{ ansible_hostname }}
+          System: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Kernel: {{ ansible_kernel }}
+          Memory: {{ (ansible_memtotal_mb / 1024) | round(1) }} GB
+          CPUs: {{ ansible_processor_count }} x {{ ansible_processor_cores }}
+          
+          IP Addresses:
+          {% for interface in ansible_interfaces %}
+          {% if ansible_facts[interface] is defined and ansible_facts[interface].ipv4 is defined and ansible_facts[interface].ipv4.address is defined %}
+            - {{ interface }}: {{ ansible_facts[interface].ipv4.address }}
+          {% endif %}
+          {% endfor %}
+          
+          ════════════════════════════════════════════════════════════════════════
+    
+    # Check LXD status
+    - name: Check LXD installation
+      ansible.builtin.command: lxc --version
+      register: lxd_version
+      changed_when: false
+      failed_when: false
+      
+    - name: Display LXD information
+      ansible.builtin.debug:
+        msg: |
+          LXD Information:
+          {% if lxd_version.rc == 0 %}
+          ✅ LXD is installed (version {{ lxd_version.stdout }})
+          {% else %}
+          ❌ LXD is not installed
+          {% endif %}
+    
+    # Check existing containers and VMs
+    - name: Check existing containers and VMs
+      ansible.builtin.command: lxc list
+      register: lxc_list
+      changed_when: false
+      failed_when: false
+      
+    - name: Display existing containers and VMs
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          EXISTING CONTAINERS AND VMS
+          ════════════════════════════════════════════════════════════════════════
+          
+          {{ lxc_list.stdout if lxc_list.rc == 0 else "Could not retrieve list" }}
+          
+          ════════════════════════════════════════════════════════════════════════
+    
+    # Check existing LXD profiles
+    - name: Check existing LXD profiles
+      ansible.builtin.command: lxc profile list
+      register: profile_list
+      changed_when: false
+      failed_when: false
+      
+    - name: Display existing LXD profiles
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          EXISTING LXD PROFILES
+          ════════════════════════════════════════════════════════════════════════
+          
+          {{ profile_list.stdout if profile_list.rc == 0 else "Could not retrieve list" }}
+          
+          ════════════════════════════════════════════════════════════════════════
+    
+    # Check network bridges
+    - name: Check network bridges
+      ansible.builtin.command: ip link show type bridge
+      register: bridges
+      changed_when: false
+      failed_when: false
+      
+    - name: Display network bridges
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          NETWORK BRIDGES
+          ════════════════════════════════════════════════════════════════════════
+          
+          {{ bridges.stdout if bridges.rc == 0 else "Could not retrieve list" }}
+          
+          ════════════════════════════════════════════════════════════════════════
+    
+    # Check host routes
+    - name: Check routes
+      ansible.builtin.command: ip route
+      register: routes
+      changed_when: false
+      failed_when: false
+      
+    - name: Display routes
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          NETWORK ROUTES
+          ════════════════════════════════════════════════════════════════════════
+          
+          {{ routes.stdout if routes.rc == 0 else "Could not retrieve routes" }}
+          
+          ════════════════════════════════════════════════════════════════════════
+    
+    # Check GPU status if applicable
+    - name: Check for NVIDIA GPUs
+      ansible.builtin.command: nvidia-smi
+      register: nvidia_smi
+      changed_when: false
+      failed_when: false
+      
+    - name: Display GPU information
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          GPU INFORMATION
+          ════════════════════════════════════════════════════════════════════════
+          
+          {% if nvidia_smi.rc == 0 %}
+          {{ nvidia_smi.stdout }}
+          {% else %}
+          No NVIDIA GPUs detected or nvidia-smi not installed.
+          {% endif %}
+          
+          ════════════════════════════════════════════════════════════════════════
+    
+    # Check ZeroTier status
+    - name: Check ZeroTier status
+      ansible.builtin.command: zerotier-cli info
+      register: zerotier_info
+      changed_when: false
+      failed_when: false
+      
+    - name: Display ZeroTier information
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          ZEROTIER INFORMATION
+          ════════════════════════════════════════════════════════════════════════
+          
+          {% if zerotier_info.rc == 0 %}
+          {{ zerotier_info.stdout }}
+          
+          Networks:
+          {% set network_cmd = ansible_facts['ansible_local']['zerotier_networks'] | default('') %}
+          {% if network_cmd != '' %}
+          {{ network_cmd }}
+          {% else %}
+          No ZeroTier networks information available.
+          {% endif %}
+          {% else %}
+          ZeroTier not installed or not running.
+          {% endif %}
+          
+          ════════════════════════════════════════════════════════════════════════
+    
+    # Check disk space
+    - name: Check available disk space
+      ansible.builtin.command: df -h
+      register: disk_space
+      changed_when: false
+      failed_when: false
+      
+    - name: Display disk space information
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          DISK SPACE
+          ════════════════════════════════════════════════════════════════════════
+          
+          {{ disk_space.stdout if disk_space.rc == 0 else "Could not retrieve disk information" }}
+          
+          ════════════════════════════════════════════════════════════════════════
+    
+    # Overall summary
+    - name: Display environment summary
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════════════════════
+          ENVIRONMENT SUMMARY: {{ inventory_hostname }}
+          ════════════════════════════════════════════════════════════════════════
+          
+          LXD: {% if lxd_version.rc == 0 %}✅ Installed{% else %}❌ Not installed{% endif %}
+          Existing Containers/VMs: {% if lxc_list.stdout | length > 0 %}⚠️ Present{% else %}✅ None{% endif %}
+          Network Bridges: {% if "br0" in bridges.stdout %}✅ br0 configured{% else %}❌ br0 missing{% endif %}
+                          {% if "lxdbr0" in bridges.stdout %}✅ lxdbr0 configured{% else %}❌ lxdbr0 missing{% endif %}
+          ZeroTier: {% if zerotier_info.rc == 0 %}✅ Running{% else %}❌ Not running{% endif %}
+          NVIDIA GPU: {% if nvidia_smi.rc == 0 %}✅ Available{% else %}❓ Not detected{% endif %}
+          
+          RECOMMENDATIONS:
+          {% if lxc_list.stdout | length > 0 %}
+          - Run cleanup playbook to remove existing containers/VMs
+          {% endif %}
+          {% if "br0" not in bridges.stdout %}
+          - Configure br0 network bridge before VM deployment
+          {% endif %}
+          {% if "lxdbr0" not in bridges.stdout %}
+          - Configure lxdbr0 network bridge before VM deployment
+          {% endif %}
+          {% if zerotier_info.rc != 0 %}
+          - Install and configure ZeroTier before deployment
+          {% endif %}
+          
+          Next steps:
+          1. If cleanup needed: ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/09_cleanup.yaml
+          2. Start deployment: ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/10_setup_lxd_cluster.yaml
+          
+          ════════════════════════════════════════════════════════════════════════

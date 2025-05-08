@@ -1,0 +1,17 @@
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: no
+      addresses: [{{ internal_ip }}/24]
+      nameservers:
+        addresses: [{{ dns_ip }}]
+    eth1:
+      dhcp4: no
+      addresses: [{{ lan_ip }}/24]
+      routes:
+        - to: default
+          via: {{ network_gateway }}
+      nameservers:
+        addresses: [{{ dns_ip }}]
+  # ZeroTier interface will be configured separately by zerotier-one package

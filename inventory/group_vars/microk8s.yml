@@ -1,0 +1,24 @@
+---
+# Variables for MicroK8s deployment
+
+# Network configuration
+zerotier_subnet_prefix: "192.168.191."
+
+# MetalLB IP range configuration
+metallb_ip_start_octet: 200
+metallb_ip_end_octet: 205
+metallb_ip_range_size: 6  # From 200 to 205 inclusive (matches documentation)
+
+# Ingress namespace configuration
+ingress_namespace: "ingress"
+ingress_kn_namespace: "ingress-kn"
+
+# Primary ingress controller configuration
+primary_ingress_class: "nginx"
+primary_ingress_ip_octet: 200
+primary_ingress_service: "primary-ingress-ingress-nginx-controller"
+
+# Secondary ingress controller configuration
+secondary_ingress_class: "nginx-kn"
+secondary_ingress_ip_octet: 201
+secondary_ingress_service: "secondary-ingress-ingress-nginx-controller"

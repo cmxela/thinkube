@@ -1,0 +1,22 @@
+network:
+  version: 2
+  ethernets:
+    enp5s0:
+      dhcp4: no
+      addresses: [{{ internal_ip }}/24]
+      routes:
+        - to: default
+          via: 192.168.100.1
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+        search: [thinkube.com, kn.thinkube.com]
+    enp6s0:
+      dhcp4: no
+      addresses: [{{ lan_ip }}/24]
+      routes:
+        - to: default
+          via: {{ network_gateway }}
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+        search: [thinkube.com, kn.thinkube.com]
+  # ZeroTier interface will be configured separately by zerotier-one package

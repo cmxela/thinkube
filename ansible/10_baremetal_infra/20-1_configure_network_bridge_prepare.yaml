@@ -61,30 +61,89 @@
         state: present
         update_cache: yes
 
-    - name: Get information about network interfaces
+    - name: Check if bridge interface exists
       ansible.builtin.shell: |
-        # Find physical interfaces (excluding bridges, vlans, etc)
-        ip -o link show | grep -v 'link/loopback\|link/none\|master\|state DOWN' | grep 'link/ether' | awk -F': ' '{print $2}'
-      register: physical_interfaces
+        ip link show {{ network_bridge_name }} 2>/dev/null || echo "NOT_FOUND"
+      register: bridge_check
       changed_when: false
       
-    - name: Display found physical interfaces
-      ansible.builtin.debug:
-        msg: "Physical interfaces found: {{ physical_interfaces.stdout_lines }}"
+    - name: Find physical interfaces attached to bridge
+      ansible.builtin.shell: |
+        bridge link show | grep "master {{ network_bridge_name }}" | grep -oP '^\d+: \K[^:]+' || echo "NONE"
+      register: bridge_slaves
+      changed_when: false
+      when: bridge_check.stdout != "NOT_FOUND"
       
-    - name: Get primary physical interface
+    - name: Display bridge information
+      ansible.builtin.debug:
+        msg: |
+          Bridge status: {% if bridge_check.stdout == "NOT_FOUND" %}Not found{% else %}Found{% endif %}
+          {% if bridge_check.stdout != "NOT_FOUND" %}
+          Bridge slave interfaces: {{ bridge_slaves.stdout_lines | default(['NONE']) }}
+          {% endif %}
+      
+    - name: Determine action for already existing bridge
       ansible.builtin.set_fact:
-        primary_interface: "{{ physical_interfaces.stdout_lines[0] }}"
-      when: physical_interfaces.stdout_lines | length > 0
+        bridge_exists: "{{ bridge_check.stdout != 'NOT_FOUND' }}"
+        physical_interface: "{{ bridge_slaves.stdout_lines[0] | default('NONE') }}"
+      when: bridge_check.stdout != "NOT_FOUND"
         
-    - name: Fallback to default interface if no physical interface found
-      ansible.builtin.set_fact:
-        primary_interface: "{{ ansible_interfaces | select('match', '^(ens|eth|enp)') | list | first }}"
-      when: physical_interfaces.stdout_lines | length == 0
+    - name: Fail if bridge exists but has no attached interfaces
+      ansible.builtin.fail:
+        msg: |
+          ERROR: Bridge {{ network_bridge_name }} exists but has no attached physical interfaces
+          
+          DETAILS:
+          - Bridge {{ network_bridge_name }} was found
+          - No physical interfaces are attached to the bridge
+          - The bridge configuration is incomplete or invalid
+          
+          REQUIRED ACTION:
+          - Run the rollback playbook to remove the bridge:
+            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/19-1_rollback_network_bridge_prepare.yaml
+          - Then retry this playbook
+      when: bridge_exists is defined and bridge_exists and physical_interface == "NONE"
+    
+    - name: Find available physical interfaces if bridge doesn't exist
+      ansible.builtin.shell: |
+        # Only look for physical interfaces - no bridges, vlans, etc.
+        ip -o link show | grep -v "{{ network_bridge_name }}\|lo:" | grep "LOWER_UP" | grep "link/ether" | grep -v "master" | grep -oP '^\d+: \K[^:]+' || echo "NONE"
+      register: physical_ifaces
+      changed_when: false
+      when: not (bridge_exists is defined and bridge_exists)
       
-    - name: Show detected primary interface
+    - name: Fail if no suitable physical interfaces found for new bridge
+      ansible.builtin.fail:
+        msg: |
+          ERROR: No suitable physical interfaces found for bridge creation
+          
+          DETAILS:
+          - No active physical interfaces available for bridge creation
+          - Need at least one physical ethernet interface in UP state
+          
+          REQUIRED ACTION:
+          - Ensure at least one physical network interface is connected and UP
+          - Check interface status with: ip link show
+      when: not (bridge_exists is defined and bridge_exists) and (physical_ifaces.stdout == "NONE" or physical_ifaces.stdout == "")
+      
+    - name: Set primary interface for new bridge setup
+      ansible.builtin.set_fact:
+        physical_interface: "{{ physical_ifaces.stdout_lines[0] }}"
+      when: not (bridge_exists is defined and bridge_exists) and physical_ifaces.stdout != "NONE" and physical_ifaces.stdout != ""
+      
+    - name: Show detected interface configuration
       ansible.builtin.debug:
-        msg: "Detected primary interface: {{ primary_interface }}"
+        msg: |
+          Bridge configuration:
+          {% if bridge_exists is defined and bridge_exists %}
+          - Existing bridge {{ network_bridge_name }} found
+          - Physical interface attached: {{ physical_interface }}
+          - Will validate current configuration
+          {% else %}
+          - Bridge {{ network_bridge_name }} will be created
+          - Physical interface to use: {{ physical_interface }}
+          - Will create new configuration
+          {% endif %}
 
     - name: Check for existing netplan configuration files
       ansible.builtin.find:
@@ -106,6 +165,8 @@
         dest: "/etc/netplan/01-thinkube-config.yaml.prepared"
         mode: '0644'
         backup: yes
+      vars:
+        primary_interface: "{{ physical_interface }}"
 
     # Critical: Create a backup of the current network configuration in case something goes wrong
     - name: Backup current network configuration state to /tmp
@@ -127,12 +188,22 @@
           
           DETAILS OF PREPARATION:
             ✓ Bridge-utils and ifupdown packages installed
-            ✓ Primary interface detected: {{ primary_interface }}
+            {% if bridge_exists is defined and bridge_exists %}
+            ✓ Existing bridge {{ network_bridge_name }} detected
+            ✓ Physical interface {{ physical_interface }} is already attached
+            {% else %}
+            ✓ Physical interface detected: {{ physical_interface }}
+            ✓ New bridge {{ network_bridge_name }} configuration prepared
+            {% endif %}
             ✓ Network configuration backed up to /tmp/netplan_backup_{{ ansible_date_time.epoch }}/
             ✓ Bridge netplan configuration prepared (not yet applied)
             
           NEXT STEPS:
+            {% if bridge_exists is defined and bridge_exists %}
+            Bridge already exists. If you want to reconfigure it, run:
+            {% else %}
             Now you can proceed with applying the network changes by running:
+            {% endif %}
             ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-2_configure_network_bridge_apply.yaml
             
             WARNING: This will likely disconnect your SSH session temporarily!

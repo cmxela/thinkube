@@ -138,12 +138,49 @@
       loop: "{{ groups['baremetal'] }}"
       when: hostvars[item]['pubkey_content'] is defined
 
-    - name: Set up SSH config
+    - name: Check for existing SSH config file
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir }}/.ssh/config"
+      register: ssh_config_stat
+
+    - name: Backup existing SSH config if it exists
+      ansible.builtin.copy:
+        src: "{{ ansible_user_dir }}/.ssh/config"
+        dest: "{{ ansible_user_dir }}/.ssh/config.backup.{{ ansible_date_time.epoch }}"
+        remote_src: yes
+        mode: '0600'
+      when: ssh_config_stat.stat.exists
+
+    - name: Read existing SSH config
+      ansible.builtin.slurp:
+        src: "{{ ansible_user_dir }}/.ssh/config"
+      register: existing_ssh_config
+      when: ssh_config_stat.stat.exists
+      
+    - name: Extract external configurations from existing SSH config
+      ansible.builtin.set_fact:
+        external_config: "{{ (existing_ssh_config['content'] | b64decode).split('# BEGIN-THINKUBE-CLUSTER')[0].split('# END-THINKUBE-CLUSTER')[-1] }}"
+      when: ssh_config_stat.stat.exists and existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER')
+
+    - name: Set up SSH config (first time)
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/templates/ssh_config.j2"
+        src: "{{ playbook_dir }}/templates/ssh_config.j2.new"
         dest: "{{ ansible_user_dir }}/.ssh/config"
         mode: '0600'
-        backup: yes
+      when: not ssh_config_stat.stat.exists or not (existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER'))
+
+    - name: Set up SSH config (preserving external configurations)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/ssh_config.j2.new"
+        dest: "{{ ansible_user_dir }}/.ssh/config.thinkube"
+        mode: '0600'
+      when: ssh_config_stat.stat.exists and existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER')
+
+    - name: Merge external configurations with Thinkube SSH config
+      ansible.builtin.shell: |
+        cat "{{ ansible_user_dir }}/.ssh/config.thinkube" > "{{ ansible_user_dir }}/.ssh/config"
+        echo "{{ external_config | replace('\n', '\\n') }}" >> "{{ ansible_user_dir }}/.ssh/config"
+      when: ssh_config_stat.stat.exists and existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER')
 
     - name: Test SSH connection to other hosts
       ansible.builtin.shell: |

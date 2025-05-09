@@ -15,7 +15,7 @@
   gather_facts: true
   become: false
   vars:
-    ssh_key_name: "{{ ssh_key_name | default('thinkube_cluster_key') }}"
+    ssh_key_name: "thinkube_cluster_key"
     ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
     
   tasks:
@@ -78,12 +78,21 @@
       when: ansible_user_dir is defined and ansible_user_dir != "" and key_lines.stdout != ""
     
     - name: Remove SSH config for Thinkube hosts
-      ansible.builtin.blockinfile:
-        path: "{{ ansible_user_dir }}/.ssh/config"
-        marker: "# {mark} THINKUBE CLUSTER SSH CONFIGURATION"
-        marker_begin: "BEGIN"
-        marker_end: "END"
-        state: absent
+      ansible.builtin.shell: |
+        if [ -f "{{ ansible_user_dir }}/.ssh/config" ]; then
+          sed -i '/# BEGIN-THINKUBE-CLUSTER/,/# END-THINKUBE-CLUSTER/d' "{{ ansible_user_dir }}/.ssh/config"
+          exit_code=$?
+          if [ $exit_code -eq 0 ]; then
+            echo "Thinkube SSH configuration removed"
+          else
+            echo "Error removing Thinkube SSH configuration"
+            exit $exit_code
+          fi
+        else
+          echo "SSH config file does not exist"
+        fi
+      register: ssh_config_removal
+      changed_when: "'Thinkube SSH configuration removed' in ssh_config_removal.stdout"
       when: ansible_user_dir is defined and ansible_user_dir != ""
       ignore_errors: yes
       

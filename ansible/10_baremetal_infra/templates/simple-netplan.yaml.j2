@@ -1,0 +1,14 @@
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    # Physical ethernet interface - direct IP assignment after bridge removal
+    {{ primary_interface }}:
+      dhcp4: no
+      addresses:
+        - {{ ansible_host }}/24
+      routes:
+        - to: default
+          via: {{ network_gateway }}
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]

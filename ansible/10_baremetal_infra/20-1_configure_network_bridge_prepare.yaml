@@ -15,7 +15,7 @@
   become: true
   gather_facts: true
   vars:
-    network_bridge_name: "{{ network_bridge_name | default('br0') }}"
+    network_bridge_name: "br0"
     ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
 
   tasks:
@@ -61,21 +61,26 @@
         state: present
         update_cache: yes
 
-    - name: Get route info to detect primary interface
+    - name: Get information about network interfaces
       ansible.builtin.shell: |
-        ip route get 8.8.8.8 2>/dev/null | grep -oP 'dev \K\S+' | head -1
-      register: route_info
+        # Find physical interfaces (excluding bridges, vlans, etc)
+        ip -o link show | grep -v 'link/loopback\|link/none\|master\|state DOWN' | grep 'link/ether' | awk -F': ' '{print $2}'
+      register: physical_interfaces
       changed_when: false
       
-    - name: Get primary network interface
-      ansible.builtin.set_fact:
-        primary_interface: "{{ route_info.stdout }}"
-      when: route_info.stdout != ''
+    - name: Display found physical interfaces
+      ansible.builtin.debug:
+        msg: "Physical interfaces found: {{ physical_interfaces.stdout_lines }}"
       
-    - name: Fallback to default interface if route method fails
+    - name: Get primary physical interface
+      ansible.builtin.set_fact:
+        primary_interface: "{{ physical_interfaces.stdout_lines[0] }}"
+      when: physical_interfaces.stdout_lines | length > 0
+        
+    - name: Fallback to default interface if no physical interface found
       ansible.builtin.set_fact:
         primary_interface: "{{ ansible_interfaces | select('match', '^(ens|eth|enp)') | list | first }}"
-      when: route_info.stdout == ''
+      when: physical_interfaces.stdout_lines | length == 0
       
     - name: Show detected primary interface
       ansible.builtin.debug:

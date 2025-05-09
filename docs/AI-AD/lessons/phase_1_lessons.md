@@ -18,6 +18,12 @@ This document captures lessons learned during the implementation of Phase 1 (Ini
 - Solution: Document prerequisites for each task and expected state before/after execution
 - Prevention: Create dependency graphs or checklists for complex phases
 
+### Challenge 3: Pre-Existing Configurations
+- Root cause: Playbooks designed to provision new systems may overwrite existing configurations
+- Impact: Loss of important configurations such as GitHub SSH access when running setup playbooks
+- Solution: Use section markers to clearly define managed configurations, and preserve non-managed sections
+- Prevention: Always implement "non-destructive" playbooks that respect existing configurations
+
 ## Methodology Improvements
 
 Changes to our AI-AD methodology based on this phase's experience:
@@ -26,6 +32,9 @@ Changes to our AI-AD methodology based on this phase's experience:
 2. Include "Definition of Done" for each major task category in START_HERE.md
 3. Distinguish between "created/implemented" and "verified/tested" in task tracking
 4. Only mark tasks complete after both implementation AND verification are successful
+5. Add "integration" verification that specifically tests cross-cutting concerns
+6. Implement and enforce "Non-Destructive Principle" for all playbooks
+7. Require post-completion regression testing
 
 ## Documentation Enhancements
 
@@ -47,6 +56,9 @@ New best practices identified during this phase:
 5. **Progress Tracking**: Be conservative in marking progress to avoid false confidence
 6. **Testing**: Create dedicated test playbooks for each implementation playbook
 7. **Rollbacks**: Always test rollback procedures as well as implementations
+8. **Preserve Existing Configurations**: Use markers/delimiters to isolate managed sections in configuration files
+9. **Post-Completion Testing**: Even after marking a task as complete, perform an extra round of testing to ensure no regressions
+10. **Incremental Marking**: Mark tasks as complete incrementally rather than all at once so issues are detected earlier
 
 ## Performance Considerations
 

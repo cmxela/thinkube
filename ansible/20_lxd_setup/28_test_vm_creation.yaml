@@ -1,0 +1,276 @@
+---
+# 28_test_vm_creation.yaml - Test VM creation and configuration
+#
+# Purpose:
+#   Tests if VMs have been properly created and configured according to the inventory specifications.
+#   Verifies VM existence, resource allocation, networking, and accessibility.
+#
+# Requirements:
+#   - LXD must be installed and initialized
+#   - Profiles must be created by 20_setup_lxd_profiles.yaml
+#   - VMs must be created by 30_create_vms.yaml
+#
+# Variables:
+#   Required (from inventory):
+#     - lxd_containers: Container definitions with resource allocations
+#     - microk8s_containers: Kubernetes-specific container groups
+#     - gpu_passthrough_containers: Containers that need GPU passthrough
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/28_test_vm_creation.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/28_test_vm_creation.yaml
+
+- name: Test VM Creation and Configuration
+  hosts: management 
+  gather_facts: true
+  become: false  # VM operations can be performed without sudo
+  
+  tasks:
+    - name: Display test intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing VM Creation and Configuration ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook tests if VMs have been properly created and 
+          configured according to inventory specifications.
+          
+          ═════════════════════════════════════════════════════════
+    
+    - name: Verify LXD is installed
+      ansible.builtin.command: lxc --version
+      register: lxd_version
+      changed_when: false
+      
+    - name: Get list of existing VMs and containers
+      ansible.builtin.command: lxc list --format csv
+      register: vm_list
+      changed_when: false
+      
+    - name: Parse list of VMs and containers
+      ansible.builtin.set_fact:
+        parsed_vms: "{{ vm_list.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+        
+    - name: Display existing VMs and containers
+      ansible.builtin.debug:
+        msg: "LXD VMs and containers found: {{ parsed_vms }}"
+    
+    # Test 1: Verify all expected VMs exist according to inventory
+    - name: Build list of expected VMs from inventory
+      ansible.builtin.set_fact:
+        expected_vms: "{{ groups['lxd_containers'] | default([]) }}"
+        
+    - name: Display expected VMs
+      ansible.builtin.debug:
+        msg: "Expected VMs from inventory: {{ expected_vms }}"
+        
+    - name: Verify all expected VMs exist
+      ansible.builtin.assert:
+        that:
+          - "vm_name in parsed_vms"
+        fail_msg: "Expected VM '{{ vm_name }}' does not exist"
+        success_msg: "✓ VM '{{ vm_name }}' exists"
+      loop: "{{ expected_vms }}"
+      loop_control:
+        loop_var: vm_name
+      when: expected_vms | length > 0
+      
+    # Test 2: Check VM status (running)
+    - name: Get detailed VM information for each VM
+      ansible.builtin.command: "lxc info {{ vm_name }}"
+      register: vm_info
+      changed_when: false
+      loop: "{{ expected_vms }}"
+      loop_control:
+        loop_var: vm_name
+      when: expected_vms | length > 0
+      
+    - name: Check VM status
+      ansible.builtin.assert:
+        that:
+          - "'Status: Running' in vm_info.results[vm_index].stdout"
+        fail_msg: "VM '{{ expected_vms[vm_index] }}' is not running"
+        success_msg: "✓ VM '{{ expected_vms[vm_index] }}' is running"
+      loop: "{{ range(0, expected_vms | length) | list }}"
+      loop_control:
+        loop_var: vm_index
+      when: expected_vms | length > 0
+    
+    # Test 3: Check VM resource allocation against inventory
+    - name: Verify VM resources
+      block:
+        - name: Check VM CPU allocation
+          ansible.builtin.assert:
+            that: 
+              - "'CPUs:' in vm_info.results[vm_index].stdout"
+              - "hostvars[expected_vms[vm_index]].cpu_cores is not defined or
+                 (hostvars[expected_vms[vm_index]].cpu_cores | string in vm_info.results[vm_index].stdout)"
+            fail_msg: |
+              VM '{{ expected_vms[vm_index] }}' CPU allocation doesn't match inventory.
+              Expected: {{ hostvars[expected_vms[vm_index]].cpu_cores }} cores
+            success_msg: "✓ VM '{{ expected_vms[vm_index] }}' has correct CPU allocation"
+          loop: "{{ range(0, expected_vms | length) | list }}"
+          loop_control:
+            loop_var: vm_index
+          when: vm_info.results is defined and (vm_info.results | length > 0)
+          
+        - name: Check VM memory allocation
+          ansible.builtin.assert:
+            that:
+              - "'Memory:' in vm_info.results[vm_index].stdout"
+              - "hostvars[expected_vms[vm_index]].memory is not defined or
+                 (hostvars[expected_vms[vm_index]].memory | regex_replace('GB', '') | string in 
+                  vm_info.results[vm_index].stdout | regex_replace('GiB', '') | regex_replace('Memory:\\s+', ''))"
+            fail_msg: |
+              VM '{{ expected_vms[vm_index] }}' memory allocation doesn't match inventory.
+              Expected: {{ hostvars[expected_vms[vm_index]].memory }}
+            success_msg: "✓ VM '{{ expected_vms[vm_index] }}' has correct memory allocation"
+          loop: "{{ range(0, expected_vms | length) | list }}"
+          loop_control:
+            loop_var: vm_index
+          when: vm_info.results is defined and (vm_info.results | length > 0)
+      when: expected_vms | length > 0 and vm_info.results is defined
+    
+    # Test 4: Check VM networking
+    - name: Verify VM networking
+      block:
+        - name: Check VM has proper network interfaces
+          ansible.builtin.assert:
+            that:
+              - "'eth0:' in vm_info.results[vm_index].stdout"
+              - "'eth1:' in vm_info.results[vm_index].stdout or not (hostvars[expected_vms[vm_index]].internal_ip is defined)"
+            fail_msg: |
+              VM '{{ expected_vms[vm_index] }}' is missing required network interfaces.
+            success_msg: "✓ VM '{{ expected_vms[vm_index] }}' has required network interfaces"
+          loop: "{{ range(0, expected_vms | length) | list }}"
+          loop_control:
+            loop_var: vm_index
+          when: vm_info.results is defined and (vm_info.results | length > 0)
+          
+        - name: Check VM IP address allocation
+          ansible.builtin.assert:
+            that:
+              - "hostvars[expected_vms[vm_index]].lan_ip is not defined or
+                 hostvars[expected_vms[vm_index]].lan_ip in vm_info.results[vm_index].stdout"
+            fail_msg: |
+              VM '{{ expected_vms[vm_index] }}' external IP address doesn't match inventory.
+              Expected: {{ hostvars[expected_vms[vm_index]].lan_ip }}
+            success_msg: "✓ VM '{{ expected_vms[vm_index] }}' has correct external IP address"
+          loop: "{{ range(0, expected_vms | length) | list }}"
+          loop_control:
+            loop_var: vm_index
+          when: vm_info.results is defined and (vm_info.results | length > 0)
+      when: expected_vms | length > 0 and vm_info.results is defined
+
+    # Test 5: Check VM accessibility (ping)
+    - name: Test VM network connectivity
+      ansible.builtin.ping:
+      delegate_to: "{{ vm_name }}"
+      register: ping_results
+      ignore_errors: true
+      loop: "{{ expected_vms }}"
+      loop_control:
+        loop_var: vm_name
+      when: expected_vms | length > 0
+      
+    - name: Check VM ping results
+      ansible.builtin.assert:
+        that:
+          - "ping_results.results[vm_index].ping is defined"
+        fail_msg: "Cannot ping VM '{{ expected_vms[vm_index] }}'"
+        success_msg: "✓ VM '{{ expected_vms[vm_index] }}' is accessible via ping"
+      loop: "{{ range(0, expected_vms | length) | list }}"
+      loop_control:
+        loop_var: vm_index
+      when: expected_vms | length > 0 and ping_results.results is defined
+      
+    # Test 6: Check GPU passthrough for specified VMs
+    - name: Check GPU passthrough for applicable VMs
+      block:
+        - name: Get GPU information inside VM
+          ansible.builtin.shell: |
+            lxc exec {{ vm_name }} -- bash -c "lspci | grep -i nvidia || echo 'No NVIDIA GPU found'"
+          register: gpu_check
+          changed_when: false
+          loop: "{{ groups['gpu_passthrough_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+          when: groups['gpu_passthrough_containers'] is defined
+          
+        - name: Verify GPU passthrough
+          ansible.builtin.assert:
+            that:
+              - "'No NVIDIA GPU found' not in gpu_check.results[gpu_index].stdout"
+            fail_msg: |
+              GPU passthrough not working for VM '{{ groups['gpu_passthrough_containers'][gpu_index] }}'.
+              No GPU device detected inside the VM.
+            success_msg: "✓ GPU passthrough working for VM '{{ groups['gpu_passthrough_containers'][gpu_index] }}'"
+          loop: "{{ range(0, groups['gpu_passthrough_containers'] | default([]) | length) | list }}"
+          loop_control:
+            loop_var: gpu_index
+          when: groups['gpu_passthrough_containers'] is defined and (groups['gpu_passthrough_containers'] | length > 0) and gpu_check.results is defined
+      when: groups['gpu_passthrough_containers'] is defined and (groups['gpu_passthrough_containers'] | length > 0)
+        
+    # Determine overall test result
+    - name: Count missing VMs
+      ansible.builtin.set_fact:
+        missing_vms: "{{ expected_vms | difference(parsed_vms) }}"
+        
+    - name: Display successful test message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✓ VM Creation Tests Passed ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          All VM creation tests have passed successfully.
+          
+          DETAILS:
+            ✓ All expected VMs exist ({{ expected_vms | join(', ') }})
+            ✓ All VMs are running
+            ✓ VM resource allocations match inventory
+            ✓ VM network configurations are correct
+            ✓ All VMs are accessible via ping
+            {% if groups['gpu_passthrough_containers'] is defined and (groups['gpu_passthrough_containers'] | length > 0) %}
+            ✓ GPU passthrough is working for configured VMs
+            {% endif %}
+            
+          RESULT:
+            The LXD VMs are properly configured and ready for use.
+          
+          ═════════════════════════════════════════════════════════
+      when: missing_vms | length == 0
+      
+    - name: Display failed test message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✗ VM Creation Tests Failed ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Some VM creation tests have failed.
+          
+          DETAILS:
+            {% if missing_vms | length > 0 %}
+            ✗ Missing expected VMs: {{ missing_vms | join(', ') }}
+            {% endif %}
+            {% if ping_results.results is defined and ping_results.results | selectattr('failed', 'true') | list | length > 0 %}
+            ✗ Some VMs are not accessible via ping
+            {% endif %}
+            
+          REQUIRED ACTION:
+            Run the VM creation playbook:
+            ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30_create_vms.yaml
+          
+          ═════════════════════════════════════════════════════════
+      when: missing_vms | length > 0 or (ping_results.results is defined and ping_results.results | selectattr('failed', 'true') | list | length > 0)
+      
+    - name: Fail if any VMs are missing
+      ansible.builtin.fail:
+        msg: "Expected VMs are missing: {{ missing_vms | join(', ') }}"
+      when: missing_vms | length > 0

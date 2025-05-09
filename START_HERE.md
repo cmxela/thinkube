@@ -144,16 +144,16 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Review DEPLOYMENT_STRUCTURE.md sections for 20_lxd_setup
   - [x] Review any LXD-specific documentation
 
-- [ ] **Test Playbook Development (x8)**
-  - [ ] Create `ansible/20_lxd_setup/18_test_lxd_profiles.yaml`
-    - [ ] Test for profile creation
-    - [ ] Test for profile configuration
-    - [ ] Test for VM creation with profiles
-  - [ ] Create `ansible/20_lxd_setup/28_test_vm_creation.yaml`
-    - [ ] Test for VM existence
-    - [ ] Test for VM resource allocation
-    - [ ] Test for VM network configuration
-    - [ ] Test for VM accessibility
+- [x] **Test Playbook Development (x8)**
+  - [x] Create `ansible/20_lxd_setup/18_test_lxd_profiles.yaml`
+    - [x] Test for profile creation
+    - [x] Test for profile configuration
+    - [x] Test for VM creation with profiles
+  - [x] Create `ansible/20_lxd_setup/28_test_vm_creation.yaml`
+    - [x] Test for VM existence
+    - [x] Test for VM resource allocation
+    - [x] Test for VM network configuration
+    - [x] Test for VM accessibility
 
 - [ ] **Implementation Playbooks**
   - [ ] Develop `ansible/20_lxd_setup/10_setup_lxd_profiles.yaml`

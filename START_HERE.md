@@ -77,10 +77,12 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Create `ansible/00_initial_setup/19_rollback_ssh_keys.yaml`
   - [x] Create `ansible/00_initial_setup/29_rollback_env_setup.yaml`
 
-- [x] **Integration Verification**
-  - [x] Run complete phase deployment
-  - [x] Verify with test playbooks
-  - [x] Document any issues encountered
+- [ ] **Integration Verification**
+  - [x] Run complete phase deployment on bcn2
+  - [x] Verify with test playbooks on bcn2
+  - [x] Document issues and pending tests
+  - [ ] Test rollback process (pending physical access)
+  - [ ] Test on bcn1 (deferred for safety)
 
 - [x] **Phase Completion**
   - [x] Create lessons learned document

@@ -150,6 +150,17 @@
         remote_src: yes
         mode: '0600'
       when: ssh_config_stat.stat.exists
+      
+    - name: Check for existing GitHub configuration
+      ansible.builtin.shell: |
+        if [ -f "{{ ansible_user_dir }}/.ssh/config" ]; then
+          grep -A4 "GitHub Configuration" "{{ ansible_user_dir }}/.ssh/config" | grep -q "github.com" && echo "found" || echo "not found"
+        else
+          echo "not found"
+        fi
+      register: github_config_check
+      changed_when: false
+      check_mode: no
 
     - name: Read existing SSH config
       ansible.builtin.slurp:
@@ -157,30 +168,55 @@
       register: existing_ssh_config
       when: ssh_config_stat.stat.exists
       
-    - name: Extract external configurations from existing SSH config
+    - name: Save original SSH config for first-time setup
+      ansible.builtin.set_fact:
+        original_config: "{{ existing_ssh_config['content'] | b64decode }}"
+      when: ssh_config_stat.stat.exists and not (existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER'))
+      
+    - name: Extract external configurations from existing SSH config (with markers)
       ansible.builtin.set_fact:
         external_config: "{{ (existing_ssh_config['content'] | b64decode).split('# BEGIN-THINKUBE-CLUSTER')[0].split('# END-THINKUBE-CLUSTER')[-1] }}"
       when: ssh_config_stat.stat.exists and existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER')
 
-    - name: Set up SSH config (first time)
+    - name: Create temporary Thinkube SSH config
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/templates/ssh_config.j2.new"
-        dest: "{{ ansible_user_dir }}/.ssh/config"
-        mode: '0600'
-      when: not ssh_config_stat.stat.exists or not (existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER'))
-
-    - name: Set up SSH config (preserving external configurations)
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/templates/ssh_config.j2.new"
+        src: "{{ playbook_dir }}/templates/ssh_config.j2"
         dest: "{{ ansible_user_dir }}/.ssh/config.thinkube"
         mode: '0600'
-      when: ssh_config_stat.stat.exists and existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER')
+      when: ssh_config_stat.stat.exists
 
-    - name: Merge external configurations with Thinkube SSH config
+    - name: Set up SSH config (first time without existing config)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/ssh_config.j2"
+        dest: "{{ ansible_user_dir }}/.ssh/config"
+        mode: '0600'
+      when: not ssh_config_stat.stat.exists
+
+    - name: Merge original configuration with Thinkube SSH config (first time with existing config)
+      ansible.builtin.shell: |
+        cat "{{ ansible_user_dir }}/.ssh/config.thinkube" > "{{ ansible_user_dir }}/.ssh/config"
+        echo "" >> "{{ ansible_user_dir }}/.ssh/config"
+        echo "{{ original_config | regex_replace('Host \\s*bcn[12].*?\\n\\n', '', multiline=True) | replace('\n', '\\n') }}" >> "{{ ansible_user_dir }}/.ssh/config"
+      when: ssh_config_stat.stat.exists and original_config is defined
+      
+    - name: Merge existing external configurations with Thinkube SSH config (update)
       ansible.builtin.shell: |
         cat "{{ ansible_user_dir }}/.ssh/config.thinkube" > "{{ ansible_user_dir }}/.ssh/config"
         echo "{{ external_config | replace('\n', '\\n') }}" >> "{{ ansible_user_dir }}/.ssh/config"
-      when: ssh_config_stat.stat.exists and existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER')
+      when: ssh_config_stat.stat.exists and external_config is defined
+
+    - name: Restore GitHub configuration if it existed
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_user_dir }}/.ssh/config"
+        marker: "# {mark} GITHUB CONFIGURATION"
+        block: |
+          # GitHub Configuration
+          Host github.com
+            User git
+            IdentityFile {{ ansible_user_dir }}/.ssh/thinkube_deploy_key
+            IdentitiesOnly yes
+        state: present
+      when: github_config_check is defined and github_config_check.stdout == "found"
 
     - name: Test SSH connection to other hosts
       ansible.builtin.shell: |

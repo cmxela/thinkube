@@ -1,6 +1,26 @@
 ---
 # 10_setup_ssh_keys.yaml - Establishes bidirectional SSH access between all baremetal servers
-# Run with: ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/10_setup_ssh_keys.yaml --ask-pass --ask-become-pass
+# 
+# Purpose:
+#   Sets up SSH key-based authentication between all Thinkube baremetal servers
+#   to enable password-less automation.
+#
+# Requirements:
+#   - SSH server installed on all hosts
+#   - Password authentication enabled for initial setup
+#   - All hosts reachable by IP address
+#
+# Variables:
+#   Required (from inventory):
+#     - ansible_host: IP address of each server
+#   Optional:
+#     - ssh_key_name: Name of SSH key file (default: thinkube_cluster_key)
+#     - ssh_key_type: Type of SSH key (default: ed25519)
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/10_setup_ssh_keys.yaml --ask-pass --ask-become-pass
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/00_initial_setup/10_setup_ssh_keys.yaml --ask-pass
 
 - name: Setup SSH Keys for Baremetal Servers
   hosts: baremetal
@@ -19,6 +39,22 @@
         state: restarted
 
   tasks:
+    - name: Verify required variables
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+        fail_msg: |
+          ERROR: Missing Required Variables
+          
+          DETAILS:
+          - The following variables must be defined in inventory:
+            - ansible_host: {% if ansible_host is defined %}✓{% else %}✗ missing{% endif %}
+          
+          REQUIRED ACTION:
+          - Add missing variables to your inventory file at inventory/inventory.yaml
+          - Or define them in inventory/group_vars/all.yml
+          
+          REFERENCE: See docs/architecture/VARIABLE_HANDLING.md
     - name: Ensure openssh-server is installed
       become: true
       ansible.builtin.apt:
@@ -102,12 +138,85 @@
       loop: "{{ groups['baremetal'] }}"
       when: hostvars[item]['pubkey_content'] is defined
 
-    - name: Set up SSH config
+    - name: Check for existing SSH config file
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir }}/.ssh/config"
+      register: ssh_config_stat
+
+    - name: Backup existing SSH config if it exists
+      ansible.builtin.copy:
+        src: "{{ ansible_user_dir }}/.ssh/config"
+        dest: "{{ ansible_user_dir }}/.ssh/config.backup.{{ ansible_date_time.epoch }}"
+        remote_src: yes
+        mode: '0600'
+      when: ssh_config_stat.stat.exists
+      
+    - name: Check for existing GitHub configuration
+      ansible.builtin.shell: |
+        if [ -f "{{ ansible_user_dir }}/.ssh/config" ]; then
+          grep -A4 "GitHub Configuration" "{{ ansible_user_dir }}/.ssh/config" | grep -q "github.com" && echo "found" || echo "not found"
+        else
+          echo "not found"
+        fi
+      register: github_config_check
+      changed_when: false
+      check_mode: no
+
+    - name: Read existing SSH config
+      ansible.builtin.slurp:
+        src: "{{ ansible_user_dir }}/.ssh/config"
+      register: existing_ssh_config
+      when: ssh_config_stat.stat.exists
+      
+    - name: Save original SSH config for first-time setup
+      ansible.builtin.set_fact:
+        original_config: "{{ existing_ssh_config['content'] | b64decode }}"
+      when: ssh_config_stat.stat.exists and not (existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER'))
+      
+    - name: Extract external configurations from existing SSH config (with markers)
+      ansible.builtin.set_fact:
+        external_config: "{{ (existing_ssh_config['content'] | b64decode).split('# BEGIN-THINKUBE-CLUSTER')[0].split('# END-THINKUBE-CLUSTER')[-1] }}"
+      when: ssh_config_stat.stat.exists and existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER')
+
+    - name: Create temporary Thinkube SSH config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/ssh_config.j2"
+        dest: "{{ ansible_user_dir }}/.ssh/config.thinkube"
+        mode: '0600'
+      when: ssh_config_stat.stat.exists
+
+    - name: Set up SSH config (first time without existing config)
       ansible.builtin.template:
         src: "{{ playbook_dir }}/templates/ssh_config.j2"
         dest: "{{ ansible_user_dir }}/.ssh/config"
         mode: '0600'
-        backup: yes
+      when: not ssh_config_stat.stat.exists
+
+    - name: Merge original configuration with Thinkube SSH config (first time with existing config)
+      ansible.builtin.shell: |
+        cat "{{ ansible_user_dir }}/.ssh/config.thinkube" > "{{ ansible_user_dir }}/.ssh/config"
+        echo "" >> "{{ ansible_user_dir }}/.ssh/config"
+        echo "{{ original_config | regex_replace('Host \\s*bcn[12].*?\\n\\n', '', multiline=True) | replace('\n', '\\n') }}" >> "{{ ansible_user_dir }}/.ssh/config"
+      when: ssh_config_stat.stat.exists and original_config is defined
+      
+    - name: Merge existing external configurations with Thinkube SSH config (update)
+      ansible.builtin.shell: |
+        cat "{{ ansible_user_dir }}/.ssh/config.thinkube" > "{{ ansible_user_dir }}/.ssh/config"
+        echo "{{ external_config | replace('\n', '\\n') }}" >> "{{ ansible_user_dir }}/.ssh/config"
+      when: ssh_config_stat.stat.exists and external_config is defined
+
+    - name: Restore GitHub configuration if it existed
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_user_dir }}/.ssh/config"
+        marker: "# {mark} GITHUB CONFIGURATION"
+        block: |
+          # GitHub Configuration
+          Host github.com
+            User git
+            IdentityFile {{ ansible_user_dir }}/.ssh/thinkube_deploy_key
+            IdentitiesOnly yes
+        state: present
+      when: github_config_check is defined and github_config_check.stdout == "found"
 
     - name: Test SSH connection to other hosts
       ansible.builtin.shell: |
@@ -123,3 +232,25 @@
       changed_when: false
       failed_when: "ssh_test.rc != 0"
       loop: "{{ groups['baremetal'] }}"
+
+    - name: Display successful setup message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✓ SSH Keys Setup Complete ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          SSH key authentication has been successfully configured.
+          
+          DETAILS:
+            ✓ Generated SSH keys
+            ✓ Distributed public keys to all hosts
+            ✓ Created SSH config file
+            ✓ Verified connectivity to all hosts
+          
+          RESULT:
+            Passwordless SSH is now enabled between all servers.
+            You can connect using: ssh <hostname>
+          
+          ═════════════════════════════════════════════════════════

@@ -85,8 +85,8 @@ This helps maintain accurate progress tracking between development sessions and 
 - [x] **Phase Completion**
   - [x] Create lessons learned document
   - [x] Update architecture documentation if needed
-  - [x] Create pull request to main branch
-  - [ ] Add PR link: [PR #X](#)
+  - [x] Create pull request to main branch (through web interface)
+  - [ ] Add PR link: (Create PR through GitHub web interface at https://github.com/cmxela/thinkube/pull/new/feature/initial-setup)
 
 ## Phase 2: Baremetal Infrastructure (10_baremetal_infra)
 

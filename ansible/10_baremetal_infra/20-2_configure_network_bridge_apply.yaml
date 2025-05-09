@@ -1,0 +1,86 @@
+---
+# 20-2_configure_network_bridge_apply.yaml - Apply network bridge configuration
+#
+# Purpose:
+#   Applies the network bridge configuration that was prepared.
+#   CRITICAL: This will likely disrupt SSH connectivity temporarily.
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20-2_configure_network_bridge_apply.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-2_configure_network_bridge_apply.yaml
+
+- name: Apply Network Bridge Configuration
+  hosts: baremetal
+  become: true
+  gather_facts: true
+  vars:
+    network_bridge_name: "{{ network_bridge_name | default('br0') }}"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+
+  tasks:
+    - name: Display critical warning message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🚨 CRITICAL ACTION: Network Bridge Creation ({{ inventory_hostname }}) 🚨
+          ═════════════════════════════════════════════════════════
+          
+          This playbook WILL APPLY the network bridge configuration and 
+          WILL DISRUPT your SSH connection temporarily.
+          
+          Make sure you have completed the preparation step first by running:
+          ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-1_configure_network_bridge_prepare.yaml
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Check if preparation was done
+    - name: Check if prepared configuration exists
+      ansible.builtin.stat:
+        path: /etc/netplan/01-thinkube-config.yaml.prepared
+      register: prepared_config
+    
+    - name: Fail if preparation wasn't done
+      ansible.builtin.fail:
+        msg: |
+          ERROR: Preparation Step Not Completed
+          
+          DETAILS:
+          - Prepared configuration file not found at /etc/netplan/01-thinkube-config.yaml.prepared
+          - You must run the preparation playbook first
+          
+          REQUIRED ACTION:
+          - Run the preparation playbook:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-1_configure_network_bridge_prepare.yaml
+      when: not prepared_config.stat.exists
+    
+    # Critical user confirmation
+    - name: Confirm before proceeding
+      ansible.builtin.pause:
+        prompt: >-
+          
+          ⚠️  WARNING ⚠️  CRITICAL NETWORK CHANGE AHEAD ⚠️  WARNING ⚠️
+          
+          The next step will reconfigure the network on {{ inventory_hostname }}.
+          This will disrupt your SSH connection temporarily.
+          
+          BEFORE PROCEEDING:
+            ✓ Make sure you have physical access to the machines in case of issues
+            ✓ Network configuration has been backed up in /tmp/netplan_backup_*
+            ✓ If something goes wrong, you can restore using the backup files
+          
+          Press ENTER to continue or Ctrl+C to abort
+    
+    # Activate the prepared configuration
+    - name: Move prepared configuration to active location
+      ansible.builtin.command: mv /etc/netplan/01-thinkube-config.yaml.prepared /etc/netplan/01-thinkube-config.yaml
+        
+    # Apply netplan configuration - This is the critical step that will disrupt SSH connection
+    - name: Apply netplan configuration (THIS WILL DISCONNECT YOU TEMPORARILY)
+      ansible.builtin.shell: |
+        netplan apply
+        # Return success
+        echo "Netplan configuration applied"
+      async: 60  # Run asynchronously
+      poll: 0    # Don't wait for completion

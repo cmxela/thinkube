@@ -87,3 +87,22 @@ When testing potentially disruptive network changes:
 3. Have physical or out-of-band access ready as a backup
 4. Document expected disconnection and reconnection process
 5. Create clear recovery procedures before making changes
+
+## Pending Items
+
+Before merging to main branch:
+
+1. **Rollback Testing**: The rollback process has been designed but not fully tested
+   - Need to test rollback on bcn2 to ensure it works properly
+   - Must be done with caution to not disrupt existing configurations
+
+2. **bcn1 Implementation**: The bridge is already configured on bcn1, but:
+   - Not tested with our new playbooks (risk of disrupting the control node)
+   - Need physical access to implement and verify safely
+
+3. **Idempotency Testing**: Need to verify that running the playbooks multiple times:
+   - Doesn't cause issues or unexpected changes
+   - Properly detects existing configurations
+   - Reports correct status without unnecessary changes
+
+These items are deferred until safe testing conditions are available (physical access to systems).

@@ -23,32 +23,29 @@ fi
 export ANSIBLE_BECOME_PASSWORD="$ANSIBLE_SUDO_PASS"
 export ANSIBLE_SUDO_PASS
 
-# Set up SSH password authentication
+# Set up authentication - this is critical for remote access
 if [ -n "$ANSIBLE_SSH_PASS" ]; then
   echo "Using ANSIBLE_SSH_PASS for SSH authentication"
-  export ANSIBLE_SSH_PASS
-  
-  # Create a temporary sshpass script
-  TEMP_SSHPASS="/tmp/ansible-sshpass.sh"
-  cat > "$TEMP_SSHPASS" << EOF
-#!/bin/bash
-exec sshpass -p "\$ANSIBLE_SSH_PASS" ssh "\$@"
-EOF
-  chmod +x "$TEMP_SSHPASS"
-  
-  # Tell Ansible to use our custom SSH command
-  export ANSIBLE_SSH_EXECUTABLE="$TEMP_SSHPASS"
   
   # Make sure we have sshpass installed
   if ! command -v sshpass &> /dev/null; then
     echo "Installing sshpass..."
     sudo apt-get update -qq && sudo apt-get install -qq -y sshpass
   fi
+  
+  # Use direct approach with Ansible variables
+  export ANSIBLE_HOST_KEY_CHECKING=False
+  
+  # Will add SSH variables to the vars file later, after it's created
+  SSH_AUTH_CONFIGURED=true
+  
+  echo "SSH password authentication will be configured via ansible_ssh_pass variable"
 else
   echo "WARNING: ANSIBLE_SSH_PASS not set, using SSH keys for authentication"
   if [ -z "$SSH_AUTH_SOCK" ] || ! ssh-add -l &>/dev/null; then
     echo "WARNING: No SSH keys loaded in agent, authentication may fail"
   fi
+  SSH_AUTH_CONFIGURED=false
 fi
 
 # Check if playbook argument is provided
@@ -61,12 +58,20 @@ fi
 PLAYBOOK="$1"
 shift  # Remove first argument
 
-# Create a temporary vars file for sudo password
+# Create a temporary vars file for authentication
 TEMP_VARS="/tmp/ansible-vars-$$.yml"
 cat > "$TEMP_VARS" << EOF
 ---
 ansible_become_pass: "$ANSIBLE_SUDO_PASS"
 EOF
+
+# Add SSH authentication if configured
+if [ "$SSH_AUTH_CONFIGURED" = true ]; then
+  cat >> "$TEMP_VARS" << EOF
+ansible_ssh_pass: "$ANSIBLE_SSH_PASS"
+ansible_user: "thinkube"
+EOF
+fi
 
 # Display execution info
 echo "Running playbook: $PLAYBOOK"
@@ -80,7 +85,6 @@ RESULT=$?
 
 # Clean up temporary files
 rm -f "$TEMP_VARS"
-[ -f "$TEMP_SSHPASS" ] && rm -f "$TEMP_SSHPASS"
 
 # Report status
 if [ $RESULT -eq 0 ]; then

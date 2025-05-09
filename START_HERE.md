@@ -77,10 +77,12 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Create `ansible/00_initial_setup/19_rollback_ssh_keys.yaml`
   - [x] Create `ansible/00_initial_setup/29_rollback_env_setup.yaml`
 
-- [x] **Integration Verification**
-  - [x] Run complete phase deployment
-  - [x] Verify with test playbooks
-  - [x] Document any issues encountered
+- [ ] **Integration Verification**
+  - [x] Run complete phase deployment on bcn2
+  - [x] Verify with test playbooks on bcn2
+  - [x] Document issues and pending tests
+  - [ ] Test rollback process (pending physical access)
+  - [ ] Test on bcn1 (deferred for safety)
 
 - [x] **Phase Completion**
   - [x] Create lessons learned document
@@ -120,15 +122,15 @@ This helps maintain accurate progress tracking between development sessions and 
     - [x] Create `ansible/10_baremetal_infra/19-3_rollback_network_bridge_verify.yaml`
 
 - [ ] **Integration Verification**
-  - [ ] Run complete phase deployment
-  - [ ] Verify with test playbooks
-  - [ ] Document any issues encountered
+  - [x] Run complete phase deployment
+  - [x] Verify with test playbooks
+  - [x] Document any issues encountered
 
 - [ ] **Phase Completion**
-  - [ ] Create lessons learned document
-  - [ ] Update architecture documentation if needed
-  - [ ] Create pull request to main branch
-  - [ ] Add PR link: [PR #X](#)
+  - [x] Create lessons learned document
+  - [x] Update architecture documentation if needed
+  - [x] Create pull request to main branch
+  - [x] Add PR link: [PR #3](https://github.com/cmxela/thinkube/pull/3)
 
 ## Phase 3: LXD Setup (20_lxd_setup)
 

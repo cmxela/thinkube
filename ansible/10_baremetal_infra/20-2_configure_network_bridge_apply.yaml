@@ -15,7 +15,7 @@
   become: true
   gather_facts: true
   vars:
-    network_bridge_name: "{{ network_bridge_name | default('br0') }}"
+    network_bridge_name: "br0"
     ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
 
   tasks:

@@ -1,0 +1,111 @@
+---
+# 19-2_rollback_network_bridge_apply.yaml - Apply rollback of network bridge configuration
+#
+# Purpose:
+#   Applies the network changes to remove the bridge and restore direct interface connectivity.
+#   CRITICAL: This will likely disrupt SSH connectivity if connected through the bridge.
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/19-2_rollback_network_bridge_apply.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/10_baremetal_infra/19-2_rollback_network_bridge_apply.yaml
+
+- name: Apply Network Bridge Rollback
+  hosts: baremetal
+  gather_facts: true
+  become: true
+  vars:
+    network_bridge_name: "{{ network_bridge_name | default('br0') }}"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    
+  tasks:
+    - name: Display critical warning message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🚨 CRITICAL ACTION: Network Bridge Removal ({{ inventory_hostname }}) 🚨
+          ═════════════════════════════════════════════════════════
+          
+          This playbook WILL REMOVE the network bridge configuration and 
+          WILL DISRUPT your SSH connection if connected through the bridge.
+          
+          Make sure you have completed the preparation step first by running:
+          ./scripts/run_ansible.sh ansible/10_baremetal_infra/19-1_rollback_network_bridge_prepare.yaml
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Critical user confirmation
+    - name: Confirm before proceeding
+      ansible.builtin.pause:
+        prompt: "Press ENTER to proceed with network bridge removal or Ctrl+C to abort"
+    
+    - name: Check if netplan directory exists
+      ansible.builtin.stat:
+        path: /etc/netplan
+      register: netplan_dir
+      
+    - name: Check for Thinkube netplan configuration
+      ansible.builtin.stat:
+        path: /etc/netplan/01-thinkube-config.yaml
+      register: thinkube_netplan
+      when: netplan_dir.stat.exists
+    
+    - name: Remove Thinkube netplan configuration
+      ansible.builtin.file:
+        path: /etc/netplan/01-thinkube-config.yaml
+        state: absent
+      when: thinkube_netplan.stat.exists|default(false)
+    
+    - name: Check for prepared restore configuration
+      ansible.builtin.stat:
+        path: /etc/netplan/00-thinkube-restore.yaml.prepared
+      register: restore_config
+      when: netplan_dir.stat.exists
+    
+    - name: Move prepared configuration to active location
+      ansible.builtin.command: mv /etc/netplan/00-thinkube-restore.yaml.prepared /etc/netplan/00-thinkube-restore.yaml
+      when: restore_config.stat.exists|default(false)
+      
+    - name: Check for original netplan files
+      ansible.builtin.shell: |
+        find /etc/netplan -name "*.yaml.bak" | grep -v "01-thinkube-config" || echo ""
+      register: original_netplan_files
+      changed_when: false
+      when: netplan_dir.stat.exists
+      
+    - name: Restore original netplan files if they exist
+      ansible.builtin.shell: |
+        ORIGINAL=$(echo {{ item }} | sed 's/\.bak$//')
+        cp -f {{ item }} $ORIGINAL
+        echo "Restored $ORIGINAL"
+      register: restore_result
+      changed_when: "'Restored' in restore_result.stdout"
+      loop: "{{ original_netplan_files.stdout_lines|default([]) }}"
+      when: original_netplan_files.stdout|default("") != ""
+      
+    - name: Final warning before applying network changes
+      ansible.builtin.debug:
+        msg: >-
+          
+          ⚠️  FINAL WARNING ⚠️  NETWORK DISRUPTION IMMINENT ⚠️
+          
+          About to apply network changes that will remove bridge {{ network_bridge_name }}.
+          YOUR SSH CONNECTION WILL BE DISRUPTED if you're connected through the bridge.
+          
+          After network changes are applied:
+          1. Wait for the SSH session to time out
+          2. Try to reconnect to the server
+          3. Once reconnected, verify network settings with:
+             ./scripts/run_ansible.sh ansible/10_baremetal_infra/19-3_rollback_network_bridge_verify.yaml
+    
+    # Critical network change - will likely disconnect SSH if connected through bridge
+    - name: Apply netplan configuration (WILL DISCONNECT SSH IF USING BRIDGE)
+      ansible.builtin.shell: |
+        # Apply the configuration
+        netplan apply
+        
+        # Return success
+        echo "Netplan configuration applied"
+      async: 60  # Run asynchronously
+      poll: 0    # Don't wait for completion

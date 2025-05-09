@@ -23,7 +23,7 @@
   gather_facts: true
   become: false
   vars:
-    ssh_key_name: "{{ ssh_key_name | default('thinkube_cluster_key') }}"
+    ssh_key_name: "thinkube_cluster_key"
     
   tasks:
     - name: Verify required variables

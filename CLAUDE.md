@@ -30,6 +30,24 @@ Thinkube is a home-based development platform built on Kubernetes, designed spec
 
 ## Commands and Secure Sudo Password Handling
 
+### Helper Script for Automated Authentication
+The `scripts/run_ansible.sh` helper script automates environment setup and authentication:
+
+```bash
+# Run any playbook with automatic password handling
+./scripts/run_ansible.sh ansible/[path/to/playbook].yaml
+
+# Run with additional options
+./scripts/run_ansible.sh ansible/[path/to/playbook].yaml --tags "tag1,tag2"
+```
+
+This script will:
+1. Source environment variables from ~/.env
+2. Check for required variables (ANSIBLE_SUDO_PASS)
+3. Set appropriate Ansible environment variables
+4. Use SSH keys if available, fall back to password if needed
+5. Run the playbook with all necessary authentication
+
 ### Setting up Secure Environment Variables
 First set up your sudo password securely:
 
@@ -50,7 +68,7 @@ The symbolic link to `~/.env` in the project root allows you to:
 - Keep sensitive data out of version control
 - Maintain a single source of truth for environment variables
 
-### Running Playbooks
+### Running Playbooks Manually
 All commands use environment variables for security:
 
 ```bash

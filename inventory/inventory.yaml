@@ -7,6 +7,9 @@ all:
     ansible_python_interpreter: /usr/bin/python3
     ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
     home: "{{ lookup('env', 'HOME') }}"
+    ansible_user: thinkube
+    ansible_ssh_private_key_file: "/home/thinkube/.ssh/thinkube_cluster_key"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
     
     # Network configuration
     network_cidr: "192.168.1.0/24"  # LAN subnet

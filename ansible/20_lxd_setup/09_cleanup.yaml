@@ -56,14 +56,7 @@
           
           All data will be permanently deleted. This action cannot be undone.
           
-          If you want to continue, press ENTER when prompted.
-          To abort, press Ctrl+C.
-          
           ════════════════════════════════════════════════════════════════════════
-    
-    - name: Confirm cleanup operation
-      ansible.builtin.pause:
-        prompt: "Press ENTER to continue with cleanup, or Ctrl+C to abort"
       
     # Phase 1: Stop and remove all existing containers and VMs
     - name: Check existing containers and VMs

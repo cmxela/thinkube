@@ -1,0 +1,13 @@
+cluster:
+  enabled: true
+  server_name: "{{ inventory_hostname }}"
+  cluster_address: "{{ hostvars[primary_node]['ansible_host'] }}:{{ cluster_port }}"
+  server_address: "{{ ansible_host }}:{{ cluster_port }}"
+  cluster_password: "{{ lxd_trust_password }}"
+  cluster_certificate: |
+    {{ cluster_cert | indent(4) }}
+  member_config:
+  - entity: storage-pool
+    name: default
+    key: source
+    value: ""

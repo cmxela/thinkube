@@ -1,0 +1,200 @@
+---
+# 18_test_lxd_cluster.yaml - Test LXD cluster configuration
+#
+# Purpose:
+#   Tests if the LXD cluster has been properly set up across baremetal hosts.
+#   Verifies cluster node status, storage pools, and network configuration.
+#
+# Requirements:
+#   - LXD must be installed on all hosts
+#   - Cluster must be set up by 10_setup_lxd_cluster.yaml
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/18_test_lxd_cluster.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/18_test_lxd_cluster.yaml
+
+- name: Test LXD Cluster Configuration
+  hosts: "{{ groups['baremetal'][0] }}"  # Run on the primary node
+  gather_facts: true
+  become: true  # May need sudo for some LXD operations
+  
+  tasks:
+    - name: Display test intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing LXD Cluster Configuration ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook tests if the LXD cluster has been properly 
+          set up across baremetal hosts.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Test 1: Verify LXD is installed
+    - name: Verify LXD is installed
+      ansible.builtin.command: lxc --version
+      register: lxd_version
+      changed_when: false
+      
+    - name: Display LXD version
+      ansible.builtin.debug:
+        msg: "LXD version: {{ lxd_version.stdout }}"
+        
+    # Test 2: Verify cluster is formed correctly
+    - name: Check cluster status
+      ansible.builtin.command: lxc cluster list
+      register: cluster_status
+      changed_when: false
+      failed_when: cluster_status.rc != 0
+      
+    - name: Parse cluster details
+      ansible.builtin.set_fact:
+        cluster_members_list: "{{ cluster_status.stdout | regex_findall('bcn\\d') | unique }}"
+        expected_members_count: "{{ groups['baremetal'] | length | int }}"  # Both baremetal hosts should be in the cluster
+
+    - name: Debug cluster members
+      ansible.builtin.debug:
+        msg: |
+          Found members: {{ cluster_members_list | join(', ') }}
+          Number of members found: {{ cluster_members_list | length }}
+          Expected members: {{ groups['baremetal'] | join(', ') }}
+          Expected count: {{ expected_members_count }}
+          Cluster members equals expected? {{ cluster_members_list | length | int == expected_members_count }}
+
+    - name: Verify cluster member count
+      ansible.builtin.assert:
+        that:
+          - "cluster_members_list | length | int == expected_members_count | int"  # All baremetal nodes should be in the cluster
+        fail_msg: |
+          Not all baremetal hosts are in the LXD cluster.
+          Found nodes: {{ cluster_members_list | join(', ') }} (count: {{ cluster_members_list | length }})
+          Expected all of: {{ groups['baremetal'] | join(', ') }} (count: {{ expected_members_count }})
+          Cluster status:
+          {{ cluster_status.stdout }}
+        success_msg: "✓ Cluster has {{ cluster_members_list | length }} active members (expected: {{ expected_members_count }})"
+        
+    # Test 3: Verify all baremetal hosts are in the cluster
+    - name: Check each baremetal host is in the cluster
+      ansible.builtin.assert:
+        that:
+          - "host_name in cluster_status.stdout"
+        fail_msg: "Baremetal host '{{ host_name }}' is not in the LXD cluster"
+        success_msg: "✓ Host '{{ host_name }}' is in the LXD cluster"
+      loop: "{{ groups['baremetal'] }}"
+      loop_control:
+        loop_var: host_name
+        
+    # Test 4: Verify all nodes are online
+    - name: Check if all nodes are ONLINE
+      ansible.builtin.assert:
+        that:
+          - "'ONLINE' in cluster_status.stdout"
+          - "cluster_status.stdout.count('OFFLINE') == 0"
+        fail_msg: |
+          Not all cluster nodes are online.
+          Cluster status:
+          {{ cluster_status.stdout }}
+        success_msg: "✓ All cluster nodes are ONLINE"
+        
+    # Test 5: Verify storage pool is created
+    - name: Check storage pool configuration
+      ansible.builtin.command: lxc storage list
+      register: storage_pools
+      changed_when: false
+      failed_when: storage_pools.rc != 0
+      
+    - name: Verify default storage pool exists
+      ansible.builtin.assert:
+        that:
+          - "'default' in storage_pools.stdout"
+        fail_msg: |
+          Default storage pool not found.
+          Storage pools:
+          {{ storage_pools.stdout }}
+        success_msg: "✓ Default storage pool exists"
+        
+    # Test 6: Verify network configuration
+    - name: Check network configuration
+      ansible.builtin.command: lxc network list
+      register: networks
+      changed_when: false
+      failed_when: networks.rc != 0
+      
+    - name: Verify lxdbr0 network exists
+      ansible.builtin.assert:
+        that:
+          - "'lxdbr0' in networks.stdout"
+        fail_msg: |
+          lxdbr0 network not found.
+          Networks:
+          {{ networks.stdout }}
+        success_msg: "✓ lxdbr0 network exists"
+        
+    - name: Get lxdbr0 network details
+      ansible.builtin.command: lxc network show lxdbr0
+      register: network_details
+      changed_when: false
+      failed_when: network_details.rc != 0
+      
+    - name: Verify lxdbr0 network configuration
+      ansible.builtin.assert:
+        that:
+          - "'192.168.100.1/24' in network_details.stdout"
+          - "'ipv4.nat: \"true\"' in network_details.stdout"
+        fail_msg: |
+          lxdbr0 network is misconfigured.
+          Expected IP: 192.168.100.1/24 with NAT enabled.
+          Actual configuration:
+          {{ network_details.stdout }}
+        success_msg: "✓ lxdbr0 network is correctly configured"
+        
+    # Test 7: Verify required profiles are created
+    - name: Check profiles
+      ansible.builtin.command: lxc profile list
+      register: profiles
+      changed_when: false
+      failed_when: profiles.rc != 0
+      
+    - name: Verify required profiles exist
+      ansible.builtin.assert:
+        that:
+          - "'{{ profile_name }}' in profiles.stdout"
+        fail_msg: |
+          Required profile '{{ profile_name }}' not found.
+          Profiles:
+          {{ profiles.stdout }}
+        success_msg: "✓ Profile '{{ profile_name }}' exists"
+      loop:
+        - "default"
+        - "vm-networks"
+        - "vm-resources"
+        - "vm-gpu"
+      loop_control:
+        loop_var: profile_name
+        
+    # Test results summary
+    - name: Display successful test message
+      ansible.builtin.debug:
+        msg: >-
+
+          ═════════════════════════════════════════════════════════
+          ✓ LXD Cluster Tests Passed ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+
+          All LXD cluster tests have passed successfully.
+
+          DETAILS:
+            ✓ LXD is installed and running (version {{ lxd_version.stdout }})
+            ✓ Cluster has {{ cluster_members_list | length }} members (expected: {{ groups['baremetal'] | length }})
+            ✓ All nodes are ONLINE
+            ✓ Default storage pool exists
+            ✓ lxdbr0 network is correctly configured
+            ✓ All required profiles exist
+
+          RESULT:
+            The LXD cluster is properly configured and ready for VM creation.
+
+          ═════════════════════════════════════════════════════════

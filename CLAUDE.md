@@ -144,3 +144,12 @@ Playbooks are designed to:
 - User intervention should never be required to fix incomplete configurations
 - Always verify permissions, access rights, and functionality before considering a playbook complete
 - The impact of a playbook must be clearly documented, including prerequisite checks and follow-up validations
+
+## Storage Configuration Decisions
+
+### LXD Storage Driver
+- The LXD cluster will use ZFS as the storage driver (default in LXD) for its superior features:
+  - Built-in snapshot and rollback capabilities
+  - Better performance and data integrity guarantees
+  - Native compression
+- ZFS tools (zfsutils-linux) must be installed on all hosts before LXD initialization

@@ -1,437 +1,409 @@
 ---
 # 10_setup_lxd_cluster.yaml - Set up LXD cluster across baremetal hosts
-# Run with: ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/10_setup_lxd_cluster.yaml
+# 
+# Purpose:
+#   Creates and configures an LXD cluster across all baremetal hosts
+#   Uses a token-based approach for joining cluster nodes
+#   Designed to run in a single execution without requiring tags
+#
+# Requirements:
+#   - SSH connectivity between hosts must be configured
+#   - Elevated permissions are required
+#
+# Run with: 
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/10_setup_lxd_cluster.yaml
+#
+# Features:
+#   - Completely purges and reinstalls LXD on all nodes
+#   - Sets up a ZFS-based storage pool
+#   - Creates standard VM profiles
+#   - Sequential execution: clean > primary > secondary > verify
+#   - Automated token generation and exchange
 
-- name: Set up LXD cluster across baremetal hosts
+# PLAY 1: Purge LXD from all nodes to start fresh
+- name: Purge LXD from all nodes
   hosts: baremetal
-  become: true
   gather_facts: true
+  become: true
+  
+  tasks:
+    - name: Display cleanup information
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🧹 Purging LXD from {{ inventory_hostname }}
+          ═════════════════════════════════════════════════════════
+          
+    - name: Purge LXD completely
+      ansible.builtin.shell: |
+        echo "Stopping LXD service if running"
+        if snap list | grep -q lxd; then
+          snap stop lxd || true
+          snap remove lxd || true
+        fi
+        echo "Removing LXD data completely"
+        rm -rf /var/snap/lxd
+        sleep 5
+
+# PLAY 2: Set up primary node
+- name: Set up primary node for LXD cluster
+  hosts: "{{ groups['baremetal'][0] }}"  # Primary node (bcn2)
+  gather_facts: true
+  become: true
   
   vars:
     cluster_name: "thinkube-lxd-cluster"
-    cluster_address: "{{ hostvars[groups['baremetal'][0]]['ansible_host'] }}"
     cluster_port: 8443
     lxd_trust_password: "{{ lookup('env', 'LXD_TRUST_PASSWORD') | default('thinkube-lxd-cluster', true) }}"
-    is_cluster_initialized: false
-    
+    lxdbr0_ipv4_address: "192.168.100.1/24"
+    lxdbr0_ipv6_address: "fd42:d2f8:c3f:9338::1/64"
+    temp_dir: "/tmp/lxd-setup-{{ inventory_hostname }}"
+  
   tasks:
-    # Phase 1: Prepare hosts for clustering
-    - name: Verify LXD is installed
-      ansible.builtin.command: lxd --version
-      register: lxd_version
-      changed_when: false
-      failed_when: lxd_version.rc != 0
-      
-    - name: Display LXD version
+    - name: Display primary node information
       ansible.builtin.debug:
-        msg: "LXD version: {{ lxd_version.stdout }}"
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔧 Setting up LXD Cluster PRIMARY NODE ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          Primary: {{ inventory_hostname }} ({{ ansible_host }})
+          Secondary: {{ groups['baremetal'][1:] | join(', ') }}
+          
+    # Install LXD and ZFS
+    - name: Install LXD snap
+      community.general.snap:
+        name: lxd
+        state: present
     
-    # Phase 2: Check if LXD is already initialized
-    - name: Check if LXD is already initialized
-      ansible.builtin.command: lxc storage list
-      register: storage_list
-      changed_when: false
-      failed_when: false
-      
-    - name: Set is_lxd_initialized
-      ansible.builtin.set_fact:
-        is_lxd_initialized: "{{ storage_list.rc == 0 }}"
-        
-    - name: Display initialization status
-      ansible.builtin.debug:
-        msg: "LXD is already initialized: {{ is_lxd_initialized }}"
+    - name: Install ZFS tools
+      ansible.builtin.apt:
+        name: zfsutils-linux
+        state: present
+        update_cache: yes
     
-    # Phase 3: Check current cluster status
-    - name: Check current cluster status
-      ansible.builtin.command: lxc cluster list
-      register: cluster_status
-      changed_when: false
-      failed_when: false
-      when: is_lxd_initialized
+    # Create temporary directory
+    - name: Create temporary directory for setup files
+      ansible.builtin.file:
+        path: "{{ temp_dir }}"
+        state: directory
+        mode: '0755'
     
-    - name: Determine if already in cluster
-      ansible.builtin.set_fact:
-        is_already_clustered: "{{ cluster_status.rc == 0 and cluster_status.stdout != '' }}"
-      when: is_lxd_initialized
+    # Create preseed file for primary node
+    - name: Create preseed file for primary node
+      ansible.builtin.copy:
+        dest: "{{ temp_dir }}/primary-init.yaml"
+        mode: '0644'
+        content: |
+          config:
+            core.https_address: {{ ansible_host }}:{{ cluster_port }}
+            core.trust_password: {{ lxd_trust_password }}
+          cluster:
+            enabled: true
+            server_name: {{ inventory_hostname }}
+          storage_pools:
+          - name: default
+            driver: zfs
+          networks:
+          - name: lxdbr0
+            type: bridge
+            config:
+              ipv4.address: {{ lxdbr0_ipv4_address }}
+              ipv4.nat: "true"
+              ipv6.address: {{ lxdbr0_ipv6_address }}
+              ipv6.nat: "true"
+              dns.mode: managed
+          profiles:
+          - name: default
+            devices:
+              eth0:
+                name: eth0
+                network: lxdbr0
+                type: nic
+              root:
+                path: /
+                pool: default
+                type: disk
     
-    - name: Display cluster status
-      ansible.builtin.debug:
-        msg: "Already part of LXD cluster: {{ is_already_clustered | default(false) }}"
-      when: is_lxd_initialized
+    # Initialize LXD on primary node
+    - name: Initialize LXD on primary node with preseed
+      ansible.builtin.shell: |
+        cat {{ temp_dir }}/primary-init.yaml | lxd init --preseed
+      register: primary_init
     
-    # Phase 4: Reset LXD on all hosts if requested
-    - name: Prompt for LXD reset
+    # Wait for initialization to complete
+    - name: Wait for LXD initialization on primary node
       ansible.builtin.pause:
-        prompt: "Do you want to reset all LXD instances and create a fresh cluster? Type 'yes' to confirm"
-      register: reset_prompt
-      when: is_lxd_initialized and inventory_hostname == groups['baremetal'][0]
-        
-    - name: Set reset decision fact
-      ansible.builtin.set_fact:
-        should_reset_lxd: "{{ reset_prompt.user_input | default('no') == 'yes' }}"
-      when: inventory_hostname == groups['baremetal'][0]
-        
-    - name: Share reset decision with other hosts
-      ansible.builtin.set_fact:
-        should_reset_lxd: "{{ hostvars[groups['baremetal'][0]].should_reset_lxd | default(false) }}"
-      when: inventory_hostname != groups['baremetal'][0]
+        seconds: 15
+        prompt: "Waiting for LXD to initialize on primary node..."
     
-    - name: Reset LXD if requested
-      when: is_lxd_initialized and should_reset_lxd | default(false) | bool
+    # Create VM profiles (optional but useful)
+    - name: Create VM profile templates
       block:
-        - name: Stop LXD
-          ansible.builtin.command: snap stop lxd
-          
-        - name: Reset LXD
-          ansible.builtin.shell: >
-            lxc storage delete default || true;
-            lxc network delete lxdbr0 || true;
-            snap set lxd cluster.address="";
-            lxd init --auto;
-          
-        - name: Start LXD
-          ansible.builtin.command: snap start lxd
-          
-        - name: Wait for LXD to start
-          ansible.builtin.pause:
-            seconds: 10
-          
-        - name: Set LXD as uninitialized
-          ansible.builtin.set_fact:
-            is_lxd_initialized: false
-            is_already_clustered: false
-    
-    # Phase 5: Initialize LXD cluster on the first node
-    - name: Initialize LXD cluster on bootstrap node
-      when: 
-        - inventory_hostname == groups['baremetal'][0]
-        - not is_lxd_initialized or not is_already_clustered | default(false) | bool
-      block:
-        - name: Create LXD initialization config
+        # Create vm-networks profile
+        - name: Create vm-networks profile
           ansible.builtin.copy:
-            dest: /tmp/lxd_init.yaml
+            dest: "{{ temp_dir }}/vm-networks.yaml"
+            mode: '0644'
             content: |
+              name: vm-networks
+              description: Profile for VM networking setup
               config:
-                core.https_address: {{ ansible_host }}:{{ cluster_port }}
-                core.trust_password: {{ lxd_trust_password }}
-              cluster:
-                enabled: true
-                server_name: {{ inventory_hostname }}
-              storage_pools:
-              - name: default
-                driver: zfs
-                config:
-                  source: /var/snap/lxd/common/lxd/disks/default.img
-                  size: 100GB
-              networks:
-              - name: lxdbr0
-                type: bridge
-                config:
-                  ipv4.address: 192.168.100.1/24
-                  ipv4.nat: "true"
-                  ipv6.address: fd42:d2f8:c3f:9338::1/64
-                  ipv6.nat: "true"
-                  dns.mode: managed
-                  dns.domain: lxd
-              profiles:
-              - name: default
-                devices:
-                  eth0:
-                    name: eth0
-                    network: lxdbr0
-                    type: nic
-                  root:
-                    path: /
-                    pool: default
-                    type: disk
-            mode: '0600'
-            
-        - name: Initialize LXD with preseed config
-          ansible.builtin.shell: |
-            # Stop LXD first to ensure clean initialization
-            snap stop lxd || true
-            sleep 5
-            
-            # Start LXD again
-            snap start lxd
-            sleep 10
-            
-            # Initialize with preseed
-            cat /tmp/lxd_init.yaml | lxd init --preseed
-            
-            # Ensure LXD is running
-            snap restart lxd || true
-            sleep 10
-          register: init_result
-          failed_when: false
-          
-        - name: Display initialization result
-          ansible.builtin.debug:
-            msg: "LXD initialization result: {{ init_result.stdout | default('No output') }}"
-            
-        - name: Remove temporary init config
-          ansible.builtin.file:
-            path: /tmp/lxd_init.yaml
-            state: absent
-            
-        - name: Set bootstrap node as cluster initialized
-          ansible.builtin.set_fact:
-            is_cluster_initialized: true
+                security.nesting: "true"
+              devices:
+                eth0:
+                  name: eth0
+                  nictype: bridged
+                  parent: lxdbr0
+                  type: nic
+                eth1:
+                  name: eth1
+                  nictype: bridged
+                  parent: br0
+                  type: nic
         
-        - name: Wait for cluster to initialize
-          ansible.builtin.pause:
-            seconds: 10
-    
-    # Phase 6: Get cluster certificate from bootstrap node
-    - name: Get cluster certificate from bootstrap node
-      when: inventory_hostname == groups['baremetal'][0]
-      block:
-        - name: Get public certificate (method 1)
-          ansible.builtin.shell: >
-            lxc info | grep -zA1 "certificate:" | tail -n1 | tr -d '\n'
-          register: cert_result_1
-          failed_when: false
-          changed_when: false
-          
-        - name: Get public certificate (method 2)
-          ansible.builtin.shell: >
-            lxc config trust list | grep -A1 "PUBLIC CERTIFICATE" | tail -n1 | xargs
-          register: cert_result_2
-          failed_when: false
-          changed_when: false
-          
-        - name: Set certificate fact from one of the methods
-          ansible.builtin.set_fact:
-            cluster_cert: "{{ cert_result_1.stdout | default('') | trim or cert_result_2.stdout | default('') | trim }}"
-          
-        - name: Display certificate info
-          ansible.builtin.debug:
-            msg: "Certificate length: {{ (cluster_cert | default('')) | length }}"
-          
-        - name: Get cluster address
-          ansible.builtin.shell: >
-            lxc cluster list | grep {{ inventory_hostname }} | awk '{print $2}'
-          register: cluster_address_result
-          failed_when: cluster_address_result.rc != 0
-          changed_when: false
-          
-        - name: Set cluster address fact
-          ansible.builtin.set_fact:
-            cluster_addr: "{{ cluster_address_result.stdout }}"
-            
-        - name: Display certificate and address
-          ansible.builtin.debug:
-            msg: 
-              - "Cluster certificate retrieved"
-              - "Cluster address: {{ cluster_addr | default(ansible_host + ':' + cluster_port | string) }}"
-    
-    # Phase 7: Share cluster information with other nodes
-    - name: Share cluster information with other nodes
-      ansible.builtin.set_fact:
-        cluster_cert: "{{ hostvars[groups['baremetal'][0]].cluster_cert }}"
-        cluster_addr: "{{ hostvars[groups['baremetal'][0]].cluster_addr | default(hostvars[groups['baremetal'][0]].ansible_host + ':' + cluster_port | string) }}"
-      when: inventory_hostname != groups['baremetal'][0]
-      
-    # Phase 8: Join other nodes to the cluster
-    - name: Join cluster on other nodes
-      when: 
-        - inventory_hostname != groups['baremetal'][0]
-        - not is_already_clustered | default(false) | bool
-        - cluster_cert is defined
-      block:
-        - name: Create LXD join config
-          ansible.builtin.copy:
-            dest: /tmp/lxd_join.yaml
-            content: |
-              config:
-                core.https_address: {{ ansible_host }}:{{ cluster_port }}
-                core.trust_password: {{ lxd_trust_password }}
-              cluster:
-                server_name: {{ inventory_hostname }}
-                enabled: true
-                cluster_address: {{ cluster_addr }}
-                cluster_certificate: "{{ cluster_cert }}"
-                server_address: {{ ansible_host }}:{{ cluster_port }}
-                member_config:
-                - entity: storage-pool
-                  name: default
-                  key: source
-                  value: ""
-            mode: '0600'
-            
-        - name: Check if LXD needs to be reset
-          ansible.builtin.command: lxc cluster list
-          register: cluster_check
-          failed_when: false
-          changed_when: false
-          
-        - name: Stop LXD if already configured
-          ansible.builtin.command: snap stop lxd
-          when: cluster_check.rc == 0 and inventory_hostname in cluster_check.stdout
-          
-        - name: Reset LXD if already configured
-          ansible.builtin.shell: >
-            lxc storage delete default || true;
-            lxc network delete lxdbr0 || true;
-            snap set lxd cluster.address="";
-          when: cluster_check.rc == 0 and inventory_hostname in cluster_check.stdout
-          
-        - name: Start LXD
-          ansible.builtin.command: snap start lxd
-          
-        - name: Wait for LXD to start
-          ansible.builtin.pause:
-            seconds: 10
-            
-        - name: Join LXD cluster
+        - name: Apply vm-networks profile
           ansible.builtin.shell: |
-            # Stop LXD first to ensure clean join
-            snap stop lxd || true
-            sleep 5
-            
-            # Clear any existing LXD data
-            rm -rf /var/snap/lxd/common/lxd/database
-            rm -rf /var/snap/lxd/common/lxd/server.crt
-            rm -rf /var/snap/lxd/common/lxd/server.key
-            
-            # Start LXD again
-            snap start lxd
-            sleep 10
-            
-            # Join cluster with preseed
-            cat /tmp/lxd_join.yaml | lxd init --preseed
-            
-            # Ensure LXD is running
-            snap restart lxd || true
-            sleep 10
-          register: join_result
-          failed_when: false
+            lxc profile create vm-networks 2>/dev/null || true
+            cat {{ temp_dir }}/vm-networks.yaml | lxc profile edit vm-networks
+        
+        # Create vm-resources profile
+        - name: Create vm-resources profile
+          ansible.builtin.copy:
+            dest: "{{ temp_dir }}/vm-resources.yaml"
+            mode: '0644'
+            content: |
+              name: vm-resources
+              description: Profile for VM resource limits
+              config:
+                limits.cpu: "4"
+                limits.memory: 4GB
+                limits.memory.enforce: hard
+                security.secureboot: "false"
+                boot.autostart: "true"
+              devices: {}
+        
+        - name: Apply vm-resources profile
+          ansible.builtin.shell: |
+            lxc profile create vm-resources 2>/dev/null || true
+            cat {{ temp_dir }}/vm-resources.yaml | lxc profile edit vm-resources
+        
+        # Create vm-gpu profile
+        - name: Create vm-gpu profile
+          ansible.builtin.copy:
+            dest: "{{ temp_dir }}/vm-gpu.yaml"
+            mode: '0644'
+            content: |
+              name: vm-gpu
+              description: Profile for VM GPU passthrough
+              config:
+                nvidia.driver.capabilities: all
+                nvidia.runtime: "true"
+              devices: {}
+        
+        - name: Apply vm-gpu profile
+          ansible.builtin.shell: |
+            lxc profile create vm-gpu 2>/dev/null || true
+            cat {{ temp_dir }}/vm-gpu.yaml | lxc profile edit vm-gpu
+    
+    # Generate and store token for secondary nodes
+    - name: Generate join token for bcn1
+      ansible.builtin.command: |
+        lxc cluster add bcn1
+      register: token_result
+    
+    - name: Extract and save token
+      ansible.builtin.set_fact:
+        cluster_token: "{{ token_result.stdout_lines[1] | default('') }}"
+        cacheable: true
+    
+    - name: Save token to file for secondary nodes
+      ansible.builtin.copy:
+        content: "{{ cluster_token }}"
+        dest: "/tmp/lxd_cluster_token.txt"
+        mode: '0644'
+    
+    - name: Display token information (truncated)
+      ansible.builtin.debug:
+        msg: "Generated token for secondary nodes: {{ cluster_token | truncate(20, true) }}..."
+
+# PLAY 3: Join secondary nodes to the cluster
+- name: Join secondary nodes to LXD cluster
+  hosts: "{{ groups['baremetal'][1:] }}"  # Secondary nodes (bcn1, etc.)
+  gather_facts: true
+  become: true
+  
+  vars:
+    primary_node: "{{ groups['baremetal'][0] }}"  # First node (bcn2)
+    temp_dir: "/tmp/lxd-setup-{{ inventory_hostname }}"
+    lxd_trust_password: "{{ lookup('env', 'LXD_TRUST_PASSWORD') | default('thinkube-lxd-cluster', true) }}"
+  
+  tasks:
+    - name: Display secondary node information
+      ansible.builtin.debug:
+        msg: >-
           
-        - name: Display join result
-          ansible.builtin.debug:
-            msg: |
-              LXD cluster join result: 
-              RC: {{ join_result.rc }}
-              Stdout: {{ join_result.stdout | default('No output') }}
-              Stderr: {{ join_result.stderr | default('No errors') }}
-            
-        - name: Remove temporary join config
-          ansible.builtin.file:
-            path: /tmp/lxd_join.yaml
-            state: absent
-            
-    # Phase 9: Verify cluster setup
-    - name: Verify LXD is running
-      ansible.builtin.shell: >
-        snap services lxd | grep "lxd\.daemon.*active" || snap restart lxd; sleep 10
-      register: lxd_status
-      changed_when: lxd_status.stdout == ""
+          ═════════════════════════════════════════════════════════
+          🔄 Joining LXD Cluster as SECONDARY NODE ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          Primary: {{ primary_node }} ({{ hostvars[primary_node]['ansible_host'] }})
+          This node: {{ inventory_hostname }} ({{ ansible_host }})
+          
+    # Install required software
+    - name: Install LXD snap
+      community.general.snap:
+        name: lxd
+        state: present
+    
+    - name: Install ZFS tools
+      ansible.builtin.apt:
+        name: zfsutils-linux
+        state: present
+        update_cache: yes
+    
+    # Create temporary directory
+    - name: Create temporary directory for setup files
+      ansible.builtin.file:
+        path: "{{ temp_dir }}"
+        state: directory
+        mode: '0755'
+    
+    # Get join token from primary node
+    - name: Get cluster join token from primary node
+      ansible.builtin.slurp:
+        src: "/tmp/lxd_cluster_token.txt"
+      register: token_file_b64
+      delegate_to: "{{ primary_node }}"
+    
+    - name: Extract token from file
+      ansible.builtin.set_fact:
+        join_token: "{{ token_file_b64['content'] | b64decode | trim }}"
+    
+    - name: Display token information (truncated)
+      ansible.builtin.debug:
+        msg: "Using token from primary node: {{ join_token | truncate(20, true) }}..."
+    
+    # Create preseed file for joining
+    - name: Create preseed file for joining the cluster
+      ansible.builtin.copy:
+        dest: "{{ temp_dir }}/join-preseed.yaml"
+        mode: '0644'
+        content: |
+          cluster:
+            enabled: true
+            server_name: {{ inventory_hostname }}
+            server_address: {{ ansible_host }}:8443
+            cluster_address: {{ hostvars[primary_node]['ansible_host'] }}:8443
+            cluster_token: {{ join_token }}
+            # Member-specific configuration must only include keys that can be different across nodes
+            # For a pure ZFS/dir storage pool, we only need an empty source
+            member_config:
+            - entity: storage-pool
+              name: default
+              key: source
+              value: ""
+          config:
+            core.https_address: {{ ansible_host }}:8443
+            core.trust_password: {{ lxd_trust_password }}
+    
+    # Check for existing lxdbr0 and remove it if needed
+    - name: Check for existing lxdbr0 and remove if present
+      ansible.builtin.shell: |
+        if ip link show lxdbr0 2>/dev/null; then
+          echo "Removing existing lxdbr0 device..."
+          ip link set lxdbr0 down || true
+          brctl delbr lxdbr0 || true
+        else
+          echo "No existing lxdbr0 found"
+        fi
+      register: bridge_cleanup
+      changed_when: "'Removing existing lxdbr0 device' in bridge_cleanup.stdout"
+
+    # Join the cluster
+    - name: Join the cluster using preseed file
+      ansible.builtin.shell: |
+        cat {{ temp_dir }}/join-preseed.yaml | lxd init --preseed --debug
+      register: join_result
       failed_when: false
-      
-    - name: Verify final cluster status
-      ansible.builtin.command: lxc cluster list
-      register: final_cluster_status
-      changed_when: false
-      failed_when: false
-      run_once: true
-      delegate_to: "{{ groups['baremetal'][0] }}"
-      
+
+    # Output detailed error information if join fails
+    - name: Display join result
+      ansible.builtin.debug:
+        msg: |
+          Join result: {{ join_result.rc == 0 | ternary('SUCCESS', 'FAILED') }}
+          Return code: {{ join_result.rc }}
+
+          {{ join_result.stderr | default('No error message') }}
+    
+    # Wait for join to complete
+    - name: Wait for cluster join to complete
+      ansible.builtin.pause:
+        seconds: 20
+        prompt: "Waiting for secondary node to join cluster..."
+
+# PLAY 4: Verify the cluster setup
+- name: Verify LXD cluster setup
+  hosts: "{{ groups['baremetal'][0] }}"  # Primary node (bcn2)
+  gather_facts: true
+  become: true
+  
+  tasks:
+    # Check final cluster status
+    - name: Get final cluster status
+      ansible.builtin.command: |
+        lxc cluster list
+      register: cluster_status
+    
+    # Display final cluster status
     - name: Display final cluster status
       ansible.builtin.debug:
         msg: |
-          ════════════════════════════════════════════════════════════════════════
-          LXD CLUSTER STATUS
-          ════════════════════════════════════════════════════════════════════════
-          
-          {{ final_cluster_status.stdout }}
           
           ════════════════════════════════════════════════════════════════════════
-      run_once: true
-      delegate_to: "{{ groups['baremetal'][0] }}"
-      
-    # Phase 10: Configure VM profiles
-    - name: Configure VM profiles in the cluster
-      when: inventory_hostname == groups['baremetal'][0]
-      block:
-        # Create profile for VMs with networks
-        - name: Create VM network profile
-          ansible.builtin.command: >
-            lxc profile create vm-networks || true
-          failed_when: false
-        
-        - name: Configure VM network profile
-          ansible.builtin.shell: |
-            cat << EOF | lxc profile edit vm-networks
-            name: vm-networks
-            description: "Profile for VM networking setup"
-            config:
-              security.nesting: "true"
-            devices:
-              eth0:
-                nictype: bridged
-                parent: lxdbr0
-                type: nic
-              eth1:
-                nictype: bridged
-                parent: br0
-                type: nic
-            EOF
+          FINAL LXD CLUSTER STATUS
+          ════════════════════════════════════════════════════════════════════════
           
-        # Create profile for VM resources
-        - name: Create VM resources profile
-          ansible.builtin.command: >
-            lxc profile create vm-resources || true
-          failed_when: false
-        
-        - name: Configure VM resources profile
-          ansible.builtin.shell: |
-            cat << EOF | lxc profile edit vm-resources
-            name: vm-resources
-            description: "Profile for VM resource limits"
-            config:
-              limits.cpu: "4"
-              limits.memory: "4GB"
-              limits.memory.enforce: "hard"
-              security.secureboot: "false"
-              boot.autostart: "true"
-            EOF
-        
-        # Create profile for GPU passthrough
-        - name: Create VM GPU profile
-          ansible.builtin.command: >
-            lxc profile create vm-gpu || true
-          failed_when: false
-        
-        - name: Configure VM GPU profile
-          ansible.builtin.shell: |
-            cat << EOF | lxc profile edit vm-gpu
-            name: vm-gpu
-            description: "Profile for VM GPU passthrough"
-            config:
-              nvidia.driver.capabilities: "all"
-              nvidia.runtime: "true"
-            devices: {}
-            EOF
+          {{ cluster_status.stdout }}
+          
+          ════════════════════════════════════════════════════════════════════════
     
-    # Phase 11: Display completion message
+    # Parse cluster members
+    - name: Parse cluster member information
+      ansible.builtin.set_fact:
+        cluster_members: "{{ cluster_status.stdout | regex_findall('bcn\\d') | unique }}"
+        expected_members: "{{ groups['baremetal'] | length }}"
+    
+    # Verify all nodes joined
+    - name: Verify all expected nodes are in the cluster
+      ansible.builtin.assert:
+        that:
+          - "cluster_members | length | int == expected_members | int"
+          - "item in cluster_status.stdout"
+        fail_msg: "ERROR: Node {{ item }} is not in the cluster"
+        success_msg: "✅ Node {{ item }} is in the cluster"
+      loop: "{{ groups['baremetal'] }}"
+    
+    # Display completion message
     - name: Display completion message
       ansible.builtin.debug:
         msg: |
+          
           ════════════════════════════════════════════════════════════════════════
-          ✅ LXD Cluster Configuration Completed Successfully
+          ✅ LXD CLUSTER SETUP COMPLETED SUCCESSFULLY
           ════════════════════════════════════════════════════════════════════════
           
-          The LXD cluster has been successfully set up across the following nodes:
+          The LXD cluster has been successfully set up across all nodes:
           {{ groups['baremetal'] | join(', ') }}
           
           PROFILES CREATED:
+          - default: Basic container profile
           - vm-networks: Network configuration for VMs
           - vm-resources: Resource limits for VMs
           - vm-gpu: GPU passthrough configuration
           
           NEXT STEPS:
           Run the LXD profiles setup playbook:
-          $ ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
+          $ ./scripts/run_ansible.sh ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
           
           ════════════════════════════════════════════════════════════════════════
-      run_once: true

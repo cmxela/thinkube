@@ -4,6 +4,7 @@ all:
   vars:
     domain_name: thinkube.com
     admin_username: admin
+    system_username: thinkube
     ansible_python_interpreter: /usr/bin/python3
     ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
     home: "{{ lookup('env', 'HOME') }}"

@@ -25,6 +25,13 @@
   become: false  # Use become only at task level when necessary
 
   # All installation-specific variables must be defined in inventory
+  vars:
+    # Define LXD profile names
+    lxd_required_profiles:
+      - "container"
+      - "vm-base"
+      - "vm-networks"
+    lxd_gpu_profile_name: "gpu-passthrough"
     
   tasks:
     # Verify all required variables exist before proceeding
@@ -122,6 +129,10 @@
     # Implement profile creation using block to handle failures properly
     - name: Create and configure LXD profiles
       block:
+        # Set first VM variable right at the beginning
+        - name: Get first VM from inventory
+          ansible.builtin.set_fact:
+            first_vm: "{{ groups['lxd_containers'][0] }}"
         # 1. Container profile first
         - name: Create container profile
           ansible.builtin.command: lxc profile create container
@@ -186,9 +197,9 @@
           failed_when: vm_networks_profile_create.rc != 0 and "already exists" not in vm_networks_profile_create.stderr
         
         # Use VM configuration from the first VM in inventory to identify bridge interfaces
-        - name: Get network configuration from VM in inventory
-          ansible.builtin.set_fact:
-            first_vm: "{{ groups['lxd_containers'][0] }}"
+        - name: Verify VM is properly defined
+          ansible.builtin.debug:
+            msg: "Using VM '{{ first_vm }}' for network configuration"
 
         - name: Verify VM network interfaces are valid
           ansible.builtin.assert:
@@ -313,11 +324,14 @@
 
     - name: Build list of expected profiles
       ansible.builtin.set_fact:
-        expected_profiles: "{{ lxd_required_profiles }}"
+        expected_profiles:
+          - "container"
+          - "vm-base"
+          - "vm-networks"
 
     - name: Add GPU profile to expected profiles if needed
       ansible.builtin.set_fact:
-        expected_profiles: "{{ expected_profiles + [lxd_gpu_profile_name] }}"
+        expected_profiles: "{{ expected_profiles + ['gpu-passthrough'] }}"
       when: need_gpu_profile | default(false)
         
     - name: Verify all expected profiles exist

@@ -122,7 +122,7 @@
       register: networks
       changed_when: false
       failed_when: networks.rc != 0
-      
+
     - name: Verify lxdbr0 network exists
       ansible.builtin.assert:
         that:
@@ -132,13 +132,13 @@
           Networks:
           {{ networks.stdout }}
         success_msg: "✓ lxdbr0 network exists"
-        
+
     - name: Get lxdbr0 network details
       ansible.builtin.command: lxc network show lxdbr0
       register: network_details
       changed_when: false
       failed_when: network_details.rc != 0
-      
+
     - name: Verify lxdbr0 network configuration
       ansible.builtin.assert:
         that:
@@ -150,6 +150,50 @@
           Actual configuration:
           {{ network_details.stdout }}
         success_msg: "✓ lxdbr0 network is correctly configured"
+
+    # Test 6b: Verify network interface on all nodes
+    - name: Check network bridge interface on all nodes
+      ansible.builtin.shell: |
+        ssh -o BatchMode=yes -o ConnectTimeout=5 {{ item }} "ip link show {{ lxd_network_name }}" 2>/dev/null || echo "MISSING on {{ item }}"
+      register: bridge_status
+      changed_when: false
+      delegate_to: localhost
+      become: false
+      loop: "{{ groups['baremetal'] }}"
+
+    - name: Display network bridge interface status
+      ansible.builtin.debug:
+        msg: "{{ lxd_network_name }} interface on {{ item.item }}: {{ 'OK' if 'MISSING' not in item.stdout else 'MISSING' }}"
+      loop: "{{ bridge_status.results }}"
+
+    - name: Verify all nodes have network interface at OS level
+      ansible.builtin.assert:
+        that: "'MISSING' not in item.stdout"
+        fail_msg: "ERROR: {{ lxd_network_name }} interface missing on {{ item.item }}"
+        success_msg: "✓ {{ lxd_network_name }} interface verified on {{ item.item }}"
+      loop: "{{ bridge_status.results }}"
+
+    - name: Check interface state on all nodes
+      ansible.builtin.shell: |
+        ssh -o BatchMode=yes -o ConnectTimeout=5 {{ item }} "ip link show {{ lxd_network_name }} | grep -o 'state [A-Z]*'" 2>/dev/null || echo "state UNKNOWN"
+      register: interface_state
+      changed_when: false
+      delegate_to: localhost
+      become: false
+      loop: "{{ groups['baremetal'] }}"
+
+    - name: Display interface state on all nodes
+      ansible.builtin.debug:
+        msg: "{{ lxd_network_name }} on {{ item.item }}: {{ item.stdout }}"
+      loop: "{{ interface_state.results }}"
+
+    # Test 6c: Check interface states, but don't fail on DOWN state
+    # According to https://discourse.ubuntu.com/t/lxdbr0-interface-is-down/45442
+    # a DOWN state is normal when no containers are running
+    - name: Check interface states
+      ansible.builtin.debug:
+        msg: "{{ lxd_network_name }} interface on {{ item.item }} is in state {{ item.stdout }} - This is normal when no containers are using it"
+      loop: "{{ interface_state.results }}"
         
     # Test 7: Verify required profiles are created
     - name: Check profiles
@@ -191,8 +235,13 @@
             ✓ Cluster has {{ cluster_members_list | length }} members (expected: {{ groups['baremetal'] | length }})
             ✓ All nodes are ONLINE
             ✓ Default storage pool exists
-            ✓ lxdbr0 network is correctly configured
+            ✓ lxdbr0 network is correctly configured in LXD
+            ✓ lxdbr0 interface exists at OS level on all nodes
             ✓ All required profiles exist
+
+          NOTES:
+            - lxdbr0 interfaces may show state "DOWN" - this is normal when no containers are using the network.
+              They will automatically transition to UP state once containers/VMs are started.
 
           RESULT:
             The LXD cluster is properly configured and ready for VM creation.

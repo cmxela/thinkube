@@ -27,6 +27,22 @@
   become: false  # Use become only where necessary
 
   # All installation-specific variables must be defined in inventory
+  vars:
+    # Default values for VM profiles if not defined in inventory
+    vm_profiles:
+      base: "vm-base"
+      network: "vm-networks"
+      gpu: "gpu-passthrough"
+
+    # Default value for VM image from lxd_containers group
+    vm_image: "{{ hostvars[groups['lxd_containers'][0]]['lxd_image'] | default('ubuntu:24.04') }}"
+
+    # Default value for internal gateway
+    internal_gateway: "192.168.100.1"
+
+    # Default values for DNS servers and search domains
+    dns_servers: ["8.8.8.8", "8.8.4.4"]
+    dns_search_domains: ["{{ domain_name }}", "kn.{{ domain_name }}"]
   
   tasks:
     # Verify all required variables exist before proceeding
@@ -165,6 +181,26 @@
           ansible.builtin.set_fact:
             parsed_profiles: "{{ profile_list.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
 
+        # Define expected profiles directly here
+        - name: Define required profiles
+          ansible.builtin.set_fact:
+            expected_profiles:
+              - "container"
+              - "vm-base"
+              - "vm-networks"
+
+        # Only add GPU profile if needed
+        - name: Check if any VMs need GPU passthrough
+          ansible.builtin.set_fact:
+            need_gpu_profile: >-
+              {{ groups['gpu_passthrough_containers'] is defined and
+                 (groups['gpu_passthrough_containers'] | length > 0) }}
+
+        - name: Add GPU profile to expected profiles if needed
+          ansible.builtin.set_fact:
+            expected_profiles: "{{ expected_profiles + ['gpu-passthrough'] }}"
+          when: need_gpu_profile | default(false)
+
         - name: Verify all required profiles exist
           ansible.builtin.assert:
             that:
@@ -173,26 +209,9 @@
               Required profile '{{ profile_name }}' is missing.
               Run 20_setup_lxd_profiles.yaml playbook first.
             success_msg: "✓ Profile '{{ profile_name }}' exists"
-          loop: "{{ lxd_required_profiles }}"
+          loop: "{{ expected_profiles }}"
           loop_control:
             loop_var: profile_name
-
-        # Only check GPU profile if needed
-        - name: Check if any VMs need GPU passthrough
-          ansible.builtin.set_fact:
-            need_gpu_profile: >-
-              {{ groups['gpu_passthrough_containers'] is defined and
-                 (groups['gpu_passthrough_containers'] | length > 0) }}
-
-        - name: Verify GPU profile exists if needed
-          ansible.builtin.assert:
-            that:
-              - "lxd_gpu_profile_name in parsed_profiles"
-            fail_msg: |
-              Required GPU profile '{{ lxd_gpu_profile_name }}' missing but needed by VMs.
-              Run 20_setup_lxd_profiles.yaml playbook first.
-            success_msg: "✓ GPU profile '{{ lxd_gpu_profile_name }}' exists"
-          when: need_gpu_profile | default(false)
         
         # Verify storage pool exists
         - name: Verify default storage pool exists
@@ -250,10 +269,10 @@
       block:
         - name: Create VM
           ansible.builtin.command: >
-            lxc launch ubuntu:24.04 {{ vm_name }} --vm
-            --profile vm-base
-            --profile vm-networks
-            {% if vm_name in groups['gpu_passthrough_containers'] | default([]) %}--profile gpu-passthrough{% endif %}
+            lxc launch {{ vm_image }} {{ vm_name }} --vm
+            --profile {{ vm_profiles.base }}
+            --profile {{ vm_profiles.network }}
+            {% if vm_name in groups['gpu_passthrough_containers'] | default([]) %}--profile {{ vm_profiles.gpu }}{% endif %}
             --storage default
             {% if is_clustered %}--target {{ hostvars[vm_name]['parent_host'] }}{% endif %}
           register: vm_create
@@ -419,7 +438,7 @@
             # Create systemd-resolved configuration
             lxc exec {{ vm_name }} -- bash -c 'cat > /etc/systemd/resolved.conf.d/dns.conf << EOF
             [Resolve]
-            DNS=8.8.8.8 8.8.4.4
+            DNS={{ dns_servers | join(" ") }}
             Domains=~.
             Cache=yes
             EOF'
@@ -429,8 +448,9 @@
             
             # Create resolv.conf with proper nameservers
             lxc exec {{ vm_name }} -- bash -c 'cat > /etc/resolv.conf << EOF
-            nameserver 8.8.8.8
-            nameserver 8.8.4.4
+            {% for dns in dns_servers %}
+            nameserver {{ dns }}
+            {% endfor %}
             EOF'
             
             # Make resolv.conf immutable to prevent changes
@@ -446,85 +466,158 @@
         - name: Clean up temporary network configuration files
           ansible.builtin.file:
             path: "/tmp/netplan_configs"
-            state: directory
             state: absent
       
     # Phase 6: Set up user and SSH access
+    - name: Verify system_username is defined
+      ansible.builtin.assert:
+        that:
+          - system_username is defined
+          - system_username != ""
+        fail_msg: "Required variable 'system_username' is not defined in inventory"
+        success_msg: "✓ Using system_username '{{ system_username }}' from inventory"
+
     - name: Set up user and SSH access
       block:
-        # Create thinkube user with sudo access
-        - name: Create thinkube user in VMs
+        # Create user setup script to avoid command line issues
+        - name: Create temporary user setup script
+          ansible.builtin.copy:
+            dest: "/tmp/vm_user_setup.sh"
+            mode: '0755'
+            content: |
+              #!/bin/bash
+              # User setup script for VMs
+
+              USERNAME="{{ system_username }}"
+
+              # Create user if not exists
+              if ! id -u $USERNAME &>/dev/null; then
+                useradd -m -s /bin/bash $USERNAME
+                echo "User $USERNAME created"
+              else
+                echo "User $USERNAME already exists"
+              fi
+
+              # Set password (same as username for simplicity)
+              echo "$USERNAME:$USERNAME" | chpasswd
+
+              # Add to sudo group
+              usermod -aG sudo $USERNAME
+
+              # Configure sudo without password
+              echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME
+              chmod 440 /etc/sudoers.d/$USERNAME
+
+              # Ensure home directory exists and has correct permissions
+              mkdir -p /home/$USERNAME
+              chown $USERNAME:$USERNAME /home/$USERNAME
+
+              echo "User setup completed successfully"
+
+        # Transfer and execute the script in VMs
+        - name: Run user setup script in VMs
           ansible.builtin.shell: |
-            # Create user if it doesn't exist
-            if ! lxc exec {{ vm_name }} -- id -u thinkube &>/dev/null; then
-              lxc exec {{ vm_name }} -- useradd -m -s /bin/bash thinkube
-              echo "User thinkube created"
-            else
-              echo "User thinkube already exists"
-            fi
-            
-            # Set password
-            lxc exec {{ vm_name }} -- bash -c "echo 'thinkube:{{ lookup('env', 'ANSIBLE_SUDO_PASS') | default('thinkube') }}' | chpasswd"
-            
-            # Add to sudo group
-            lxc exec {{ vm_name }} -- usermod -aG sudo thinkube
-            
-            # Configure sudo without password
-            lxc exec {{ vm_name }} -- bash -c 'echo "thinkube ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/thinkube'
-            lxc exec {{ vm_name }} -- chmod 440 /etc/sudoers.d/thinkube
+            # Push script to VM
+            lxc file push /tmp/vm_user_setup.sh {{ vm_name }}/tmp/
+            # Execute script
+            lxc exec {{ vm_name }} -- bash /tmp/vm_user_setup.sh
+            # Cleanup
+            lxc exec {{ vm_name }} -- rm /tmp/vm_user_setup.sh
           register: user_setup
-          failed_when: user_setup.rc != 0
-          changed_when: user_setup.rc == 0
           loop: "{{ groups['lxd_containers'] | default([]) }}"
           loop_control:
             loop_var: vm_name
+          changed_when: "'User setup completed successfully' in user_setup.stdout"
+          failed_when: user_setup.rc != 0
+
+        # Clean up local script
+        - name: Remove temporary script
+          ansible.builtin.file:
+            path: "/tmp/vm_user_setup.sh"
+            state: absent
         
-        # Set up SSH access
+        # Set up SSH access using script
+        - name: Create SSH setup script
+          ansible.builtin.copy:
+            dest: "/tmp/vm_ssh_setup.sh"
+            mode: '0755'
+            content: |
+              #!/bin/bash
+              # SSH setup script for VMs
+
+              USERNAME="{{ system_username }}"
+
+              # Install SSH if needed
+              if ! command -v sshd &>/dev/null; then
+                apt-get update && apt-get install -y openssh-server
+              fi
+
+              # Enable SSH service
+              systemctl enable ssh
+              systemctl start ssh
+
+              # Configure SSH for password authentication
+              sed -i "s/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
+
+              # Set up SSH directory for system user
+              mkdir -p /home/$USERNAME/.ssh
+              chown $USERNAME:$USERNAME /home/$USERNAME/.ssh
+              chmod 700 /home/$USERNAME/.ssh
+
+              # Restart SSH service to apply changes
+              systemctl restart ssh
+
+              echo "SSH setup completed successfully"
+
         - name: Configure SSH access in VMs
           ansible.builtin.shell: |
-            # Install SSH if needed
-            lxc exec {{ vm_name }} -- bash -c "command -v sshd || apt-get update && apt-get install -y openssh-server"
-            
-            # Enable SSH service
-            lxc exec {{ vm_name }} -- systemctl enable ssh
-            lxc exec {{ vm_name }} -- systemctl start ssh
-            
-            # Configure SSH for password authentication
-            lxc exec {{ vm_name }} -- sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-            
-            # Set up SSH directory for thinkube user
-            lxc exec {{ vm_name }} -- mkdir -p /home/thinkube/.ssh
-            lxc exec {{ vm_name }} -- chown thinkube:thinkube /home/thinkube/.ssh
-            lxc exec {{ vm_name }} -- chmod 700 /home/thinkube/.ssh
-            
-            # Restart SSH service to apply changes
-            lxc exec {{ vm_name }} -- systemctl restart ssh
+            # Push script to VM
+            lxc file push /tmp/vm_ssh_setup.sh {{ vm_name }}/tmp/
+            # Execute script
+            lxc exec {{ vm_name }} -- bash /tmp/vm_ssh_setup.sh
+            # Cleanup
+            lxc exec {{ vm_name }} -- rm /tmp/vm_ssh_setup.sh
           register: ssh_config
           failed_when: ssh_config.rc != 0
           changed_when: ssh_config.rc == 0
           loop: "{{ groups['lxd_containers'] | default([]) }}"
           loop_control:
             loop_var: vm_name
-        
+
+        # Clean up local script
+        - name: Remove SSH setup script
+          ansible.builtin.file:
+            path: "/tmp/vm_ssh_setup.sh"
+            state: absent
+
         # Configure SSH authorized keys (optional)
         - name: Check if SSH public key exists
           ansible.builtin.stat:
             path: "~/.ssh/id_rsa.pub"
           register: ssh_pubkey
         
-        - name: Configure SSH authorized keys
-          ansible.builtin.shell: |
-            # Copy SSH public key to VM
-            cat ~/.ssh/id_rsa.pub | lxc exec {{ vm_name }} -- bash -c "cat > /tmp/id_rsa.pub"
-            
+        - name: Copy SSH public key to VM
+          ansible.builtin.shell: cat ~/.ssh/id_rsa.pub | lxc exec {{ vm_name }} -- bash -c "cat > /tmp/id_rsa.pub"
+          register: copy_pubkey
+          failed_when: copy_pubkey.rc != 0
+          changed_when: copy_pubkey.rc == 0
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+          when: ssh_pubkey.stat.exists | default(false)
+
+        - name: Configure authorized keys
+          ansible.builtin.command: >
+            lxc exec {{ vm_name }} -- bash -c '
             # Add to authorized_keys
-            lxc exec {{ vm_name }} -- bash -c "mkdir -p /home/thinkube/.ssh"
-            lxc exec {{ vm_name }} -- bash -c "cat /tmp/id_rsa.pub >> /home/thinkube/.ssh/authorized_keys"
-            lxc exec {{ vm_name }} -- bash -c "chown -R thinkube:thinkube /home/thinkube/.ssh"
-            lxc exec {{ vm_name }} -- bash -c "chmod 600 /home/thinkube/.ssh/authorized_keys"
-            
+            mkdir -p /home/{{ system_username }}/.ssh
+            cat /tmp/id_rsa.pub >> /home/{{ system_username }}/.ssh/authorized_keys
+            chown -R {{ system_username }}:{{ system_username }} /home/{{ system_username }}/.ssh
+            chmod 600 /home/{{ system_username }}/.ssh/authorized_keys
+
             # Clean up
-            lxc exec {{ vm_name }} -- rm /tmp/id_rsa.pub
+            rm /tmp/id_rsa.pub
+            '
           register: ssh_key_setup
           failed_when: ssh_key_setup.rc != 0
           changed_when: ssh_key_setup.rc == 0
@@ -538,10 +631,11 @@
       block:
         # Install packages with error handling
         - name: Install essential packages in VMs
-          ansible.builtin.shell: |
+          ansible.builtin.command: >
+            lxc exec {{ vm_name }} -- bash -c '
             # Update package cache with retries
             for i in $(seq 1 3); do
-              if lxc exec {{ vm_name }} -- apt-get update -y; then
+              if apt-get update -y; then
                 echo "Package cache update successful on attempt $i"
                 break
               else
@@ -552,12 +646,12 @@
                 fi
               fi
             done
-            
+
             # Install packages with retries
             for i in $(seq 1 3); do
-              if lxc exec {{ vm_name }} -- bash -c "export DEBIAN_FRONTEND=noninteractive && 
-                 apt-get install -y --no-install-recommends curl wget net-tools dnsutils
-                 openssh-server sudo vim chrony"; then
+              if export DEBIAN_FRONTEND=noninteractive &&
+                 apt-get install -y --no-install-recommends curl wget net-tools dnsutils \
+                 openssh-server sudo vim chrony; then
                 echo "Package installation successful on attempt $i"
                 break
               else
@@ -568,69 +662,15 @@
                 fi
               fi
             done
+            '
           register: pkg_install
-          failed_when: false  # Don't fail the playbook if package installation fails
+          failed_when: "'All package installation attempts failed' in pkg_install.stdout"
           loop: "{{ groups['lxd_containers'] | default([]) }}"
           loop_control:
             loop_var: vm_name
             
-    # Phase 8: Network testing
-    - name: Test VM networking
-      block:
-        # Test internal network connectivity
-        - name: Test internal network connectivity
-          ansible.builtin.command: >
-            lxc exec {{ vm_name }} -- ping -c 2 192.168.100.1
-          register: internal_ping
-          failed_when: false  # Don't fail if ping fails
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-        
-        # Test external network connectivity
-        - name: Test external network connectivity
-          ansible.builtin.command: >
-            lxc exec {{ vm_name }} -- ping -c 2 8.8.8.8
-          register: external_ping
-          failed_when: false  # Don't fail if ping fails
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-        
-        # Test DNS resolution
-        - name: Test DNS resolution
-          ansible.builtin.command: >
-            lxc exec {{ vm_name }} -- host -t A google.com
-          register: dns_test
-          failed_when: false  # Don't fail if DNS test fails
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-        
-        # Display network test results
-        - name: Compile network test results
-          ansible.builtin.set_fact:
-            network_status: "{{ network_status | default([]) + [{
-              'vm': item.item,
-              'internal': (item.rc == 0),
-              'external': external_ping.results[idx].rc == 0,
-              'dns': dns_test.results[idx].rc == 0
-            }] }}"
-          loop: "{{ internal_ping.results }}"
-          loop_control:
-            index_var: idx
-          when: internal_ping.results is defined and internal_ping.results | length > 0
-        
-        # Display networking results
-        - name: Display network test results
-          ansible.builtin.debug:
-            msg: |
-              VM: {{ item.vm }}
-              - Internal Network: {{ 'OK ✓' if item.internal else 'FAILED ✗' }}
-              - External Network: {{ 'OK ✓' if item.external else 'FAILED ✗' }}
-              - DNS Resolution: {{ 'OK ✓' if item.dns else 'FAILED ✗' }}
-          loop: "{{ network_status | default([]) }}"
-          when: network_status is defined and network_status | length > 0
+    # Note: Network testing has been moved to 38_test_vm_creation.yaml
+    # to properly separate provisioning from testing
       
     # Final completion message
     - name: Display VM creation completion message

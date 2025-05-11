@@ -1,5 +1,5 @@
 ---
-# 19_rollback_lxd_profiles.yaml - Rollback LXD profiles
+# 29_rollback_lxd_profiles.yaml - Rollback LXD profiles
 #
 # Purpose:
 #   Safely removes LXD profiles and performs cleanup. This is the rollback playbook 
@@ -12,10 +12,10 @@
 # Variables:
 #   None
 #
-# Run with: 
-#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/19_rollback_lxd_profiles.yaml
+# Run with:
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/29_rollback_lxd_profiles.yaml
 #   Or with helper script:
-#   ./scripts/run_ansible.sh ansible/20_lxd_setup/19_rollback_lxd_profiles.yaml
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/29_rollback_lxd_profiles.yaml
 
 - name: Rollback LXD profiles
   hosts: management
@@ -74,7 +74,7 @@
           
         # Check individual profile usage
         - name: Check if profiles are in use
-          ansible.builtin.command: lxc profile show {{ profile_name }} --expanded
+          ansible.builtin.command: lxc profile show {{ profile_name }}
           register: profile_usage
           changed_when: false
           loop: "{{ profiles_to_remove }}"
@@ -140,7 +140,7 @@
           
           REQUIRED ACTION:
             To remove these profiles, first delete all VMs using them:
-            $ ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/29_rollback_vm_creation.yaml
+            $ ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/39_rollback_vm_creation.yaml
           
           ═════════════════════════════════════════════════════════
       when: profiles_in_use is defined and profiles_in_use | length > 0

@@ -1,5 +1,5 @@
 ---
-# 00_reserve_gpus.yaml - Reserve GPUs for later passthrough to VMs
+# 30_reserve_gpus.yaml - Reserve GPUs for later passthrough to VMs
 #
 # Purpose:
 #   Configures a host system to keep one GPU for the host OS
@@ -15,7 +15,7 @@
 #   - server_type: 'desktop' or 'headless' (determines X.org config needs)
 #
 # Run with:
-#   ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/00_reserve_gpus.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+#   ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/30_reserve_gpus.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
 #
 # This should be the first playbook executed in systems with multiple GPUs
 
@@ -370,7 +370,7 @@
           
           NEXT STEPS:
           1. Reboot the system: sudo reboot
-          2. After reboot, verify with: 00_test_gpu_reservation.yaml
+          2. After reboot, verify with: 38_test_gpu_reservation.yaml
           3. Continue with other deployment playbooks
           
           {% elif single_gpu_passthrough | default(false) %}
@@ -386,7 +386,7 @@
           
           NEXT STEPS:
           1. Reboot the system: sudo reboot
-          2. After reboot, verify with: 00_test_gpu_reservation.yaml
+          2. After reboot, verify with: 38_test_gpu_reservation.yaml
           3. Continue with other deployment playbooks
           
           {% else %}

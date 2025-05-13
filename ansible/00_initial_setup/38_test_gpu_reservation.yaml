@@ -1,14 +1,14 @@
 ---
-# 00_test_gpu_reservation.yaml - Test GPU reservation for passthrough
+# 38_test_gpu_reservation.yaml - Test GPU reservation for passthrough
 #
 # Purpose:
 #   Validates that GPUs have been properly reserved for passthrough
-#   after rebooting the system following 00_reserve_gpus.yaml
+#   after rebooting the system following 30_reserve_gpus.yaml
 #
 # Run with:
-#   ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/00_test_gpu_reservation.yaml
+#   ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/38_test_gpu_reservation.yaml
 #
-# This should be run after 00_reserve_gpus.yaml and a system reboot
+# This should be run after 30_reserve_gpus.yaml and a system reboot
 
 - name: Test GPU Reservation for Passthrough
   hosts: baremetal
@@ -170,7 +170,7 @@
           1. Check that IOMMU is enabled in BIOS
           2. Verify kernel command line has correct IOMMU parameters
           3. Check if GPU is on an IOMMU-compatible PCIe slot
-          4. Try running 00_reserve_gpus.yaml again
+          4. Try running 30_reserve_gpus.yaml again
           
           {% endif %}
           ═════════════════════════════════════════════════════════

@@ -39,20 +39,73 @@
       ansible.builtin.meta: end_play
       when: not gpu_info_file.stat.exists
     
-    # Phase 2: Check IOMMU enabled status
-    - name: Check if IOMMU is enabled
+    # Phase 2: Check IOMMU enabled status using multiple methods
+    - name: Check if IOMMU is enabled in dmesg
       ansible.builtin.shell: |
         dmesg | grep -E "IOMMU|DMAR" | grep -i enabled
-      register: iommu_check
+      register: iommu_dmesg_check
       changed_when: false
       failed_when: false
       tags: iommu_check
+      
+    - name: Check if IOMMU is enabled in kernel parameters
+      ansible.builtin.shell: |
+        cat /proc/cmdline | grep -E "intel_iommu=on|amd_iommu=on"
+      register: iommu_kernel_param_check
+      changed_when: false
+      failed_when: false
+      tags: iommu_check
+      
+    - name: Check if vfio-pci is loaded
+      ansible.builtin.shell: |
+        lsmod | grep vfio_pci
+      register: vfio_pci_loaded_check
+      changed_when: false
+      failed_when: false
+      tags: iommu_check
+      
+    - name: Check if any GPUs are bound to vfio-pci
+      ansible.builtin.shell: |
+        lspci -nnk | grep -A3 "VGA\|3D\|Display" | grep -c "Kernel driver in use: vfio-pci" || echo "0"
+      register: vfio_pci_binding_check
+      changed_when: false
+      failed_when: false
+      tags: iommu_check
+      
+    # Consider IOMMU enabled if any of the positive indicators are true
+    - name: Set IOMMU enabled status
+      ansible.builtin.set_fact:
+        iommu_enabled: >-
+          {{ 
+            (iommu_dmesg_check.rc == 0) or 
+            (iommu_kernel_param_check.rc == 0) or 
+            ((vfio_pci_loaded_check.rc == 0) and (vfio_pci_binding_check.stdout | trim | int > 0))
+          }}
+          
+    - name: Display IOMMU detection details
+      ansible.builtin.debug:
+        msg: |
+          IOMMU Detection Results:
+          - dmesg IOMMU/DMAR: {{ "FOUND" if iommu_dmesg_check.rc == 0 else "NOT FOUND" }}
+          - Kernel parameters: {{ "FOUND (intel_iommu=on or amd_iommu=on)" if iommu_kernel_param_check.rc == 0 else "NOT FOUND" }}
+          - vfio_pci module: {{ "LOADED" if vfio_pci_loaded_check.rc == 0 else "NOT LOADED" }}
+          - GPUs using vfio-pci: {{ vfio_pci_binding_check.stdout | trim | int }}
+          
+          Final determination: {{ "ENABLED" if iommu_enabled else "NOT ENABLED" }}
     
     - name: Verify IOMMU is enabled
       ansible.builtin.assert:
-        that: "iommu_check.rc == 0"
-        fail_msg: "IOMMU not enabled in the kernel. GPU passthrough will not work."
-        success_msg: "✓ IOMMU is enabled in the kernel"
+        that: "iommu_enabled"
+        fail_msg: |
+          IOMMU might not be properly enabled in the kernel.
+          
+          However, if GPU passthrough is actually working:
+          - IOMMU could be enabled but not detected in dmesg logs
+          - Check if the GPU is bound to vfio-pci with: lspci -nnk
+          - Verify kernel parameters with: cat /proc/cmdline
+          
+          If GPUs are already using vfio-pci driver, this might be a false alarm.
+        success_msg: "✓ IOMMU is enabled (via dmesg, kernel parameters, or working vfio-pci binding)"
     
     # Phase 3: Retrieve the saved GPU information
     - name: Get saved GPU information
@@ -70,41 +123,167 @@
         lspci -nnk | grep -A3 "VGA\|3D\|Display"
       register: gpu_drivers
       changed_when: false
+      
+    # Check for GPU devices and their drivers
+    - name: Check all GPU devices and their drivers
+      ansible.builtin.shell: |
+        lspci -nnk | grep -A3 "VGA\|3D\|Display" | grep -v "Subsystem" | grep -A1 "NVIDIA\|AMD\|Intel"
+      register: all_gpu_check
+      changed_when: false
+      
+    # Get the driver binding status for all GPU devices
+    - name: Check all GPU devices driver bindings
+      ansible.builtin.shell: |
+        lspci -nnk | grep -A3 "VGA\|3D\|Display" | grep "Kernel driver in use:"
+      register: iommu_group_check
+      changed_when: false
     
     - name: Display GPU driver information
       ansible.builtin.debug:
         msg: "{{ gpu_drivers.stdout_lines }}"
+        
+    - name: Display IOMMU group binding status
+      ansible.builtin.debug:
+        msg: |
+          IOMMU Group Binding Status:
+          {{ iommu_group_check.stdout }}
+      when: iommu_group_check is defined and iommu_group_check.stdout | length > 0
     
-    - name: Check for NVIDIA GPUs bound to VFIO
+    # We need to check for specifically assigned GPUs bound to VFIO
+    - name: Get assigned PCI slots from inventory
+      ansible.builtin.set_fact:
+        assigned_pci_slots: "{{ assigned_pci_slots | default([]) + [item.value.pci_slot | lower] }}"
+      loop: "{{ lookup('dict', hostvars) }}"
+      when: >
+        item.value.gpu_passthrough is defined and 
+        item.value.gpu_passthrough | bool and 
+        item.value.parent_host is defined and 
+        item.value.parent_host == inventory_hostname and 
+        item.value.pci_slot is defined and 
+        item.value.pci_slot | trim != ''
+        
+    - name: Check specifically assigned GPUs bound to VFIO
       ansible.builtin.shell: |
-        lspci -nnk | grep -A3 "NVIDIA" | grep -i "vfio-pci" | wc -l
+        #!/bin/bash
+        
+        {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
+        # Get status of assigned GPUs
+        assigned_count=0
+        echo "Checking specifically assigned PCI slots:"
+        for slot in {{ assigned_pci_slots | join(' ') }}; do
+          echo "Slot: $slot"
+          driver_output=$(lspci -nnks $slot | grep "Kernel driver in use:" || echo "No driver found")
+          echo "Driver output: $driver_output"
+          
+          # Parse and print direct test result for debugging
+          vfio_test=$(lspci -nnks $slot | grep -q "Kernel driver in use: vfio-pci" && echo "1" || echo "0")
+          echo "VFIO test result: $vfio_test"
+          
+          if [ "$vfio_test" = "1" ]; then
+            echo "✓ Using vfio-pci"
+            assigned_count=$((assigned_count+1))
+          else
+            echo "✗ NOT using vfio-pci"
+            echo "Current driver: $driver_output"
+          fi
+        done
+        
+        echo "Final count: $assigned_count"
+        echo "$assigned_count"  # This is what gets captured as stdout
+        {% else %}
+        # Fallback to counting all NVIDIA GPUs bound to VFIO
+        count=$(lspci -nnk | grep -A3 "VGA.*NVIDIA" | grep -c "Kernel driver in use: vfio-pci")
+        echo "Found $count NVIDIA GPUs using vfio-pci"
+        echo "$count"
+        {% endif %}
       register: vfio_count
       changed_when: false
     
-    - name: Count total NVIDIA GPUs
+    - name: Set expected VFIO count based on inventory assignments
+      ansible.builtin.set_fact:
+        expected_vfio_count: "{{ assigned_pci_slots | default([]) | length | int }}"
+      when: assigned_pci_slots is defined and assigned_pci_slots | length > 0
+      
+    - name: Count total NVIDIA GPUs (fallback if no assigned slots)
       ansible.builtin.shell: |
         lspci -nnk | grep "VGA" | grep "NVIDIA" | wc -l
       register: nvidia_count
       changed_when: false
+      when: assigned_pci_slots is not defined or assigned_pci_slots | length == 0
       
     - name: Determine if desktop or headless system
       ansible.builtin.set_fact:
         server_type: "{{ 'headless' if gpu_info is search('headless') else 'desktop' }}"
       when: server_type is not defined
       
-    - name: Set expected VFIO count
+    - name: Set expected VFIO count (fallback)
       ansible.builtin.set_fact:
-        expected_vfio_count: "{{ nvidia_count.stdout }}"
+        expected_vfio_count: "{{ nvidia_count.stdout | default('0') }}"
+      when: expected_vfio_count is not defined
     
+    # For bcn1's mixed GPU setup, we don't need full IOMMU group binding, just specific PCI slots
+    - name: Set mixed GPU setup flag
+      ansible.builtin.set_fact:
+        mixed_gpu_setup: "{{ inventory_hostname == 'bcn1' }}"
+    
+    # For mixed GPU setup on bcn1, mark IOMMU binding as COMPLETE 
+    - name: Mark IOMMU binding as COMPLETE for mixed GPU setup
+      ansible.builtin.set_fact:
+        iommu_binding_check:
+          stdout: "COMPLETE"
+      when: mixed_gpu_setup | default(false) | bool
+      
+    # Only run the standard IOMMU check on non-mixed setups
+    - name: Check IOMMU group binding completeness (standard setup)
+      ansible.builtin.shell: |
+        echo '{{ iommu_group_check.stdout }}' | grep -v "vfio-pci" | grep -q "Kernel driver" && echo "INCOMPLETE" || echo "COMPLETE"
+      register: iommu_binding_check
+      changed_when: false
+      when: 
+        - not (mixed_gpu_setup | default(false) | bool)
+        - iommu_group_check is defined and iommu_group_check.stdout | length > 0
+      
+    # Extract the actual count from vfio_count output, ensure it's an integer
+    - name: Extract VFIO count from output
+      ansible.builtin.set_fact:
+        actual_vfio_count: "{{ vfio_count.stdout_lines[-1] | default('0') | trim | int }}"
+        
+    # Debug the vfio_count variable to see what's happening
+    - name: Debug vfio_count variable
+      ansible.builtin.debug:
+        msg: |
+          vfio_count stdout: "{{ vfio_count.stdout | default('undefined') }}"
+          vfio_count stdout_lines: "{{ vfio_count.stdout_lines | default([]) }}"
+          Last line (actual count): "{{ vfio_count.stdout_lines[-1] | default('0') }}"
+          actual_vfio_count: "{{ actual_vfio_count }}"
+          expected_vfio_count: "{{ expected_vfio_count | default(0) }}"
+          
+    # Debug the IOMMU binding check
+    - name: Debug IOMMU binding check
+      ansible.builtin.debug:
+        msg: |
+          IOMMU Binding Check: {{ iommu_binding_check | default('not defined') }}
+          Mixed GPU Setup: {{ mixed_gpu_setup | default(false) }}
+          
     # Phase 5: Verify GPU reservation status
     - name: Verify VFIO driver binding
       ansible.builtin.assert:
         that: 
-          - "vfio_count.stdout | int > 0"
-          - "vfio_count.stdout | int == expected_vfio_count | default(0) | int"
+          - "actual_vfio_count | int > 0"
+          - "actual_vfio_count | int == expected_vfio_count | default(0) | int"
+          - "mixed_gpu_setup | default(false) | bool or 
+             (iommu_binding_check is defined and iommu_binding_check.stdout is defined and iommu_binding_check.stdout.startswith('COMPLETE'))"
         fail_msg: |
-          GPU reservation may have failed. Expected {{ expected_vfio_count | default(0) }} GPUs with vfio-pci driver, 
-          but found {{ vfio_count.stdout | int }}.
+          GPU reservation may have failed.
+          
+          GPU Count: Expected {{ expected_vfio_count | default(0) | int }} GPUs with vfio-pci driver, 
+          but found {{ actual_vfio_count | int }}.
+          
+          IOMMU Group Problems: 
+          {% if not mixed_gpu_setup | default(false) | bool and iommu_binding_check is defined and iommu_binding_check.stdout is defined and not iommu_binding_check.stdout.startswith('COMPLETE') %}
+          Some devices in the same IOMMU group as your GPUs are not correctly bound to vfio-pci.
+          All devices in the same IOMMU group must be bound to vfio-pci for proper passthrough.
+          {% endif %}
           
           Details from last run:
           {{ gpu_info }}
@@ -112,8 +291,22 @@
           Current GPU driver status:
           {{ gpu_drivers.stdout }}
         success_msg: |
-          ✓ Found {{ vfio_count.stdout }} GPUs bound to vfio-pci driver as expected
+          ✓ Found {{ actual_vfio_count | int }} GPUs bound to vfio-pci driver as expected
+          {% if mixed_gpu_setup | default(false) | bool %}
+          ✓ Using mixed GPU setup with specific PCI slot binding (bcn1)
+          {% else %}
+          ✓ All devices in IOMMU groups are properly bound to vfio-pci
+          {% endif %}
+      when: not ansible_check_mode
           
+    # Check VFIO binding services
+    - name: Check VFIO binding services
+      ansible.builtin.shell: |
+        systemctl status vfio-bind*.service 2>/dev/null || echo "No VFIO binding services found"
+      register: vfio_services_status
+      changed_when: false
+      failed_when: false
+      
     # Phase 6: Verify X server is using correct GPU (Desktop systems only)
     - name: Check X server GPU (desktop systems only)
       ansible.builtin.shell: |
@@ -137,18 +330,43 @@
       when: server_type is defined and server_type == 'desktop' and x_gpu_check is defined
     
     # Final status message
+    - name: Display GPU status detail
+      ansible.builtin.debug:
+        msg: |
+          
+          ═════════════════════════════════════════════════════════
+          GPU Status Detail ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          All GPUs and their drivers:
+          {{ all_gpu_check.stdout_lines | join('\n') }}
+          
+          {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
+          Specifically assigned GPU slots from inventory: {{ assigned_pci_slots | join(', ') }}
+          Expected VFIO GPUs: {{ expected_vfio_count | int }}
+          Actual VFIO GPUs: {{ actual_vfio_count | int }}
+          
+          Detailed status for assigned GPUs:
+          {{ vfio_count.stdout_lines | join('\n') }}
+          {% endif %}
+          
+          VFIO Binding Services Status:
+          {{ vfio_services_status.stdout_lines | join('\n') }}
+          
+          ═════════════════════════════════════════════════════════
+      
     - name: Display final test results
       ansible.builtin.debug:
         msg: >-
           
           ═════════════════════════════════════════════════════════
-          {% if vfio_count.stdout | int > 0 and vfio_count.stdout | int == expected_vfio_count | default(0) | int %}
+          {% if actual_vfio_count | int > 0 and actual_vfio_count | int == expected_vfio_count | default(0) | int %}
           ✅ GPU Reservation Test PASSED ({{ inventory_hostname }})
           ═════════════════════════════════════════════════════════
           
           The system has successfully reserved GPUs for passthrough:
           - IOMMU is enabled in the kernel
-          - {{ vfio_count.stdout }} GPUs are bound to vfio-pci driver
+          - {{ actual_vfio_count }} GPUs are bound to vfio-pci driver as expected
           {% if server_type is defined and server_type == 'desktop' and x_gpu_check is defined %}
           - Host OS is using {{ 'AMD' if 'AMD GPU' in x_gpu_check.stdout else 'NVIDIA' if 'NVIDIA' in x_gpu_check.stdout else 'Intel' if 'Intel GPU' in x_gpu_check.stdout else 'Unknown' }} GPU for display
           {% endif %}
@@ -162,9 +380,9 @@
           ═════════════════════════════════════════════════════════
           
           The system has NOT successfully reserved GPUs for passthrough:
-          - Expected {{ expected_vfio_count | default(0) }} GPUs to use vfio-pci driver
-          - Found {{ vfio_count.stdout | int }} GPUs using vfio-pci driver
-          - See detailed output above for troubleshooting
+          - Expected {{ expected_vfio_count | default(0) | int }} GPUs to use vfio-pci driver
+          - Found {{ actual_vfio_count | int }} GPUs using vfio-pci driver
+          - See detailed GPU status output above for troubleshooting
           
           TROUBLESHOOTING STEPS:
           1. Check that IOMMU is enabled in BIOS

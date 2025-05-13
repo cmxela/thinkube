@@ -1,0 +1,61 @@
+#!/bin/bash
+# VFIO binding script for specific PCI slots
+# This script will be run at boot time to bind specific PCI slots to vfio-pci
+
+# Set -x for debugging
+set -x
+
+# Make sure vfio modules are loaded
+modprobe vfio
+modprobe vfio_pci
+modprobe vfio_iommu_type1
+
+# Unbind the NVIDIA driver if it's currently bound to our target device
+if [ -e /sys/bus/pci/devices/0000:{{ pci_slot }}/driver ]; then
+    echo "Unbinding existing driver from {{ pci_slot }}..."
+    echo "0000:{{ pci_slot }}" > /sys/bus/pci/devices/0000:{{ pci_slot }}/driver/unbind
+fi
+
+# Set the driver override to vfio-pci
+echo "Setting driver_override to vfio-pci for {{ pci_slot }}..."
+echo "vfio-pci" > /sys/bus/pci/devices/0000:{{ pci_slot }}/driver_override
+
+# Force bind to vfio-pci
+echo "0000:{{ pci_slot }}" > /sys/bus/pci/drivers/vfio-pci/bind || echo "Could not bind directly, will try rescan"
+
+# Check if audio device exists and bind it too
+if [ -e /sys/bus/pci/devices/0000:{{ pci_slot | replace('.0', '.1') }} ]; then
+    # Unbind existing driver if any
+    if [ -e /sys/bus/pci/devices/0000:{{ pci_slot | replace('.0', '.1') }}/driver ]; then
+        echo "Unbinding existing driver from audio device {{ pci_slot | replace('.0', '.1') }}..."
+        echo "0000:{{ pci_slot | replace('.0', '.1') }}" > /sys/bus/pci/devices/0000:{{ pci_slot | replace('.0', '.1') }}/driver/unbind
+    fi
+    
+    # Set the driver override to vfio-pci
+    echo "Setting driver_override to vfio-pci for audio device {{ pci_slot | replace('.0', '.1') }}..."
+    echo "vfio-pci" > /sys/bus/pci/devices/0000:{{ pci_slot | replace('.0', '.1') }}/driver_override
+    
+    # Force bind to vfio-pci
+    echo "0000:{{ pci_slot | replace('.0', '.1') }}" > /sys/bus/pci/drivers/vfio-pci/bind || echo "Could not bind audio directly, will try rescan"
+fi
+
+# Trigger a rescan of the device to pick up the driver override
+echo "Triggering PCI bus rescan..."
+echo "1" > /sys/bus/pci/rescan
+
+# Verify the binding
+sleep 1
+if [ -e /sys/bus/pci/devices/0000:{{ pci_slot }}/driver ]; then
+    ls -la /sys/bus/pci/devices/0000:{{ pci_slot }}/driver
+    echo "Driver for {{ pci_slot }} is now: $(basename $(readlink -f /sys/bus/pci/devices/0000:{{ pci_slot }}/driver))"
+else
+    echo "Warning: {{ pci_slot }} has no driver bound after attempt"
+fi
+
+if [ -e /sys/bus/pci/devices/0000:{{ pci_slot | replace('.0', '.1') }}/driver ]; then
+    echo "Driver for {{ pci_slot | replace('.0', '.1') }} is now: $(basename $(readlink -f /sys/bus/pci/devices/0000:{{ pci_slot | replace('.0', '.1') }}/driver))"
+else
+    echo "Warning: {{ pci_slot | replace('.0', '.1') }} has no driver bound after attempt"
+fi
+
+echo "VFIO binding complete for {{ pci_slot }} and associated audio device."

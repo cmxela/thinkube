@@ -19,6 +19,21 @@
   gather_facts: true
   become: true  # May need sudo for some LXD operations
   
+  pre_tasks:
+    # Verify required variables exist
+    - name: Verify required variables
+      ansible.builtin.assert:
+        that:
+          - lxd_network_name is defined
+        fail_msg: |
+          ERROR: Required variables not defined
+          
+          DETAILS:
+          - lxd_network_name: {% if lxd_network_name is defined %}✓{% else %}✗ missing{% endif %}
+          
+          REQUIRED ACTION:
+          - Add missing variables to your inventory file at inventory/group_vars/baremetal.yml
+  
   tasks:
     - name: Display test intro message
       ansible.builtin.debug:
@@ -205,7 +220,7 @@
     - name: Verify required profiles exist
       ansible.builtin.assert:
         that:
-          - "'{{ profile_name }}' in profiles.stdout"
+          - profiles.stdout is search(profile_name)
         fail_msg: |
           Required profile '{{ profile_name }}' not found.
           Profiles:

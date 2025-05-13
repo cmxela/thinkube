@@ -49,3 +49,4 @@ id_*
 # Generated files
 *.generated.yaml
 *.generated.yml
+**/.claude/settings.local.json

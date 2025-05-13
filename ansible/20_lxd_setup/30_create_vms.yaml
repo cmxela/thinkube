@@ -377,12 +377,12 @@
           loop_control:
             loop_var: vm_name
         
-        # Wait for VMs to be ready
+        # Wait for VMs to be ready with basic readiness check
         - name: Wait for VMs to be ready
           ansible.builtin.command: lxc exec {{ vm_name }} -- echo ready
           register: vm_ready
           until: vm_ready.rc == 0
-          retries: 30
+          retries: 60  # Increased retries to prevent timeout (5 minutes with 5 second delay)
           delay: 5
           loop: "{{ vms_to_configure }}"
           loop_control:
@@ -428,6 +428,9 @@
           loop: "{{ groups['lxd_containers'] | default([]) }}"
           loop_control:
             loop_var: vm_name
+          # Add explicit timeout to prevent playbook timeouts
+          async: 120
+          poll: 5
         
         # Configure DNS settings
         - name: Configure persistent DNS settings in VMs
@@ -634,21 +637,21 @@
           ansible.builtin.command: >
             lxc exec {{ vm_name }} -- bash -c '
             # Update package cache with retries
-            for i in $(seq 1 3); do
+            for i in $(seq 1 5); do
               if apt-get update -y; then
                 echo "Package cache update successful on attempt $i"
                 break
               else
                 echo "Package cache update failed on attempt $i, retrying..."
-                sleep 2
-                if [ $i -eq 3 ]; then
+                sleep 5
+                if [ $i -eq 5 ]; then
                   echo "All package cache update attempts failed"
                 fi
               fi
             done
 
             # Install packages with retries
-            for i in $(seq 1 3); do
+            for i in $(seq 1 5); do
               if export DEBIAN_FRONTEND=noninteractive &&
                  apt-get install -y --no-install-recommends curl wget net-tools dnsutils \
                  openssh-server sudo vim chrony; then
@@ -656,8 +659,8 @@
                 break
               else
                 echo "Package installation failed on attempt $i, retrying..."
-                sleep 2
-                if [ $i -eq 3 ]; then
+                sleep 5
+                if [ $i -eq 5 ]; then
                   echo "All package installation attempts failed"
                 fi
               fi
@@ -668,6 +671,9 @@
           loop: "{{ groups['lxd_containers'] | default([]) }}"
           loop_control:
             loop_var: vm_name
+          # Add explicit timeout to prevent playbook timeouts
+          async: 300
+          poll: 10
             
     # Note: Network testing has been moved to 38_test_vm_creation.yaml
     # to properly separate provisioning from testing

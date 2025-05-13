@@ -55,6 +55,20 @@
         name: zfsutils-linux
         state: present
         update_cache: yes
+        
+    # Ensure user is added to lxd group
+    - name: Add current user to lxd group
+      ansible.builtin.user:
+        name: "{{ system_username }}"
+        groups: lxd
+        append: yes
+      
+    # Ensure proper socket permissions
+    - name: Ensure LXD socket has proper permissions
+      ansible.builtin.file:
+        path: /var/snap/lxd/common/lxd/unix.socket
+        mode: '0666'
+      failed_when: false  # Socket may not exist yet before initialization
     
     # Create temporary directory
     - name: Create temporary directory for setup files
@@ -242,6 +256,20 @@
         name: zfsutils-linux
         state: present
         update_cache: yes
+        
+    # Ensure user is added to lxd group
+    - name: Add current user to lxd group
+      ansible.builtin.user:
+        name: "{{ system_username }}"
+        groups: lxd
+        append: yes
+      
+    # Ensure proper socket permissions
+    - name: Ensure LXD socket has proper permissions
+      ansible.builtin.file:
+        path: /var/snap/lxd/common/lxd/unix.socket
+        mode: '0666'
+      failed_when: false  # Socket may not exist yet before initialization
     
     # Create temporary directory
     - name: Create temporary directory for setup files
@@ -403,36 +431,126 @@
           Network synchronization result:
           {{ network_sync_result.stdout }}
     
+    # Wait for network creation to propagate
+    - name: Wait for networks to propagate to all cluster members
+      ansible.builtin.pause:
+        seconds: 15
+        prompt: "Waiting for network configuration to propagate to all cluster members..."
+    
+    # Restart LXD on all nodes to ensure network interfaces are created
+    - name: Restart LXD service on primary node
+      ansible.builtin.systemd:
+        name: snap.lxd.daemon
+        state: restarted
+    
+    - name: Wait for LXD service to fully restart on primary
+      ansible.builtin.pause:
+        seconds: 10
+        prompt: "Waiting for LXD service to fully restart on primary node..."
+    
     # Ensure network interfaces are UP on all nodes
-    - name: Ensure all lxdbr0 interfaces are UP
+    - name: Ensure network interfaces are UP
       ansible.builtin.shell: |
-        cd {{ playbook_dir }}/../../
-        # First check the interface state on each node
-        for node in $(lxc cluster list | grep -o "bcn[0-9]"); do
-          echo "Checking interface state on $node..."
-          STATE=$(ssh -o BatchMode=yes -o ConnectTimeout=5 $node "ip link show {{ lxd_network_name }} | grep -o 'state [A-Z]*'" 2>/dev/null || echo "NOT FOUND")
-          if [[ "$STATE" == "state DOWN" ]]; then
-            echo "Interface is DOWN on $node, setting to UP state"
-            ./scripts/run_ssh_command.sh $node "ip link set {{ lxd_network_name }} up promisc on"
-            sleep 2
-            NEW_STATE=$(ssh -o BatchMode=yes -o ConnectTimeout=5 $node "ip link show {{ lxd_network_name }} | grep -o 'state [A-Z]*'" 2>/dev/null || echo "NOT FOUND")
-            echo "New state on $node: $NEW_STATE"
-          elif [[ "$STATE" == "NOT FOUND" ]]; then
-            echo "ERROR: Interface {{ lxd_network_name }} not found on $node!"
-          else
-            echo "Interface on $node is already $STATE"
-          fi
-        done
-      register: interface_fixes
-      changed_when: "'setting to UP state' in interface_fixes.stdout"
-
-    - name: Display interface status after fixes
+        # Set interface UP on primary node
+        if ip link show {{ lxd_network_name }} &>/dev/null; then
+          echo "{{ inventory_hostname }}: Setting {{ lxd_network_name }} UP"
+          ip link set {{ lxd_network_name }} up promisc on
+          echo "{{ inventory_hostname }}: Interface is now $(ip link show {{ lxd_network_name }} | grep -o 'state [A-Z]*')"
+        else
+          echo "{{ inventory_hostname }}: ✗ {{ lxd_network_name }} interface MISSING"
+        fi
+      register: primary_interface
+      changed_when: "'Setting' in primary_interface.stdout"
+      
+    - name: Display primary interface status
       ansible.builtin.debug:
         msg: |
-          Interface status check results:
-          {{ interface_fixes.stdout_lines | join('\n') }}
+          Primary node interface status:
+          {{ primary_interface.stdout_lines | join('\n') }}
 
     - name: Final status message
+      ansible.builtin.debug:
+        msg: >-
+
+          ═════════════════════════════════════════════════════════
+          ✅ LXD CLUSTER SETUP COMPLETE ON PRIMARY NODE
+          ═════════════════════════════════════════════════════════
+
+          LXD cluster has been set up on the primary node.
+          Secondary nodes are now being configured.
+
+          PROFILES CREATED:
+          - default: Basic container profile
+          - vm-networks: Network configuration for VMs
+          - vm-resources: Resource limits for VMs
+          - vm-gpu: GPU passthrough configuration
+
+# PLAY 4: Configure secondary nodes
+- name: Configure secondary nodes
+  hosts: "{{ groups['baremetal'][1:] }}"  # Secondary nodes
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: Display host information
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔧 Configuring Network on Secondary Node {{ inventory_hostname }}
+          ═════════════════════════════════════════════════════════
+
+    # Restart LXD to ensure network interfaces are created
+    - name: Restart LXD service on secondary node
+      ansible.builtin.systemd:
+        name: snap.lxd.daemon
+        state: restarted
+      
+    - name: Wait for LXD service to restart
+      ansible.builtin.pause:
+        seconds: 10
+        prompt: "Waiting for LXD service to restart on {{ inventory_hostname }}..."
+    
+    # Ensure network interfaces are UP
+    - name: Ensure network interfaces are UP
+      ansible.builtin.shell: |
+        # Check if interface exists
+        if ip link show {{ lxd_network_name }} &>/dev/null; then
+          echo "Setting {{ lxd_network_name }} UP"
+          ip link set {{ lxd_network_name }} up promisc on
+          echo "Interface is now $(ip link show {{ lxd_network_name }} | grep -o 'state [A-Z]*')"
+        else
+          echo "✗ {{ lxd_network_name }} interface MISSING"
+        fi
+      register: interface_status
+      changed_when: "'Setting' in interface_status.stdout"
+      
+    - name: Display interface status
+      ansible.builtin.debug:
+        msg: |
+          Interface status on {{ inventory_hostname }}:
+          {{ interface_status.stdout_lines | join('\n') }}
+
+# PLAY 5: Final status check
+- name: Final status check
+  hosts: "{{ groups['baremetal'][0] }}"  # Primary node
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: Check cluster status
+      ansible.builtin.command: |
+        lxc cluster list
+      register: final_cluster_status
+      changed_when: false
+      
+    - name: Display final cluster status
+      ansible.builtin.debug:
+        msg: |
+          Final cluster status:
+          {{ final_cluster_status.stdout }}
+          
+    - name: Final completion message
       ansible.builtin.debug:
         msg: >-
 

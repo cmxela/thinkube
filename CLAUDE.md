@@ -153,3 +153,25 @@ Playbooks are designed to:
   - Better performance and data integrity guarantees
   - Native compression
 - ZFS tools (zfsutils-linux) must be installed on all hosts before LXD initialization
+
+## GPU Passthrough Configuration
+
+### Current Status (2025-05-13)
+- Implemented GPU passthrough configuration playbooks:
+  - **00_reserve_gpus.yaml**: Configures GPUs for passthrough while keeping one for host OS
+  - **00_test_gpu_reservation.yaml**: Verifies GPU passthrough configuration after reboot
+
+- Configured systems:
+  - **bcn1**: Desktop system with 2× NVIDIA RTX 3090s reserved for passthrough, using AMD iGPU (Raphael) for host OS
+  - **bcn2**: Headless server with NVIDIA GTX 1080Ti reserved for passthrough
+
+### Verification After Reboot
+After rebooting the systems, verify GPU passthrough with:
+```bash
+# Run verification playbook
+./scripts/run_ansible.sh ansible/00_initial_setup/00_test_gpu_reservation.yaml -l bcn1,bcn2
+
+# Check VFIO binding manually
+./scripts/run_ssh_command.sh bcn1 "lspci -nnk | grep -A3 NVIDIA"
+./scripts/run_ssh_command.sh bcn2 "lspci -nnk | grep -A3 NVIDIA"
+```

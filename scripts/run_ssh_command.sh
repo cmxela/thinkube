@@ -31,44 +31,46 @@ if [ -z "$ANSIBLE_SUDO_PASS" ]; then
   exit 1
 fi
 
-# Create temporary script to execute on the remote host
-TEMP_SCRIPT="/tmp/remote_cmd_$$.sh"
-cat > "$TEMP_SCRIPT" << EOF
-#!/bin/bash
-# Temporary script to run command with sudo access
-if [[ "$COMMAND" == sudo* ]]; then
-    # Command already has sudo, use echo to provide password
-    echo "$ANSIBLE_SUDO_PASS" | $COMMAND
-else
-    # Add sudo -S to the command
-    echo "$ANSIBLE_SUDO_PASS" | sudo -S $COMMAND
+# If ANSIBLE_SSH_PASS is not set, use ANSIBLE_SUDO_PASS
+if [ -z "$ANSIBLE_SSH_PASS" ]; then
+  echo "ANSIBLE_SSH_PASS not set, using ANSIBLE_SUDO_PASS for SSH authentication"
+  export ANSIBLE_SSH_PASS="$ANSIBLE_SUDO_PASS"
 fi
-EOF
-chmod +x "$TEMP_SCRIPT"
 
-# Set up SSH authentication
-if [ -n "$ANSIBLE_SSH_PASS" ]; then
-  echo "Using password authentication for SSH"
-  
-  # Make sure we have sshpass installed
-  if ! command -v sshpass &> /dev/null; then
-    echo "Installing sshpass..."
-    sudo apt-get update -qq && sudo apt-get install -qq -y sshpass
+# Install sshpass if needed
+if ! command -v sshpass &> /dev/null; then
+  echo "Installing sshpass..."
+  sudo apt-get update -qq && sudo apt-get install -qq -y sshpass
+fi
+
+# Determine if the command needs sudo (by explicitly checking)
+needs_sudo=false
+if [[ "$COMMAND" == "sudo "* || "$COMMAND" == *"reboot"* || "$COMMAND" == *"shutdown"* || "$COMMAND" == *"apt"* || "$COMMAND" == *"systemctl"* ]]; then
+  needs_sudo=true
+  # If command already has sudo, remove it as we'll add it with proper options
+  if [[ "$COMMAND" == "sudo "* ]]; then
+    COMMAND="${COMMAND#sudo }"
   fi
-  
-  # Copy the script to the remote host
-  sshpass -p "$ANSIBLE_SSH_PASS" scp -o StrictHostKeyChecking=no "$TEMP_SCRIPT" "thinkube@$HOST:/tmp/remote_cmd.sh"
-  
-  # Execute the script
-  sshpass -p "$ANSIBLE_SSH_PASS" ssh -o StrictHostKeyChecking=no "thinkube@$HOST" "chmod +x /tmp/remote_cmd.sh && /tmp/remote_cmd.sh; rm -f /tmp/remote_cmd.sh"
-else
-  echo "Using key-based authentication for SSH"
-  # Copy the script to the remote host
-  scp -o StrictHostKeyChecking=no "$TEMP_SCRIPT" "$HOST:/tmp/remote_cmd.sh"
-  
-  # Execute the script
-  ssh -o StrictHostKeyChecking=no "$HOST" "chmod +x /tmp/remote_cmd.sh && /tmp/remote_cmd.sh; rm -f /tmp/remote_cmd.sh"
+  echo "Command requires sudo privileges"
 fi
 
-# Clean up local temp file
-rm -f "$TEMP_SCRIPT"
+# Use sshpass to handle SSH password authentication
+echo "Executing command on $HOST..."
+
+if $needs_sudo; then
+  # Prepare a command that pipes the sudo password to sudo
+  SUDO_COMMAND="echo '$ANSIBLE_SUDO_PASS' | sudo -S $COMMAND"
+  
+  # Use sshpass to handle the SSH password
+  sshpass -p "$ANSIBLE_SSH_PASS" ssh -o StrictHostKeyChecking=no "thinkube@$HOST" "$SUDO_COMMAND"
+else
+  # Run command without sudo
+  sshpass -p "$ANSIBLE_SSH_PASS" ssh -o StrictHostKeyChecking=no "thinkube@$HOST" "$COMMAND"
+fi
+
+# Capture the exit code
+EXIT_CODE=$?
+
+echo "Command completed with exit code: $EXIT_CODE"
+
+exit $EXIT_CODE

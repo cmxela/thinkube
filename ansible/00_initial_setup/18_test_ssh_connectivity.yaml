@@ -23,7 +23,7 @@
   gather_facts: true
   become: false
   vars:
-    ssh_key_name: "{{ ssh_key_name | default('thinkube_cluster_key') }}"
+    ssh_key_name: "thinkube_cluster_key"
     
   tasks:
     - name: Verify required variables
@@ -75,6 +75,13 @@
         path: "{{ ansible_user_dir }}/.ssh/config"
       register: ssh_config_check
       
+    - name: Check for Thinkube baremetal section in SSH config
+      ansible.builtin.shell: |
+        grep -q "BEGIN-THINKUBE-BAREMETAL" "{{ ansible_user_dir }}/.ssh/config" && echo "found" || echo "not found"
+      register: baremetal_section_check
+      changed_when: false
+      when: ssh_config_check.stat.exists
+      
     - name: Fail if SSH config does not exist
       ansible.builtin.fail:
         msg: |
@@ -90,6 +97,22 @@
           
           REFERENCE: See docs/architecture/00_initial_setup/README.md
       when: not ssh_config_check.stat.exists
+      
+    - name: Fail if SSH config doesn't have Thinkube baremetal section
+      ansible.builtin.fail:
+        msg: |
+          ERROR: Thinkube Baremetal Section Not Found
+          
+          DETAILS:
+          - Thinkube baremetal section is missing in SSH config on {{ inventory_hostname }}
+          - This section is required for proper connections to baremetal hosts
+          
+          REQUIRED ACTION:
+          - Run the SSH key setup playbook first:
+            ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/10_setup_ssh_keys.yaml
+          
+          REFERENCE: See docs/architecture/00_initial_setup/README.md
+      when: ssh_config_check.stat.exists and baremetal_section_check.stdout == "not found"
 
     - name: Test SSH connection to all other hosts
       ansible.builtin.shell: |
@@ -134,6 +157,7 @@
           DETAILS:
             ✓ SSH key found: {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}
             ✓ SSH config found: {{ ansible_user_dir }}/.ssh/config
+            ✓ Thinkube baremetal section found in SSH config
             ✓ All host connections successful (by hostname)
             ✓ All IP connections successful (by IP address)
           

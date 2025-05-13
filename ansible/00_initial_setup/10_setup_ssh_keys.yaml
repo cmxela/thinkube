@@ -151,72 +151,71 @@
         mode: '0600'
       when: ssh_config_stat.stat.exists
       
-    - name: Check for existing GitHub configuration
+    # Simple approach: Check for section markers and either create a new file or update existing
+    - name: Check if SSH config already has Thinkube Baremetal section
       ansible.builtin.shell: |
         if [ -f "{{ ansible_user_dir }}/.ssh/config" ]; then
-          grep -A4 "GitHub Configuration" "{{ ansible_user_dir }}/.ssh/config" | grep -q "github.com" && echo "found" || echo "not found"
+          grep -q "BEGIN-THINKUBE-BAREMETAL" "{{ ansible_user_dir }}/.ssh/config" && echo "found" || echo "not found"
         else
           echo "not found"
         fi
-      register: github_config_check
+      register: has_baremetal_section
       changed_when: false
-      check_mode: no
 
-    - name: Read existing SSH config
-      ansible.builtin.slurp:
-        src: "{{ ansible_user_dir }}/.ssh/config"
-      register: existing_ssh_config
-      when: ssh_config_stat.stat.exists
-      
-    - name: Save original SSH config for first-time setup
-      ansible.builtin.set_fact:
-        original_config: "{{ existing_ssh_config['content'] | b64decode }}"
-      when: ssh_config_stat.stat.exists and not (existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER'))
-      
-    - name: Extract external configurations from existing SSH config (with markers)
-      ansible.builtin.set_fact:
-        external_config: "{{ (existing_ssh_config['content'] | b64decode).split('# BEGIN-THINKUBE-CLUSTER')[0].split('# END-THINKUBE-CLUSTER')[-1] }}"
-      when: ssh_config_stat.stat.exists and existing_ssh_config['content'] | b64decode is search('# BEGIN-THINKUBE-CLUSTER')
-
-    - name: Create temporary Thinkube SSH config
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/templates/ssh_config.j2"
-        dest: "{{ ansible_user_dir }}/.ssh/config.thinkube"
-        mode: '0600'
-      when: ssh_config_stat.stat.exists
-
-    - name: Set up SSH config (first time without existing config)
+    # Create new SSH config if it doesn't exist
+    - name: Create new SSH config file if it doesn't exist
       ansible.builtin.template:
         src: "{{ playbook_dir }}/templates/ssh_config.j2"
         dest: "{{ ansible_user_dir }}/.ssh/config"
         mode: '0600'
       when: not ssh_config_stat.stat.exists
 
-    - name: Merge original configuration with Thinkube SSH config (first time with existing config)
-      ansible.builtin.shell: |
-        cat "{{ ansible_user_dir }}/.ssh/config.thinkube" > "{{ ansible_user_dir }}/.ssh/config"
-        echo "" >> "{{ ansible_user_dir }}/.ssh/config"
-        echo "{{ original_config | regex_replace('Host \\s*bcn[12].*?\\n\\n', '', multiline=True) | replace('\n', '\\n') }}" >> "{{ ansible_user_dir }}/.ssh/config"
-      when: ssh_config_stat.stat.exists and original_config is defined
-      
-    - name: Merge existing external configurations with Thinkube SSH config (update)
-      ansible.builtin.shell: |
-        cat "{{ ansible_user_dir }}/.ssh/config.thinkube" > "{{ ansible_user_dir }}/.ssh/config"
-        echo "{{ external_config | replace('\n', '\\n') }}" >> "{{ ansible_user_dir }}/.ssh/config"
-      when: ssh_config_stat.stat.exists and external_config is defined
+    # Generate Thinkube SSH config snippet for baremetal hosts
+    - name: Generate Thinkube baremetal SSH config snippet
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/ssh_config.j2"
+        dest: "{{ ansible_user_dir }}/.ssh/baremetal_snippet"
+        mode: '0600'
+      when: ssh_config_stat.stat.exists
 
-    - name: Restore GitHub configuration if it existed
-      ansible.builtin.blockinfile:
-        path: "{{ ansible_user_dir }}/.ssh/config"
-        marker: "# {mark} GITHUB CONFIGURATION"
-        block: |
-          # GitHub Configuration
-          Host github.com
-            User git
-            IdentityFile {{ ansible_user_dir }}/.ssh/thinkube_deploy_key
-            IdentitiesOnly yes
-        state: present
-      when: github_config_check is defined and github_config_check.stdout == "found"
+    # If section exists, update it
+    - name: Update existing Thinkube baremetal section
+      ansible.builtin.shell: |
+        # Create new config file
+        touch "{{ ansible_user_dir }}/.ssh/config.new"
+        
+        # Add everything before the BEGIN marker
+        sed -n '1,/# BEGIN-THINKUBE-BAREMETAL/p' "{{ ansible_user_dir }}/.ssh/config" | \
+        grep -v "# BEGIN-THINKUBE-BAREMETAL" > "{{ ansible_user_dir }}/.ssh/config.new"
+        
+        # Add the new baremetal snippet
+        cat "{{ ansible_user_dir }}/.ssh/baremetal_snippet" >> "{{ ansible_user_dir }}/.ssh/config.new"
+        
+        # Add everything after the END marker
+        sed -n '/# END-THINKUBE-BAREMETAL/,$p' "{{ ansible_user_dir }}/.ssh/config" | \
+        grep -v "# END-THINKUBE-BAREMETAL" >> "{{ ansible_user_dir }}/.ssh/config.new"
+        
+        # Replace the original file
+        mv "{{ ansible_user_dir }}/.ssh/config.new" "{{ ansible_user_dir }}/.ssh/config"
+        chmod 600 "{{ ansible_user_dir }}/.ssh/config"
+      when: ssh_config_stat.stat.exists and has_baremetal_section.stdout == "found"
+
+    # If no section exists yet, append it
+    - name: Append baremetal section to existing SSH config
+      ansible.builtin.shell: |
+        # Add an empty line for separation
+        echo "" >> "{{ ansible_user_dir }}/.ssh/config"
+        
+        # Add the baremetal snippet
+        cat "{{ ansible_user_dir }}/.ssh/baremetal_snippet" >> "{{ ansible_user_dir }}/.ssh/config"
+      when: ssh_config_stat.stat.exists and has_baremetal_section.stdout == "not found"
+
+    # Clean up temporary files
+    - name: Clean up temporary files
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.ssh/baremetal_snippet"
+        state: absent
+      when: ssh_config_stat.stat.exists
 
     - name: Test SSH connection to other hosts
       ansible.builtin.shell: |

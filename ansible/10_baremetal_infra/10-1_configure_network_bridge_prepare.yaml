@@ -1,14 +1,14 @@
 ---
-# 20-1_configure_network_bridge_prepare.yaml - Prepare network bridge configuration
+# 10-1_configure_network_bridge_prepare.yaml - Prepare network bridge configuration
 #
 # Purpose:
 #   Prepares for setting up a network bridge (br0) by installing packages
 #   and creating configuration without applying it.
 #
 # Run with: 
-#   ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20-1_configure_network_bridge_prepare.yaml
+#   ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
 #   Or with helper script:
-#   ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-1_configure_network_bridge_prepare.yaml
+#   ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
 
 - name: Prepare Network Bridge Configuration
   hosts: baremetal
@@ -32,7 +32,7 @@
           
           NOTE: This playbook only performs preparation steps and will NOT
           disrupt connectivity. The actual network change will happen in
-          the next playbook (20-2_configure_network_bridge_apply.yaml).
+          the next playbook (10-2_configure_network_bridge_apply.yaml).
           
           ═════════════════════════════════════════════════════════
 
@@ -204,8 +204,11 @@
             {% else %}
             Now you can proceed with applying the network changes by running:
             {% endif %}
-            ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-2_configure_network_bridge_apply.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
             
             WARNING: This will likely disconnect your SSH session temporarily!
+            
+            After applying, verify your configuration with:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/18_test_network_bridge.yaml
           
           ═════════════════════════════════════════════════════════

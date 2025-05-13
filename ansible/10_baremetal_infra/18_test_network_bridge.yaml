@@ -6,7 +6,7 @@
 #   and that connectivity through the bridge is working correctly.
 #
 # Requirements:
-#   - Network bridge must be set up by 20_configure_network_bridge.yaml
+#   - Network bridge must be set up by 10-1 and 10-2 configuration playbooks
 #
 # Variables:
 #   Required (from inventory):
@@ -64,8 +64,9 @@
           - This interface is required for VM connectivity
           
           REQUIRED ACTION:
-          - Run the network bridge setup playbook first:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
           
           REFERENCE: See docs/architecture/10_baremetal_infra/README.md
       when: not ansible_check_mode and bridge_check.stdout == "NOT_FOUND"
@@ -90,8 +91,9 @@
           REQUIRED ACTION:
           - Check netplan configuration in /etc/netplan/
           - Verify inventory variables are correct
-          - Run the network bridge setup playbook again:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks again in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
       when: not ansible_check_mode and bridge_ip.stdout != "NO_IP"
 
     - name: Get primary interface attached to bridge
@@ -131,8 +133,9 @@
           
           REQUIRED ACTION:
           - Check netplan configuration in /etc/netplan/
-          - Run the network bridge setup playbook again:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks again in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
       when: not ansible_check_mode
       
     - name: Check default route
@@ -156,8 +159,9 @@
           REQUIRED ACTION:
           - Check routing table: ip route
           - Verify network_gateway variable in inventory
-          - Run the network bridge setup playbook again:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks again in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
       when: not ansible_check_mode
       
     - name: Test connectivity through bridge
@@ -193,8 +197,9 @@
           - This file is required for persistent bridge configuration
           
           REQUIRED ACTION:
-          - Run the network bridge setup playbook:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
       when: not ansible_check_mode
 
     - name: Get content of netplan configuration
@@ -215,8 +220,9 @@
           - This is required for proper bridge setup
           
           REQUIRED ACTION:
-          - Run the network bridge setup playbook:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
       when: not ansible_check_mode and netplan_config.stat.exists
       
     - name: Display successful test message

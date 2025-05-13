@@ -51,53 +51,61 @@
           - Or define them in inventory/group_vars/all.yml
           
           REFERENCE: See docs/architecture/VARIABLE_HANDLING.md
-    - name: Check if .env file already exists
-      ansible.builtin.stat:
-        path: "{{ lookup('env', 'HOME') }}/.env"
-      register: env_file
+    - name: Ensure .env file directory exists
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}"
+        state: directory
+        mode: '0700'
 
-    - name: Backup existing .env file if it exists
+    - name: Create .env file if it doesn't exist
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/.env"
+        state: touch
+        mode: '0600'
+        modification_time: preserve
+        access_time: preserve
+      register: touch_result
+
+    - name: Backup existing .env file
       ansible.builtin.copy:
         src: "{{ lookup('env', 'HOME') }}/.env"
-        dest: "{{ lookup('env', 'HOME') }}/.env.bak"
+        dest: "{{ lookup('env', 'HOME') }}/.env.bak-{{ ansible_date_time.date }}"
         mode: '0600'
         remote_src: yes
-      when: env_file.stat.exists
-      
-    - name: Read existing .env file if it exists
-      ansible.builtin.slurp:
-        src: "{{ lookup('env', 'HOME') }}/.env"
-      register: existing_env
-      when: env_file.stat.exists
-      
-    - name: Create a temporary file with existing environment variables
-      ansible.builtin.copy:
-        content: "{{ existing_env['content'] | b64decode }}"
-        dest: "/tmp/env_parse_temp"
-        mode: '0600'
-      when: env_file.stat.exists and existing_env is defined
+      when: not touch_result.changed
 
-    - name: Extract variable names from env file
-      ansible.builtin.shell: |
-        grep -v "^#" /tmp/env_parse_temp | grep "=" | sed 's/=.*//' | tr -d ' '
-      register: var_names
-      when: env_file.stat.exists and existing_env is defined
-      
-    - name: Create a dictionary with existing variables
-      ansible.builtin.set_fact:
-        existing_env_vars: "{{ existing_env_vars | default({}) | combine({ item: lookup('env', item) }) }}"
-      with_items: "{{ var_names.stdout_lines | default([]) }}"
-      when: env_file.stat.exists and existing_env is defined and var_names.stdout_lines | default([]) | length > 0
-      
-    # Removed redundant dictionary initialization and processing steps
-      
-    - name: Create .env file while preserving existing variables
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/templates/env_file.j2"
-        dest: "{{ lookup('env', 'HOME') }}/.env"
-        mode: '0600'
-      vars:
-        existing_variables: "{{ existing_env_vars | default({}) }}"
+    # Update environment variables one by one using lineinfile
+    # This ensures we don't destroy existing variables not managed by Ansible
+    
+    - name: Update network configuration variables
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env', 'HOME') }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+        state: present
+      loop:
+        - { key: "DOMAIN_NAME", value: "{{ domain_name }}" }
+        - { key: "NETWORK_CIDR", value: "{{ network_cidr }}" }
+        - { key: "NETWORK_GATEWAY", value: "{{ network_gateway }}" }
+        - { key: "ADMIN_USERNAME", value: "{{ admin_username }}" }
+
+    - name: Update ZeroTier Network ID if defined
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env', 'HOME') }}/.env"
+        regexp: "^ZEROTIER_NETWORK_ID="
+        line: "ZEROTIER_NETWORK_ID={{ zerotier_network_id }}"
+        state: present
+      when: zerotier_network_id is defined and zerotier_network_id | length > 0
+    
+    # Update server IP variables
+    - name: Update server IP variables
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env', 'HOME') }}/.env"
+        regexp: "^{{ item | upper }}_IP="
+        line: "{{ item | upper }}_IP={{ hostvars[item]['ansible_host'] }}"
+        state: present
+      loop: "{{ groups['baremetal'] }}"
+      when: hostvars[item]['ansible_host'] is defined
       
     - name: Display environment setup message
       ansible.builtin.debug:
@@ -107,11 +115,7 @@
       ansible.builtin.debug:
         msg: "Remember to run 'source ~/.env' to load these variables in your current shell"
         
-    - name: Clean up temporary files
-      ansible.builtin.file:
-        path: "/tmp/env_parse_temp"
-        state: absent
-      when: env_file.stat.exists and existing_env is defined
+    # No need to clean up temporary files as we're no longer using any
 
     - name: Create symbolic link to .env file in project root
       ansible.builtin.file:

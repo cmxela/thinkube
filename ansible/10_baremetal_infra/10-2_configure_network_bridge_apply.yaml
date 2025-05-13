@@ -1,14 +1,14 @@
 ---
-# 20-2_configure_network_bridge_apply.yaml - Apply network bridge configuration
+# 10-2_configure_network_bridge_apply.yaml - Apply network bridge configuration
 #
 # Purpose:
 #   Applies the network bridge configuration that was prepared.
 #   CRITICAL: This will likely disrupt SSH connectivity temporarily.
 #
 # Run with: 
-#   ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20-2_configure_network_bridge_apply.yaml
+#   ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
 #   Or with helper script:
-#   ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-2_configure_network_bridge_apply.yaml
+#   ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
 
 - name: Apply Network Bridge Configuration
   hosts: baremetal
@@ -31,7 +31,11 @@
           WILL DISRUPT your SSH connection temporarily.
           
           Make sure you have completed the preparation step first by running:
-          ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-1_configure_network_bridge_prepare.yaml
+          ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+          
+          After the network configuration is applied and your connection is
+          reestablished, run the test playbook to verify:
+          ./scripts/run_ansible.sh ansible/10_baremetal_infra/18_test_network_bridge.yaml
           
           ═════════════════════════════════════════════════════════
     
@@ -52,7 +56,7 @@
           
           REQUIRED ACTION:
           - Run the preparation playbook:
-            ./scripts/run_ansible.sh ansible/10_baremetal_infra/20-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
       when: not prepared_config.stat.exists
     
     # Critical user confirmation
@@ -84,3 +88,7 @@
         echo "Netplan configuration applied"
       async: 60  # Run asynchronously
       poll: 0    # Don't wait for completion
+      
+    # Cannot reliably execute any more tasks after network reconfiguration
+    # since the connection will be disrupted. The message about running
+    # the test playbook is included in the intro message instead.

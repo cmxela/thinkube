@@ -1,0 +1,176 @@
+---
+# 00_test_gpu_reservation.yaml - Test GPU reservation for passthrough
+#
+# Purpose:
+#   Validates that GPUs have been properly reserved for passthrough
+#   after rebooting the system following 00_reserve_gpus.yaml
+#
+# Run with:
+#   ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/00_test_gpu_reservation.yaml
+#
+# This should be run after 00_reserve_gpus.yaml and a system reboot
+
+- name: Test GPU Reservation for Passthrough
+  hosts: baremetal
+  gather_facts: true
+  become: true
+  
+  tasks:
+    - name: Display test intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing GPU Reservation ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook will check if GPUs have been properly
+          reserved for passthrough after system reboot.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Phase 1: Check if GPU reservation was attempted
+    - name: Check if GPU reservation info exists
+      ansible.builtin.stat:
+        path: /var/tmp/gpu_passthrough_info.txt
+      register: gpu_info_file
+    
+    - name: Skip tests if GPU reservation was not configured
+      ansible.builtin.meta: end_play
+      when: not gpu_info_file.stat.exists
+    
+    # Phase 2: Check IOMMU enabled status
+    - name: Check if IOMMU is enabled
+      ansible.builtin.shell: |
+        dmesg | grep -E "IOMMU|DMAR" | grep -i enabled
+      register: iommu_check
+      changed_when: false
+      failed_when: false
+      tags: iommu_check
+    
+    - name: Verify IOMMU is enabled
+      ansible.builtin.assert:
+        that: "iommu_check.rc == 0"
+        fail_msg: "IOMMU not enabled in the kernel. GPU passthrough will not work."
+        success_msg: "✓ IOMMU is enabled in the kernel"
+    
+    # Phase 3: Retrieve the saved GPU information
+    - name: Get saved GPU information
+      ansible.builtin.slurp:
+        src: /var/tmp/gpu_passthrough_info.txt
+      register: gpu_info_b64
+      
+    - name: Parse saved GPU information
+      ansible.builtin.set_fact:
+        gpu_info: "{{ gpu_info_b64['content'] | b64decode }}"
+    
+    # Phase 4: Check if GPUs are bound to vfio-pci driver
+    - name: Check GPU driver bindings
+      ansible.builtin.shell: |
+        lspci -nnk | grep -A3 "VGA\|3D\|Display"
+      register: gpu_drivers
+      changed_when: false
+    
+    - name: Display GPU driver information
+      ansible.builtin.debug:
+        msg: "{{ gpu_drivers.stdout_lines }}"
+    
+    - name: Check for NVIDIA GPUs bound to VFIO
+      ansible.builtin.shell: |
+        lspci -nnk | grep -A3 "NVIDIA" | grep -i "vfio-pci" | wc -l
+      register: vfio_count
+      changed_when: false
+    
+    - name: Count total NVIDIA GPUs
+      ansible.builtin.shell: |
+        lspci -nnk | grep "VGA" | grep "NVIDIA" | wc -l
+      register: nvidia_count
+      changed_when: false
+      
+    - name: Determine if desktop or headless system
+      ansible.builtin.set_fact:
+        server_type: "{{ 'headless' if gpu_info is search('headless') else 'desktop' }}"
+      when: server_type is not defined
+      
+    - name: Set expected VFIO count
+      ansible.builtin.set_fact:
+        expected_vfio_count: "{{ nvidia_count.stdout }}"
+    
+    # Phase 5: Verify GPU reservation status
+    - name: Verify VFIO driver binding
+      ansible.builtin.assert:
+        that: 
+          - "vfio_count.stdout | int > 0"
+          - "vfio_count.stdout | int == expected_vfio_count | default(0) | int"
+        fail_msg: |
+          GPU reservation may have failed. Expected {{ expected_vfio_count | default(0) }} GPUs with vfio-pci driver, 
+          but found {{ vfio_count.stdout | int }}.
+          
+          Details from last run:
+          {{ gpu_info }}
+          
+          Current GPU driver status:
+          {{ gpu_drivers.stdout }}
+        success_msg: |
+          ✓ Found {{ vfio_count.stdout }} GPUs bound to vfio-pci driver as expected
+          
+    # Phase 6: Verify X server is using correct GPU (Desktop systems only)
+    - name: Check X server GPU (desktop systems only)
+      ansible.builtin.shell: |
+        if lspci -nnk | grep -A3 "VGA\|3D" | grep -i "Kernel driver in use: amdgpu" &>/dev/null; then
+          echo "AMD GPU detected in use by kernel"
+        elif command -v nvidia-smi &>/dev/null; then
+          nvidia-smi -L
+        elif lspci -nnk | grep -A3 "VGA\|3D" | grep -i "Kernel driver in use: i915" &>/dev/null; then
+          echo "Intel GPU detected in use by kernel"
+        else
+          echo "Could not determine GPU used by X server"
+        fi
+      register: x_gpu_check
+      changed_when: false
+      failed_when: false
+      when: server_type is defined and server_type == 'desktop'
+    
+    - name: Display X server GPU information
+      ansible.builtin.debug:
+        msg: "X server GPU: {{ x_gpu_check.stdout }}"
+      when: server_type is defined and server_type == 'desktop' and x_gpu_check is defined
+    
+    # Final status message
+    - name: Display final test results
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          {% if vfio_count.stdout | int > 0 and vfio_count.stdout | int == expected_vfio_count | default(0) | int %}
+          ✅ GPU Reservation Test PASSED ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          The system has successfully reserved GPUs for passthrough:
+          - IOMMU is enabled in the kernel
+          - {{ vfio_count.stdout }} GPUs are bound to vfio-pci driver
+          {% if server_type is defined and server_type == 'desktop' and x_gpu_check is defined %}
+          - Host OS is using {{ 'AMD' if 'AMD GPU' in x_gpu_check.stdout else 'NVIDIA' if 'NVIDIA' in x_gpu_check.stdout else 'Intel' if 'Intel GPU' in x_gpu_check.stdout else 'Unknown' }} GPU for display
+          {% endif %}
+          
+          NEXT STEPS:
+          1. Continue with LXD setup playbooks, GPUs should be available for passthrough
+          2. No further action required for GPU reservation
+          
+          {% else %}
+          ❌ GPU Reservation Test FAILED ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          The system has NOT successfully reserved GPUs for passthrough:
+          - Expected {{ expected_vfio_count | default(0) }} GPUs to use vfio-pci driver
+          - Found {{ vfio_count.stdout | int }} GPUs using vfio-pci driver
+          - See detailed output above for troubleshooting
+          
+          TROUBLESHOOTING STEPS:
+          1. Check that IOMMU is enabled in BIOS
+          2. Verify kernel command line has correct IOMMU parameters
+          3. Check if GPU is on an IOMMU-compatible PCIe slot
+          4. Try running 00_reserve_gpus.yaml again
+          
+          {% endif %}
+          ═════════════════════════════════════════════════════════

@@ -1,0 +1,127 @@
+---
+# 30-4_install_vm_packages.yaml - Install packages on LXD VMs
+#
+# Purpose:
+#   Installs common and VM-specific packages on LXD VMs.
+#   Performs apt update first to ensure package repositories are up to date.
+#   VM-specific packages can be defined as a variable in inventory.
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#   - Networking must be configured by 30-2_configure_vm_networking.yaml
+#   - Users must be configured by 30-3_configure_vm_users.yaml
+#
+# Variables:
+#   Required (from inventory):
+#     - None specific to this playbook
+#   Optional:
+#     - vm_packages: Space-separated list of additional packages to install
+#                    Can be defined per VM in inventory
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30-4_install_vm_packages.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/30-4_install_vm_packages.yaml
+#
+# Next Steps:
+#   Run 38-4_test_vm_packages.yaml to verify package installation
+
+- name: Install Packages in LXD VMs
+  hosts: management
+  gather_facts: true
+  become: false
+  vars:
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    # Collect LXD VM hostnames for configuration
+    vms_to_configure: "{{ groups['lxd_containers'] | default([]) }}"
+  
+  tasks:
+    - name: Display configuration intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          📦 Installing Packages on VMs ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Installing packages on VMs including:
+          - Essential packages (curl, wget, git, htop, vim, etc.)
+          - Python tools (python3, pip)
+          - Network tools (net-tools, dnsutils, iptables-persistent)
+          - VM-specific packages (if defined in inventory)
+          
+          VMs to configure: {{ vms_to_configure | join(', ') }}
+          
+          This is phase 4 of the VM setup process.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Verify we have VMs to configure
+    - name: Check if we have VMs to configure
+      ansible.builtin.assert:
+        that:
+          - vms_to_configure | length > 0
+        fail_msg: |
+          ERROR: No VMs found to configure packages
+          
+          DETAILS:
+          - No VMs were found in the inventory group 'lxd_containers'
+          
+          REQUIRED ACTION:
+          - Make sure VMs are created first using 30-1_create_base_vms.yaml
+          - Ensure VMs are in the 'lxd_containers' inventory group
+        success_msg: "✓ Found {{ vms_to_configure | length }} VMs to configure: {{ vms_to_configure | join(', ') }}"
+
+    # Verify VMs exist and are running before proceeding
+    - name: Check if VM is running
+      ansible.builtin.command: lxc info {{ vm_name }}
+      register: vm_info
+      changed_when: false
+      failed_when: "'Status: RUNNING' not in vm_info.stdout"
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: vm_name
+      
+    - name: Verify VM is running
+      ansible.builtin.debug:
+        msg: "✓ VM {{ vm_name }} is running"
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Install packages on each VM sequentially
+    - name: Install packages for each VM (sequentially)
+      include_tasks: configure_vm_packages.yaml
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+        pause: 1  # Small pause between VMs
+      
+    # Final completion message
+    - name: Display package installation completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ════════════════════════════════════════════════════════════════════════
+          ✅ VM Packages Installed Successfully ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════════════════════
+          
+          DETAILS:
+            ✓ Essential packages installed on all VMs
+            ✓ VM-specific packages installed where defined
+            ✓ Package installation verified
+          
+          Configured VMs:
+          {% for vm in vms_to_configure %}
+          - {{ vm }}:
+              Installed: curl wget git htop vim python3 python3-pip net-tools dnsutils
+              {% if hostvars[vm]['vm_packages'] is defined %}
+              VM-specific: {{ hostvars[vm]['vm_packages'] }}
+              {% endif %}
+          {% endfor %}
+          
+          NEXT STEPS:
+            Verify package installation:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/38-4_test_vm_packages.yaml
+          
+          ════════════════════════════════════════════════════════════════════════

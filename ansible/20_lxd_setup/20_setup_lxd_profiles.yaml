@@ -12,7 +12,7 @@
 # Variables:
 #   Required (from inventory):
 #     - lxd_containers: Container definitions with resource allocations
-#     - gpu_passthrough_containers: Containers that need GPU passthrough
+#     - gpu_passthrough_vms: VMs that need GPU passthrough
 #
 # Run with: 
 #   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
@@ -41,7 +41,7 @@
           - domain_name is defined and domain_name | length > 0
           - network_gateway is defined
           - groups['lxd_containers'] is defined
-          - groups['gpu_passthrough_containers'] is defined
+          - groups['gpu_passthrough_vms'] is defined
         fail_msg: |
           ERROR: Missing Required Installation-Specific Variables
 
@@ -50,7 +50,7 @@
             - domain_name: {% if domain_name is defined %}✓{% else %}✗ missing{% endif %}
             - network_gateway: {% if network_gateway is defined %}✓{% else %}✗ missing{% endif %}
             - lxd_containers group: {% if groups['lxd_containers'] is defined %}✓{% else %}✗ missing{% endif %}
-            - gpu_passthrough_containers group: {% if groups['gpu_passthrough_containers'] is defined %}✓{% else %}✗ missing{% endif %}
+            - gpu_passthrough_vms group: {% if groups['gpu_passthrough_vms'] is defined %}✓{% else %}✗ missing{% endif %}
 
           REQUIRED ACTION:
           - Add missing variables to your inventory file at inventory/inventory.yaml
@@ -249,8 +249,8 @@
         - name: Check if any containers need GPU passthrough
           ansible.builtin.set_fact:
             need_gpu_profile: >-
-              {{ groups['gpu_passthrough_containers'] is defined and 
-              (groups['gpu_passthrough_containers'] | length > 0) }}
+              {{ groups['gpu_passthrough_vms'] is defined and 
+              (groups['gpu_passthrough_vms'] | length > 0) }}
             
         - name: Create GPU passthrough profile
           ansible.builtin.command: lxc profile create gpu-passthrough

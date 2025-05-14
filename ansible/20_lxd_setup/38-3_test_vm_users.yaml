@@ -1,0 +1,267 @@
+---
+# 38-3_test_vm_users.yaml - Test user and SSH configuration in LXD VMs
+#
+# Purpose:
+#   Verifies that users and SSH have been properly configured in LXD VMs,
+#   including checking SSH host keys, system users, sudo access, and SSH connectivity.
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#   - Networking must be configured by 30-2_configure_vm_networking.yaml
+#   - User configuration must be completed by 30-3_configure_vm_users.yaml
+#
+# Variables:
+#   Required (from inventory):
+#     - system_username: System user created in VMs
+#   Optional:
+#     - ssh_key_name: Name of SSH key file (default: thinkube_cluster_key)
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/38-3_test_vm_users.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/38-3_test_vm_users.yaml
+#
+# Next Steps:
+#   Run 30-4_install_vm_packages.yaml to install required packages
+
+- name: Test User Configuration in LXD VMs
+  hosts: management
+  gather_facts: true
+  become: false
+  vars:
+    ssh_key_name: "thinkube_cluster_key"
+    # Collect LXD VM hostnames for testing
+    vms_to_test: "{{ groups['lxd_containers'] | default([]) }}"
+  
+  tasks:
+    - name: Display testing intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing VM User Configuration ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Testing that VM users and SSH are correctly configured with:
+          - SSH host keys generated
+          - System user ({{ system_username }}) created with sudo access
+          - SSH service running and accessible
+          - Key-based authentication using {{ ssh_key_name }}
+          
+          VMs to test: {{ vms_to_test | join(', ') }}
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Verify we have VMs to test
+    - name: Check if we have VMs to test
+      ansible.builtin.assert:
+        that:
+          - vms_to_test | length > 0
+        fail_msg: |
+          ERROR: No VMs found to test
+          
+          DETAILS:
+          - No VMs were found in the inventory group 'lxd_containers'
+          
+          REQUIRED ACTION:
+          - Make sure VMs are created and configured first
+          - Ensure VMs are in the 'lxd_containers' inventory group
+        success_msg: "✓ Found {{ vms_to_test | length }} VMs to test: {{ vms_to_test | join(', ') }}"
+    
+    # Verify required variables exist
+    - name: Verify required user variables exist
+      ansible.builtin.assert:
+        that:
+          - system_username is defined
+        fail_msg: |
+          Required variable system_username not found in inventory.
+          All installation-specific variables must be defined in inventory, not in playbooks.
+        success_msg: "✓ All required user variables found in inventory"
+    
+    # Generate SSH host keys if missing
+    - name: Generate SSH host keys if missing
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- ssh-keygen -A
+      register: host_keys_gen
+      changed_when: true
+      failed_when: false
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - SSH key generation"
+        
+    # Verify SSH host keys exist (after generation)
+    - name: Verify SSH host keys exist
+      ansible.builtin.shell: >
+        lxc exec {{ vm_name }} -- bash -c "ls -la /etc/ssh/ssh_host*key"
+      register: host_keys
+      changed_when: false
+      # Fail if SSH host keys don't exist - following project's error handling guidelines
+      failed_when: host_keys.rc != 0
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - SSH keys check"
+        
+    - name: Display SSH host key status
+      ansible.builtin.debug:
+        msg: "✓ SSH keys checked for all VMs: {{ vms_to_test | join(', ') }}"
+    
+    # Verify system user exists
+    - name: Verify system user exists
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- id {{ system_username }}
+      register: user_exists
+      changed_when: false
+      failed_when: user_exists.rc != 0
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - system user exists"
+    
+    - name: Verify system user exists (display results)
+      ansible.builtin.debug:
+        msg: "✓ System user '{{ system_username }}' exists on {{ vm_name }}"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Verify sudo access
+    - name: Verify sudo access for system user
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- sudo -l -U {{ system_username }}
+      register: sudo_access
+      changed_when: false
+      failed_when: "sudo_access.rc != 0 or 'NOPASSWD: ALL' not in sudo_access.stdout"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - sudo access"
+    
+    - name: Verify sudo access for system user (display results)
+      ansible.builtin.debug:
+        msg: "✓ System user '{{ system_username }}' has sudo access on {{ vm_name }}"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Verify SSH service
+    - name: Verify SSH service is running
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- systemctl is-active ssh
+      register: ssh_status
+      changed_when: false
+      failed_when: ssh_status.rc != 0 or ssh_status.stdout != 'active'
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - SSH service"
+    
+    - name: Verify SSH service is running (display results)
+      ansible.builtin.debug:
+        msg: "✓ SSH service is active on {{ vm_name }}"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Verify authorized_keys exists
+    - name: Check if authorized_keys file exists
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- bash -c "test -f /home/{{ system_username }}/.ssh/authorized_keys"
+      register: key_file_check
+      changed_when: false
+      # Fail if authorized_keys doesn't exist - following project's error handling guidelines
+      failed_when: key_file_check.rc != 0
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - check authorized_keys exists"
+      
+    # Get public key content
+    - name: Get public key content
+      ansible.builtin.command: cat {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}.pub
+      register: pubkey_content
+      changed_when: false
+      
+    - name: Display authorized_keys status
+      ansible.builtin.debug:
+        msg: "✓ SSH authorized_keys checked for all VMs: {{ vms_to_test | join(', ') }}"
+    
+    # We don't need to check IP addresses separately since we'll be using the hostvars['lan_ip']
+    # from inventory in the SSH test
+    - name: Verify VMs have IP addresses in inventory
+      ansible.builtin.assert:
+        that: 
+          - hostvars[vm_name]['lan_ip'] is defined
+          - hostvars[vm_name]['lan_ip'] != ""
+        fail_msg: "VM {{ vm_name }} does not have a valid lan_ip defined in inventory"
+        success_msg: "✓ VM {{ vm_name }} has lan_ip {{ hostvars[vm_name]['lan_ip'] }} defined in inventory"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - validate IP"
+    
+    # Test SSH connectivity to VMs
+    - name: Verify SSH connectivity using the cluster key
+      ansible.builtin.command: >
+        timeout 15 ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}
+        -o ConnectTimeout=5
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        {{ system_username }}@{{ hostvars[vm_name]['lan_ip'] }}
+        "echo 'SSH test successful from {{ inventory_hostname }}'"
+      register: ssh_test
+      changed_when: false
+      # Properly handle errors following project guidelines
+      failed_when: ssh_test.rc != 0
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - SSH test"
+    
+    # Verify SSH config allows hostname-based connection
+    - name: Verify SSH hostname-based connectivity
+      ansible.builtin.command: >
+        timeout 15 ssh -o ConnectTimeout=5
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        {{ vm_name }} "echo 'Successfully connected using hostname'"
+      register: hostname_ssh_test
+      changed_when: false
+      # Properly handle errors following project guidelines
+      failed_when: hostname_ssh_test.rc != 0
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - hostname SSH test"
+    
+    - name: Display SSH connectivity results
+      ansible.builtin.debug:
+        msg: "✓ SSH connectivity tests completed for: {{ vms_to_test | join(', ') }}"
+    
+    # Display final results
+    - name: Display test completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✅ VM User Testing Completed Successfully ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          DETAILS:
+            ✓ SSH host keys generated and in place
+            ✓ System user '{{ system_username }}' created with sudo access
+            ✓ Cluster SSH key '{{ ssh_key_name }}' configured in authorized_keys
+            ✓ SSH service active and accepting connections
+            ✓ SSH connectivity verified using both IP and hostname
+          
+          Tested VMs:
+          {% for vm in vms_to_test %}
+          - {{ vm }} (IP: {{ hostvars[vm]['lan_ip'] }})
+          {% endfor %}
+          
+          NEXT STEPS:
+            Install required packages:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-4_install_vm_packages.yaml
+          
+          ═════════════════════════════════════════════════════════

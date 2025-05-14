@@ -1,0 +1,208 @@
+---
+# 38-1_test_base_vms.yaml - Test base VM creation and configuration
+#
+# Purpose:
+#   Validates that base VMs were created successfully and have correct resources
+#   allocated according to inventory specifications.
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/38-1_test_base_vms.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/38-1_test_base_vms.yaml
+
+- name: Test Base VM Creation
+  hosts: management
+  gather_facts: true
+  become: false
+  
+  tasks:
+    - name: Display testing intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing Base VM Creation ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Testing that base VMs were created with correct resource
+          allocations according to inventory specifications.
+          
+          ═════════════════════════════════════════════════════════
+    
+    - name: Get list of all VMs and containers
+      ansible.builtin.command: lxc list --format csv
+      register: vm_list
+      changed_when: false
+    
+    - name: Parse list of existing VMs and containers
+      ansible.builtin.set_fact:
+        existing_vms: "{{ vm_list.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+    
+    - name: Check if all required VMs exist
+      ansible.builtin.set_fact:
+        missing_vms: "{{ groups['lxd_containers'] | default([]) | difference(existing_vms) }}"
+        
+    - name: Verify all required VMs exist
+      ansible.builtin.assert:
+        that:
+          - missing_vms | length == 0
+        fail_msg: |
+          ERROR: Missing required VMs
+          
+          DETAILS:
+          The following VMs do not exist:
+          {{ missing_vms | join(', ') }}
+          
+          REQUIRED ACTION:
+          Run the VM creation playbook:
+          ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30-1_create_base_vms.yaml
+        success_msg: "✓ All required VMs exist: {{ groups['lxd_containers'] | join(', ') }}"
+    
+    - name: Check if VMs are running
+      ansible.builtin.command: lxc list {{ vm_name }} -c s --format=csv
+      register: vm_status
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      changed_when: false
+      
+    - name: Verify VM is running
+      ansible.builtin.assert:
+        that:
+          - "'RUNNING' in vm_status.results[vm_index].stdout"
+        fail_msg: "VM {{ vm_name }} is not running (status: {{ vm_status.results[vm_index].stdout }})"
+        success_msg: "✓ VM {{ vm_name }} is running"
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+        index_var: vm_index
+
+    - name: Verify VM resource configuration
+      block:
+        # Check CPU configuration
+        - name: Get VM CPU configuration
+          ansible.builtin.command: lxc config get {{ vm_name }} limits.cpu
+          register: vm_cpu
+          changed_when: false
+          failed_when: false
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+        
+        - name: Verify CPU configuration
+          ansible.builtin.assert:
+            that: 
+              - vm_cpu.results[vm_index].stdout | string == hostvars[vm_name]['cpu_cores'] | string
+            fail_msg: "VM {{ vm_name }} CPU cores mismatch. Expected: {{ hostvars[vm_name]['cpu_cores'] }}, Got: {{ vm_cpu.results[vm_index].stdout }}"
+            success_msg: "✓ VM {{ vm_name }} has correct CPU cores: {{ vm_cpu.results[vm_index].stdout }}"
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+            index_var: vm_index
+        
+        # Check memory configuration
+        - name: Get VM memory configuration
+          ansible.builtin.command: lxc config get {{ vm_name }} limits.memory
+          register: vm_memory
+          changed_when: false
+          failed_when: false
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+        
+        - name: Verify memory configuration
+          ansible.builtin.assert:
+            that: 
+              - vm_memory.results[vm_index].stdout == hostvars[vm_name]['memory']
+            fail_msg: "VM {{ vm_name }} memory mismatch. Expected: {{ hostvars[vm_name]['memory'] }}, Got: {{ vm_memory.results[vm_index].stdout }}"
+            success_msg: "✓ VM {{ vm_name }} has correct memory: {{ vm_memory.results[vm_index].stdout }}"
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+            index_var: vm_index
+        
+        # Check secure boot configuration
+        - name: Get VM secure boot configuration
+          ansible.builtin.command: lxc config get {{ vm_name }} security.secureboot
+          register: vm_secureboot
+          changed_when: false
+          failed_when: false
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+        
+        - name: Verify secure boot configuration
+          ansible.builtin.assert:
+            that: 
+              - vm_secureboot.results[vm_index].stdout == "false"
+            fail_msg: "VM {{ vm_name }} secure boot mismatch. Expected: false, Got: {{ vm_secureboot.results[vm_index].stdout }}"
+            success_msg: "✓ VM {{ vm_name }} has secure boot disabled"
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+            index_var: vm_index
+        
+        # Check VM location
+        - name: Get VM location
+          ansible.builtin.command: lxc list {{ vm_name }} -c L --format=csv
+          register: vm_location
+          changed_when: false
+          failed_when: false
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+        
+        - name: Verify VM location
+          ansible.builtin.assert:
+            that:
+              - vm_location.results[vm_index].stdout == hostvars[vm_name]['parent_host']
+            fail_msg: "VM {{ vm_name }} location mismatch. Expected: {{ hostvars[vm_name]['parent_host'] }}, Got: {{ vm_location.results[vm_index].stdout }}"
+            success_msg: "✓ VM {{ vm_name }} is on correct host: {{ vm_location.results[vm_index].stdout }}"
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+            index_var: vm_index
+      
+    # Test basic VM functionality
+    - name: Test basic VM functionality
+      block:
+        - name: Execute simple command in VM
+          ansible.builtin.command: lxc exec {{ vm_name }} -- echo "VM {{ vm_name }} is working"
+          register: vm_test
+          failed_when: vm_test.rc != 0
+          changed_when: false
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+        
+        - name: Verify test command results
+          ansible.builtin.assert:
+            that:
+              - "'is working' in vm_test.results[vm_index].stdout"
+            fail_msg: "Basic functionality test failed for VM {{ vm_name }}"
+            success_msg: "✓ VM {{ vm_name }} passed basic functionality test"
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+            index_var: vm_index
+          
+    # Final completion message
+    - name: Display testing completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✅ Base VM Testing Completed Successfully ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          All VMs have been created and configured correctly with
+          the appropriate resources according to inventory specifications.
+          
+          NEXT STEPS:
+            Configure VM networking:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-2_configure_vm_networking.yaml
+          
+          ═════════════════════════════════════════════════════════

@@ -1,27 +1,29 @@
 ---
-# 30_create_vms.yaml - Create LXD VMs based on inventory configuration
+# 30-1_create_base_vms.yaml - Create base LXD VMs from inventory
 #
 # Purpose:
-#   Creates and configures LXD VMs according to inventory specifications.
-#   Sets up resource allocation, networking, and user access.
+#   Creates and configures the base VM structure with resources, but without
+#   additional configuration like networking, users, and packages.
 #
 # Requirements:
 #   - LXD must be installed and initialized
 #   - Profiles must be created by 20_setup_lxd_profiles.yaml
-#   - Network bridges (br0, lxdbr0) must be configured
 #
 # Variables:
 #   Required (from inventory):
 #     - lxd_containers: Container definitions with resource allocations
-#     - microk8s_containers: Kubernetes-specific container groups
-#     - gpu_passthrough_containers: Containers that need GPU passthrough
+#     - gpu_passthrough_vms: VMs that need GPU passthrough
 #
 # Run with: 
-#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30_create_vms.yaml
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30-1_create_base_vms.yaml
 #   Or with helper script:
-#   ./scripts/run_ansible.sh ansible/20_lxd_setup/30_create_vms.yaml
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/30-1_create_base_vms.yaml
+#
+# Next Steps:
+#   Run 38-1_test_base_vms.yaml to verify VM creation
+#   Run 30-2_configure_vm_networking.yaml to configure networks
 
-- name: Create LXD VMs based on inventory configuration
+- name: Create Base LXD VMs from inventory
   hosts: management
   gather_facts: true
   become: false  # Use become only where necessary
@@ -36,13 +38,6 @@
 
     # Default value for VM image from lxd_containers group
     vm_image: "{{ hostvars[groups['lxd_containers'][0]]['lxd_image'] | default('ubuntu:24.04') }}"
-
-    # Default value for internal gateway
-    internal_gateway: "192.168.100.1"
-
-    # Default values for DNS servers and search domains
-    dns_servers: ["8.8.8.8", "8.8.4.4"]
-    dns_search_domains: ["{{ domain_name }}", "kn.{{ domain_name }}"]
   
   tasks:
     # Verify all required variables exist before proceeding
@@ -55,10 +50,6 @@
           - vm_profiles.network is defined
           - vm_profiles.gpu is defined
           - groups['lxd_containers'] is defined
-          - network_gateway is defined
-          - internal_gateway is defined
-          - dns_servers is defined
-          - dns_search_domains is defined
         fail_msg: |
           Required variables not found in inventory.
           All installation-specific variables must be defined in inventory, not in playbooks.
@@ -70,23 +61,24 @@
           - vm_profiles.network: Network VM profile name
           - vm_profiles.gpu: GPU passthrough profile name
           - lxd_containers: Inventory group with VM definitions
-          - network_gateway: External network gateway
-          - internal_gateway: Internal network gateway
-          - dns_servers: List of DNS servers
-          - dns_search_domains: List of DNS search domains
         success_msg: "✓ All required variables found in inventory"
 
     - name: Display setup intro message
       ansible.builtin.debug:
         msg: >-
-
+          
           ═════════════════════════════════════════════════════════
-          🚀 Creating LXD VMs ({{ inventory_hostname }})
+          🚀 Creating Base LXD VMs ({{ inventory_hostname }})
           ═════════════════════════════════════════════════════════
-
-          Creating and configuring virtual machines according to
-          inventory specifications.
-
+          
+          Creating virtual machines according to inventory specifications.
+          This playbook only handles the base VM creation and resource
+          allocation. Subsequent playbooks will handle:
+          
+          - Network configuration (30-2)
+          - User and SSH setup (30-3)
+          - Package installation (30-4)
+          
           ═════════════════════════════════════════════════════════
     
     # Phase 1: Verify requirements
@@ -97,22 +89,7 @@
           ansible.builtin.assert:
             that:
               - domain_name is defined and domain_name | length > 0
-              - network_gateway is defined
               - groups['lxd_containers'] is defined and groups['lxd_containers'] | length > 0
-            fail_msg: |
-              ERROR: Missing Required Installation-Specific Variables
-
-              DETAILS:
-              - The following variables must be defined in inventory:
-                - domain_name: {% if domain_name is defined %}✓{% else %}✗ missing{% endif %}
-                - network_gateway: {% if network_gateway is defined %}✓{% else %}✗ missing{% endif %}
-                - lxd_containers group: {% if groups['lxd_containers'] is defined and groups['lxd_containers'] | length > 0 %}✓{% else %}✗ missing or empty{% endif %}
-
-              REQUIRED ACTION:
-              - Add missing variables to your inventory file at inventory/inventory.yaml
-              - Ensure required groups are defined with hosts in the inventory
-
-              REFERENCE: See docs/architecture/VARIABLE_HANDLING.md
             success_msg: "✓ All required installation-specific variables found in inventory"
 
         # Verify VM-specific configurations
@@ -122,25 +99,16 @@
               - hostvars[vm_name]['cpu_cores'] is defined
               - hostvars[vm_name]['memory'] is defined
               - hostvars[vm_name]['disk_size'] is defined
-              - hostvars[vm_name]['lan_ip'] is defined
-              - hostvars[vm_name]['internal_ip'] is defined
               - hostvars[vm_name]['parent_host'] is defined
             fail_msg: |
               ERROR: Missing VM Configuration Variables
-
+              
               DETAILS:
               - The VM '{{ vm_name }}' is missing required configuration variables:
                 - cpu_cores: {% if hostvars[vm_name]['cpu_cores'] is defined %}✓{% else %}✗ missing{% endif %}
                 - memory: {% if hostvars[vm_name]['memory'] is defined %}✓{% else %}✗ missing{% endif %}
                 - disk_size: {% if hostvars[vm_name]['disk_size'] is defined %}✓{% else %}✗ missing{% endif %}
-                - lan_ip: {% if hostvars[vm_name]['lan_ip'] is defined %}✓{% else %}✗ missing{% endif %}
-                - internal_ip: {% if hostvars[vm_name]['internal_ip'] is defined %}✓{% else %}✗ missing{% endif %}
                 - parent_host: {% if hostvars[vm_name]['parent_host'] is defined %}✓{% else %}✗ missing{% endif %}
-
-              REQUIRED ACTION:
-              - Add missing variables to the VM definition in inventory/inventory.yaml
-
-              REFERENCE: See docs/architecture/VARIABLE_HANDLING.md
             success_msg: "✓ VM '{{ vm_name }}' has all required configuration"
           loop: "{{ groups['lxd_containers'] }}"
           loop_control:
@@ -193,8 +161,8 @@
         - name: Check if any VMs need GPU passthrough
           ansible.builtin.set_fact:
             need_gpu_profile: >-
-              {{ groups['gpu_passthrough_containers'] is defined and
-                 (groups['gpu_passthrough_containers'] | length > 0) }}
+              {{ groups['gpu_passthrough_vms'] is defined and
+                 (groups['gpu_passthrough_vms'] | length > 0) }}
 
         - name: Add GPU profile to expected profiles if needed
           ansible.builtin.set_fact:
@@ -272,7 +240,7 @@
             lxc launch {{ vm_image }} {{ vm_name }} --vm
             --profile {{ vm_profiles.base }}
             --profile {{ vm_profiles.network }}
-            {% if vm_name in groups['gpu_passthrough_containers'] | default([]) %}--profile {{ vm_profiles.gpu }}{% endif %}
+            {% if vm_name in groups['gpu_passthrough_vms'] | default([]) %}--profile {{ vm_profiles.gpu }}{% endif %}
             --storage default
             {% if is_clustered %}--target {{ hostvars[vm_name]['parent_host'] }}{% endif %}
           register: vm_create
@@ -283,6 +251,9 @@
           loop: "{{ vms_to_create }}"
           loop_control:
             loop_var: vm_name
+          # Add async to prevent timeout
+          async: 300
+          poll: 10
         
         # Wait for VMs to initialize
         - name: Wait for VMs to initialize
@@ -313,6 +284,15 @@
           loop: "{{ vms_to_configure }}"
           loop_control:
             loop_var: vm_name
+          # Add async to prevent timeout
+          async: 180
+          poll: 5
+        
+        # Wait to ensure VMs are fully stopped before configuration
+        - name: Wait for VMs to be fully stopped
+          ansible.builtin.pause:
+            seconds: 10
+          when: stop_vm.changed | default(false)
         
         # Configure VM resources individually - using exact inventory values
         - name: Configure VM CPU limits
@@ -324,6 +304,9 @@
           loop: "{{ vms_to_configure }}"
           loop_control:
             loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
 
         - name: Configure VM memory limits
           ansible.builtin.command: >
@@ -334,6 +317,9 @@
           loop: "{{ vms_to_configure }}"
           loop_control:
             loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
 
         - name: Configure VM disk size
           ansible.builtin.command: >
@@ -344,16 +330,42 @@
           loop: "{{ vms_to_configure }}"
           loop_control:
             loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
         
         - name: Ensure secure boot is disabled
-          ansible.builtin.command: >
+          ansible.builtin.shell: |
+            # First verify VM is actually stopped
+            VM_STATUS=$(lxc list {{ vm_name }} --format csv | cut -d',' -f2)
+            if [ "$VM_STATUS" != "STOPPED" ]; then
+              echo "VM {{ vm_name }} is not stopped (status: $VM_STATUS). Stopping again..."
+              lxc stop {{ vm_name }} --force
+              sleep 5
+            fi
+            
+            # Now apply the secure boot config
             lxc config set {{ vm_name }} security.secureboot false
+            
+            # Verify the setting was applied
+            CONFIG=$(lxc config get {{ vm_name }} security.secureboot)
+            if [ "$CONFIG" = "false" ]; then
+              echo "Successfully disabled secure boot for {{ vm_name }}"
+              exit 0
+            else
+              echo "Failed to disable secure boot for {{ vm_name }}"
+              exit 1
+            fi
           register: secureboot_config
           failed_when: secureboot_config.rc != 0
           changed_when: secureboot_config.rc == 0
           loop: "{{ vms_to_configure }}"
           loop_control:
             loop_var: vm_name
+            pause: 3  # Add 3 second pause between VMs to prevent overwhelming LXD API
+          # Add extended async to prevent timeout
+          async: 300
+          poll: 10
         
         - name: Enable VM autostart
           ansible.builtin.command: >
@@ -364,6 +376,9 @@
           loop: "{{ vms_to_configure }}"
           loop_control:
             loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
         
         # Start VMs with new configuration
         - name: Start VMs with new resource configurations
@@ -376,6 +391,9 @@
           loop: "{{ vms_to_configure }}"
           loop_control:
             loop_var: vm_name
+          # Add async to prevent timeout
+          async: 180
+          poll: 5
         
         # Wait for VMs to be ready with basic readiness check
         - name: Wait for VMs to be ready
@@ -387,296 +405,7 @@
           loop: "{{ vms_to_configure }}"
           loop_control:
             loop_var: vm_name
-      
-    # Phase 5: Configure VM networking
-    - name: Configure VM networking
-      block:
-        # Generate netplan configuration template
-        - name: Create VM netplan configuration directory
-          ansible.builtin.file:
-            path: /tmp/netplan_configs
-            state: directory
-            mode: '0755'
-        
-        - name: Generate netplan configuration for each VM
-          ansible.builtin.template:
-            src: "{{ playbook_dir }}/templates/container-netplan.yaml.j2"
-            dest: "/tmp/netplan_configs/{{ vm_name }}.yaml"
-            mode: '0644'
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-        
-        # Copy netplan configs to VMs
-        - name: Copy netplan configuration to VMs
-          ansible.builtin.command: >
-            lxc file push /tmp/netplan_configs/{{ vm_name }}.yaml {{ vm_name }}/etc/netplan/50-cloud-init.yaml
-          register: copy_netplan
-          failed_when: copy_netplan.rc != 0
-          changed_when: copy_netplan.rc == 0
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-        
-        # Apply netplan configuration
-        - name: Apply netplan configuration in VMs
-          ansible.builtin.command: >
-            lxc exec {{ vm_name }} -- netplan apply
-          register: apply_netplan
-          failed_when: apply_netplan.rc != 0
-          changed_when: apply_netplan.rc == 0
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-          # Add explicit timeout to prevent playbook timeouts
-          async: 120
-          poll: 5
-        
-        # Configure DNS settings
-        - name: Configure persistent DNS settings in VMs
-          ansible.builtin.shell: |
-            # Create systemd-resolved config directory
-            lxc exec {{ vm_name }} -- mkdir -p /etc/systemd/resolved.conf.d
-            
-            # Create systemd-resolved configuration
-            lxc exec {{ vm_name }} -- bash -c 'cat > /etc/systemd/resolved.conf.d/dns.conf << EOF
-            [Resolve]
-            DNS={{ dns_servers | join(" ") }}
-            Domains=~.
-            Cache=yes
-            EOF'
-            
-            # Restart systemd-resolved
-            lxc exec {{ vm_name }} -- systemctl restart systemd-resolved || true
-            
-            # Create resolv.conf with proper nameservers
-            lxc exec {{ vm_name }} -- bash -c 'cat > /etc/resolv.conf << EOF
-            {% for dns in dns_servers %}
-            nameserver {{ dns }}
-            {% endfor %}
-            EOF'
-            
-            # Make resolv.conf immutable to prevent changes
-            lxc exec {{ vm_name }} -- chattr +i /etc/resolv.conf || true
-          register: dns_config
-          failed_when: dns_config.rc != 0
-          changed_when: dns_config.rc == 0
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-        
-        # Clean up temporary network configuration files
-        - name: Clean up temporary network configuration files
-          ansible.builtin.file:
-            path: "/tmp/netplan_configs"
-            state: absent
-      
-    # Phase 6: Set up user and SSH access
-    - name: Verify system_username is defined
-      ansible.builtin.assert:
-        that:
-          - system_username is defined
-          - system_username != ""
-        fail_msg: "Required variable 'system_username' is not defined in inventory"
-        success_msg: "✓ Using system_username '{{ system_username }}' from inventory"
-
-    - name: Set up user and SSH access
-      block:
-        # Create user setup script to avoid command line issues
-        - name: Create temporary user setup script
-          ansible.builtin.copy:
-            dest: "/tmp/vm_user_setup.sh"
-            mode: '0755'
-            content: |
-              #!/bin/bash
-              # User setup script for VMs
-
-              USERNAME="{{ system_username }}"
-
-              # Create user if not exists
-              if ! id -u $USERNAME &>/dev/null; then
-                useradd -m -s /bin/bash $USERNAME
-                echo "User $USERNAME created"
-              else
-                echo "User $USERNAME already exists"
-              fi
-
-              # Set password (same as username for simplicity)
-              echo "$USERNAME:$USERNAME" | chpasswd
-
-              # Add to sudo group
-              usermod -aG sudo $USERNAME
-
-              # Configure sudo without password
-              echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME
-              chmod 440 /etc/sudoers.d/$USERNAME
-
-              # Ensure home directory exists and has correct permissions
-              mkdir -p /home/$USERNAME
-              chown $USERNAME:$USERNAME /home/$USERNAME
-
-              echo "User setup completed successfully"
-
-        # Transfer and execute the script in VMs
-        - name: Run user setup script in VMs
-          ansible.builtin.shell: |
-            # Push script to VM
-            lxc file push /tmp/vm_user_setup.sh {{ vm_name }}/tmp/
-            # Execute script
-            lxc exec {{ vm_name }} -- bash /tmp/vm_user_setup.sh
-            # Cleanup
-            lxc exec {{ vm_name }} -- rm /tmp/vm_user_setup.sh
-          register: user_setup
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-          changed_when: "'User setup completed successfully' in user_setup.stdout"
-          failed_when: user_setup.rc != 0
-
-        # Clean up local script
-        - name: Remove temporary script
-          ansible.builtin.file:
-            path: "/tmp/vm_user_setup.sh"
-            state: absent
-        
-        # Set up SSH access using script
-        - name: Create SSH setup script
-          ansible.builtin.copy:
-            dest: "/tmp/vm_ssh_setup.sh"
-            mode: '0755'
-            content: |
-              #!/bin/bash
-              # SSH setup script for VMs
-
-              USERNAME="{{ system_username }}"
-
-              # Install SSH if needed
-              if ! command -v sshd &>/dev/null; then
-                apt-get update && apt-get install -y openssh-server
-              fi
-
-              # Enable SSH service
-              systemctl enable ssh
-              systemctl start ssh
-
-              # Configure SSH for password authentication
-              sed -i "s/^#\\?PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
-
-              # Set up SSH directory for system user
-              mkdir -p /home/$USERNAME/.ssh
-              chown $USERNAME:$USERNAME /home/$USERNAME/.ssh
-              chmod 700 /home/$USERNAME/.ssh
-
-              # Restart SSH service to apply changes
-              systemctl restart ssh
-
-              echo "SSH setup completed successfully"
-
-        - name: Configure SSH access in VMs
-          ansible.builtin.shell: |
-            # Push script to VM
-            lxc file push /tmp/vm_ssh_setup.sh {{ vm_name }}/tmp/
-            # Execute script
-            lxc exec {{ vm_name }} -- bash /tmp/vm_ssh_setup.sh
-            # Cleanup
-            lxc exec {{ vm_name }} -- rm /tmp/vm_ssh_setup.sh
-          register: ssh_config
-          failed_when: ssh_config.rc != 0
-          changed_when: ssh_config.rc == 0
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-
-        # Clean up local script
-        - name: Remove SSH setup script
-          ansible.builtin.file:
-            path: "/tmp/vm_ssh_setup.sh"
-            state: absent
-
-        # Configure SSH authorized keys (optional)
-        - name: Check if SSH public key exists
-          ansible.builtin.stat:
-            path: "~/.ssh/id_rsa.pub"
-          register: ssh_pubkey
-        
-        - name: Copy SSH public key to VM
-          ansible.builtin.shell: cat ~/.ssh/id_rsa.pub | lxc exec {{ vm_name }} -- bash -c "cat > /tmp/id_rsa.pub"
-          register: copy_pubkey
-          failed_when: copy_pubkey.rc != 0
-          changed_when: copy_pubkey.rc == 0
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-          when: ssh_pubkey.stat.exists | default(false)
-
-        - name: Configure authorized keys
-          ansible.builtin.command: >
-            lxc exec {{ vm_name }} -- bash -c '
-            # Add to authorized_keys
-            mkdir -p /home/{{ system_username }}/.ssh
-            cat /tmp/id_rsa.pub >> /home/{{ system_username }}/.ssh/authorized_keys
-            chown -R {{ system_username }}:{{ system_username }} /home/{{ system_username }}/.ssh
-            chmod 600 /home/{{ system_username }}/.ssh/authorized_keys
-
-            # Clean up
-            rm /tmp/id_rsa.pub
-            '
-          register: ssh_key_setup
-          failed_when: ssh_key_setup.rc != 0
-          changed_when: ssh_key_setup.rc == 0
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-          when: ssh_pubkey.stat.exists | default(false)
-      
-    # Phase 7: Install essential packages
-    - name: Install essential packages
-      block:
-        # Install packages with error handling
-        - name: Install essential packages in VMs
-          ansible.builtin.command: >
-            lxc exec {{ vm_name }} -- bash -c '
-            # Update package cache with retries
-            for i in $(seq 1 5); do
-              if apt-get update -y; then
-                echo "Package cache update successful on attempt $i"
-                break
-              else
-                echo "Package cache update failed on attempt $i, retrying..."
-                sleep 5
-                if [ $i -eq 5 ]; then
-                  echo "All package cache update attempts failed"
-                fi
-              fi
-            done
-
-            # Install packages with retries
-            for i in $(seq 1 5); do
-              if export DEBIAN_FRONTEND=noninteractive &&
-                 apt-get install -y --no-install-recommends curl wget net-tools dnsutils \
-                 openssh-server sudo vim chrony; then
-                echo "Package installation successful on attempt $i"
-                break
-              else
-                echo "Package installation failed on attempt $i, retrying..."
-                sleep 5
-                if [ $i -eq 5 ]; then
-                  echo "All package installation attempts failed"
-                fi
-              fi
-            done
-            '
-          register: pkg_install
-          failed_when: "'All package installation attempts failed' in pkg_install.stdout"
-          loop: "{{ groups['lxd_containers'] | default([]) }}"
-          loop_control:
-            loop_var: vm_name
-          # Add explicit timeout to prevent playbook timeouts
-          async: 300
-          poll: 10
-            
-    # Note: Network testing has been moved to 38_test_vm_creation.yaml
-    # to properly separate provisioning from testing
+            pause: 2  # Add 2 second pause between checks
       
     # Final completion message
     - name: Display VM creation completion message
@@ -684,30 +413,23 @@
         msg: >-
           
           ════════════════════════════════════════════════════════════════════════
-          ✅ LXD VMs Created Successfully ({{ inventory_hostname }})
+          ✅ Base LXD VMs Created Successfully ({{ inventory_hostname }})
           ════════════════════════════════════════════════════════════════════════
           
-          Created and configured VMs:
+          Created and configured base VMs:
           {% for vm in groups['lxd_containers'] | default([]) %}
           - {{ vm }}: 
               CPU: {{ hostvars[vm]['cpu_cores'] | default(4) }} cores
               Memory: {{ hostvars[vm]['memory'] | default('4GB') }}
               Disk: {{ hostvars[vm]['disk_size'] | default('20GB') }}
-              IP Internal: {{ hostvars[vm]['internal_ip'] | default('192.168.100.x') }}
-              IP External: {{ hostvars[vm]['lan_ip'] | default('192.168.1.x') }}
+              Location: {{ hostvars[vm]['parent_host'] }}
           {% endfor %}
           
-          USER ACCESS:
-            Username: thinkube
-            Password: <set from ANSIBLE_SUDO_PASS>
-            SSH: Enabled with password authentication
-          
-          VALIDATION:
-            To verify VM creation:
-            $ ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/28_test_vm_creation.yaml
-          
           NEXT STEPS:
-            Continue to networking setup:
-            $ ansible-playbook -i inventory/inventory.yaml ansible/30_networking/10_setup_zerotier.yaml
+            Verify VM creation:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/38-1_test_base_vms.yaml
+            
+            Configure VM networking:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-2_configure_vm_networking.yaml
           
           ════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,232 @@
+---
+# 38-2_test_vm_networking.yaml - Test VM networking configuration
+#
+# Purpose:
+#   Verifies that VM networking is properly configured with correct
+#   IP addresses, DNS settings, and connectivity.
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#   - Networking must be configured by 30-2_configure_vm_networking.yaml
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/38-2_test_vm_networking.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/38-2_test_vm_networking.yaml
+
+- name: Test VM Networking Configuration
+  hosts: management
+  gather_facts: true
+  become: false
+  
+  tasks:
+    - name: Display testing intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing VM Networking ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Testing that VM networking is correctly configured with
+          proper IP addresses, DNS settings, and connectivity.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Verify IP configuration
+    - name: Check VM IP addresses
+      ansible.builtin.command: lxc exec {{ vm_name }} -- ip addr show
+      register: ip_check
+      changed_when: false
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      
+    - name: Verify external IP addresses are configured
+      ansible.builtin.assert:
+        that:
+          - hostvars[vm_name]['lan_ip'] in ip_check.results[vm_index].stdout
+        fail_msg: |
+          VM {{ vm_name }} external IP address is not configured correctly.
+          Expected: {{ hostvars[vm_name]['lan_ip'] }}
+          Actual IP configuration:
+          {{ ip_check.results[vm_index].stdout | regex_search('(enp6s0|eth[0-9]+).*') }}
+        success_msg: "✓ VM {{ vm_name }} has correct external IP: {{ hostvars[vm_name]['lan_ip'] }}"
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+        index_var: vm_index
+      
+    - name: Verify internal IP addresses are configured
+      ansible.builtin.assert:
+        that:
+          - hostvars[vm_name]['internal_ip'] in ip_check.results[vm_index].stdout
+        fail_msg: |
+          VM {{ vm_name }} internal IP address is not configured correctly.
+          Expected: {{ hostvars[vm_name]['internal_ip'] }}
+          Actual IP configuration:
+          {{ ip_check.results[vm_index].stdout | regex_search('(enp5s0|eth[0-9]+).*') }}
+        success_msg: "✓ VM {{ vm_name }} has correct internal IP: {{ hostvars[vm_name]['internal_ip'] }}"
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+        index_var: vm_index
+    
+    # Verify network connectivity
+    - name: Test external network connectivity
+      ansible.builtin.command: lxc exec {{ vm_name }} -- ping -c 2 {{ network_gateway }}
+      register: ping_gateway
+      failed_when: ping_gateway.rc != 0 
+      changed_when: false
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      # Add async to prevent timeout
+      async: 60
+      poll: 5
+      
+    - name: Test internet connectivity
+      ansible.builtin.command: lxc exec {{ vm_name }} -- ping -c 2 8.8.8.8
+      register: ping_internet
+      failed_when: ping_internet.rc != 0
+      changed_when: false
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      # Add async to prevent timeout
+      async: 60
+      poll: 5
+      
+    # Test VM-to-VM connectivity
+    - name: Test VM-to-VM connectivity
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- ping -c 2 {{ target_vm_ip }}
+      register: ping_vm
+      failed_when: ping_vm.rc != 0
+      changed_when: false
+      # Use only the first VM to test connectivity to others
+      loop: "{{ [{'vm': groups['lxd_containers'][0], 'target': hostvars[groups['lxd_containers'][1]]['internal_ip']}] if groups['lxd_containers'] | length > 1 else [] }}"
+      loop_control:
+        loop_var: item_dict
+        label: "{{ item_dict.vm }} to {{ item_dict.target }}"
+      vars:
+        vm_name: "{{ item_dict.vm }}"
+        target_vm_ip: "{{ item_dict.target }}"
+      # Add async to prevent timeout
+      async: 60
+      poll: 5
+      when: groups['lxd_containers'] | length > 1
+    
+    # Verify DNS configuration 
+    - name: Check DNS configuration
+      ansible.builtin.command: lxc exec {{ vm_name }} -- cat /etc/resolv.conf
+      register: dns_check
+      changed_when: false
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      
+    - name: Verify DNS servers are configured
+      ansible.builtin.assert:
+        that:
+          - dns_server in dns_check.results[vm_index].stdout
+        fail_msg: |
+          VM {{ vm_name }} DNS configuration is incorrect.
+          Expected DNS server {{ dns_server }} not found in /etc/resolv.conf:
+          {{ dns_check.results[vm_index].stdout }}
+        success_msg: "✓ VM {{ vm_name }} has DNS server {{ dns_server }} configured"
+      # Check first DNS server only to simplify test
+      loop: "{{ groups['lxd_containers'] | product(['8.8.8.8']) | list }}"
+      loop_control:
+        loop_var: test_item
+        index_var: vm_index
+        label: "{{ test_item[0] }} - {{ test_item[1] }}"
+      vars:
+        vm_name: "{{ test_item[0] }}"
+        dns_server: "{{ test_item[1] }}"
+        
+    # Verify hostname configuration
+    - name: Check hostname configuration
+      ansible.builtin.command: lxc exec {{ vm_name }} -- cat /etc/hostname
+      register: hostname_check
+      changed_when: false
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      
+    - name: Verify hostnames are configured correctly
+      ansible.builtin.assert:
+        that:
+          - hostname_check.results[vm_index].stdout == vm_name + '.' + domain_name
+        fail_msg: |
+          VM {{ vm_name }} hostname is not configured correctly.
+          Expected: {{ vm_name }}.{{ domain_name }}
+          Actual: {{ hostname_check.results[vm_index].stdout }}
+        success_msg: "✓ VM {{ vm_name }} has correct hostname: {{ vm_name }}.{{ domain_name }}"
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+        index_var: vm_index
+        
+    # Verify hosts file
+    - name: Check hosts file configuration
+      ansible.builtin.command: lxc exec {{ vm_name }} -- cat /etc/hosts
+      register: hosts_check
+      changed_when: false
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      
+    - name: Verify hosts file contains VM entries
+      ansible.builtin.assert:
+        that:
+          - other_vm in hosts_check.results[vm_index].stdout
+        fail_msg: |
+          VM {{ vm_name }} hosts file does not contain entry for {{ other_vm }}.
+          Contents of /etc/hosts:
+          {{ hosts_check.results[vm_index].stdout }}
+        success_msg: "✓ VM {{ vm_name }} hosts file contains entry for {{ other_vm }}"
+      # Only test a subset of entries to avoid too much output
+      loop: "{{ groups['lxd_containers'] | product([groups['lxd_containers'][0]]) | list }}"
+      loop_control:
+        loop_var: test_item
+        index_var: vm_index
+        label: "{{ test_item[0] }} - {{ test_item[1] }}"
+      vars:
+        vm_name: "{{ test_item[0] }}"
+        other_vm: "{{ test_item[1] }}"
+      when: groups['lxd_containers'] | length > 0
+      
+    # Test DNS resolution
+    - name: Test DNS resolution
+      ansible.builtin.command: lxc exec {{ vm_name }} -- getent hosts google.com
+      register: dns_resolution
+      failed_when: dns_resolution.rc != 0
+      changed_when: false
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      # Add async to prevent timeout
+      async: 60
+      poll: 5
+      
+    # Final completion message
+    - name: Display network testing completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✅ VM Network Testing Completed Successfully ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          All VMs have properly configured networking:
+          ✓ External and internal IPs are assigned correctly
+          ✓ Network connectivity works (internal and external)
+          ✓ DNS resolution is functioning 
+          ✓ Hostname and hosts file are configured correctly
+          
+          NEXT STEPS:
+            Configure users and SSH:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-3_configure_vm_users.yaml
+          
+          ═════════════════════════════════════════════════════════

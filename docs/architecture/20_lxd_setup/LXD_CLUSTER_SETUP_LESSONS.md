@@ -379,28 +379,61 @@ During the implementation of 30_create_vms.yaml, we discovered several important
      delay: 2
    ```
 
-## 12. Proper Playbook Separation
+## 12. Modular Playbook Design
 
-Our experience highlighted the importance of proper playbook separation:
+Our experience highlighted the importance of proper playbook separation and modular design:
 
 1. **Separation of Concerns**:
-   - Installation/setup playbooks (30_create_vms.yaml) should focus on creation only
-   - Testing playbooks (38_test_vm_creation.yaml) should handle validation
-   - Mixing testing within creation playbooks leads to confusion
+   - Break down complex operations into smaller, focused playbooks
+   - Each playbook should do one thing well
+   - Follow a logical sequence for VM setup: create → network → users → packages
 
-2. **Idempotency Design**:
+2. **Modular VM Setup Structure**:
+   - 30-1_create_base_vms.yaml - Creates the base VM instances
+   - 30-2_configure_vm_networking.yaml - Configures VM networking
+   - 30-3_configure_vm_users.yaml - Sets up users and SSH in VMs
+   - 30-4_install_vm_packages.yaml - Installs packages on VMs
+
+3. **Dedicated Test Playbooks**:
+   - 38-1_test_base_vms.yaml - Tests base VM creation
+   - 38-2_test_vm_networking.yaml - Tests VM networking
+   - 38-3_test_vm_users.yaml - Tests VM user configuration and SSH
+   - 38-4_test_vm_packages.yaml - Tests VM package installation
+
+4. **Task File Reusability**:
+   - Extract common operations into dedicated task files
+   - configure_vm_ssh.yaml - Tasks for SSH installation
+   - configure_vm_user.yaml - Tasks for user configuration
+   - configure_vm_packages.yaml - Tasks for package installation
+
+5. **Sequential VM Processing**:
+   - Process VMs one at a time using include_tasks
+   - Prevents one slow/failing VM from blocking others
+   - Provides clearer error reporting per VM
+
+6. **Idempotency Design**:
    - Setup playbooks must be idempotent (safe to run multiple times)
    - They should check if resources already exist before creating them
    - This allows for recovery from partially completed runs
 
-3. **Proper Test Isolation**:
+7. **Proper Test Isolation**:
    - Tests should be independent and not modify the environment
    - Test playbooks should document expected state, not make changes
    - Failed tests should provide clear information on what's wrong and how to fix it
 
-4. **Numerical Playbook Ordering**:
-   - Following the x0, x8, x9 convention for setup, testing, and rollback is effective
+8. **Numerical Playbook Ordering**:
+   - Following the x0-y, x8-y convention for setup and testing is effective
    - This ensures proper workflow between playbooks
-   - Example: 10_setup → 18_test → 19_rollback, 20_setup → 28_test → 29_rollback, etc.
+   - Example: 30-1_setup → 38-1_test, 30-2_setup → 38-2_test, etc.
 
-These lessons have significantly improved the reliability and maintainability of our LXD setup process.
+9. **Non-Interactive Operations**:
+   - Use DEBIAN_FRONTEND=noninteractive for package installations
+   - Prevent interactive prompts that would block automation
+   - Handle potential interactive steps proactively
+
+10. **Robust Error Handling**:
+    - Add proper retry mechanisms for network-dependent operations
+    - Implement appropriate timeouts for long-running tasks
+    - Validate prerequisites before proceeding with critical operations
+
+These lessons have significantly improved the reliability and maintainability of our LXD setup process by implementing a truly modular and resilient approach to VM creation and configuration.

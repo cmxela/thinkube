@@ -1,0 +1,262 @@
+---
+# 30-2_configure_vm_networking.yaml - Configure networking for LXD VMs
+#
+# Purpose:
+#   Sets up networking in LXD VMs including interface configuration,
+#   DNS settings, and hostname configuration.
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#   - VMs must be running
+#
+# Variables:
+#   Required (from inventory):
+#     - lxd_containers: VM definitions with network configuration
+#     - dns_servers: List of DNS servers to configure
+#     - dns_search_domains: List of DNS search domains
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30-2_configure_vm_networking.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/30-2_configure_vm_networking.yaml
+#
+# Next Steps:
+#   Run 38-2_test_vm_networking.yaml to verify networking
+#   Run 30-3_configure_vm_users.yaml to set up users and SSH
+
+- name: Configure Networking for LXD VMs
+  hosts: management
+  gather_facts: true
+  become: false
+
+  # No default variables defined in the playbook
+  # All variables should be defined in inventory according to guidelines
+  
+  tasks:
+    - name: Display configuration intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔌 Configuring VM Networking ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Setting up network configurations for VMs including:
+          - Netplan configuration for interfaces
+          - DNS server settings
+          - Network routing and access
+          
+          This is phase 2 of the VM setup process.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Verify all required variables exist before proceeding
+    - name: Verify required networking variables exist
+      ansible.builtin.assert:
+        that:
+          - domain_name is defined
+          - network_gateway is defined 
+          - internal_gateway is defined
+          - dns_servers is defined
+          - dns_search_domains is defined
+        fail_msg: |
+          Required variables not found in inventory.
+          All installation-specific variables must be defined in inventory, not in playbooks.
+
+          Please ensure the following variables are defined:
+          - domain_name: Base domain for DNS
+          - network_gateway: External network gateway
+          - internal_gateway: Internal network gateway
+          - dns_servers: List of DNS servers
+          - dns_search_domains: List of DNS search domains
+        success_msg: "✓ All required networking variables found in inventory"
+    
+    # Verify VM-specific networking variables
+    - name: Verify VM-specific networking variables
+      ansible.builtin.assert:
+        that:
+          - hostvars[vm_name]['lan_ip'] is defined
+          - hostvars[vm_name]['internal_ip'] is defined
+        fail_msg: |
+          ERROR: Missing VM Network Configuration Variables
+          
+          DETAILS:
+          - The VM '{{ vm_name }}' is missing required network configuration:
+            - lan_ip: {% if hostvars[vm_name]['lan_ip'] is defined %}✓{% else %}✗ missing{% endif %}
+            - internal_ip: {% if hostvars[vm_name]['internal_ip'] is defined %}✓{% else %}✗ missing{% endif %}
+        success_msg: "✓ VM '{{ vm_name }}' has all required network configuration"
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Verify VMs are running
+    - name: Check if VM is running
+      ansible.builtin.command: lxc info {{ vm_name }}
+      register: vm_info
+      changed_when: false
+      failed_when: "'Status: RUNNING' not in vm_info.stdout"
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+      
+    - name: Verify VM is running
+      ansible.builtin.debug:
+        msg: "✓ VM {{ vm_name }} is running"
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Configure VM networking
+    - name: Configure VM networking
+      block:
+        # Generate netplan configuration template
+        - name: Create VM netplan configuration directory
+          ansible.builtin.file:
+            path: /tmp/netplan_configs
+            state: directory
+            mode: '0755'
+        
+        - name: Generate netplan configuration for each VM
+          ansible.builtin.template:
+            src: "templates/container-netplan.yaml.j2"
+            dest: "/tmp/netplan_configs/{{ vm_name }}.yaml"
+            mode: '0644'
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+        
+        # Copy netplan configs to VMs
+        - name: Copy netplan configuration to VMs
+          ansible.builtin.command: >
+            lxc file push /tmp/netplan_configs/{{ vm_name }}.yaml {{ vm_name }}/etc/netplan/50-cloud-init.yaml
+          register: copy_netplan
+          failed_when: copy_netplan.rc != 0
+          changed_when: copy_netplan.rc == 0
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+        
+        # Apply netplan configuration
+        - name: Apply netplan configuration in VMs
+          ansible.builtin.command: >
+            lxc exec {{ vm_name }} -- netplan apply
+          register: apply_netplan
+          failed_when: apply_netplan.rc != 0
+          changed_when: apply_netplan.rc == 0
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+          # Add explicit timeout to prevent playbook timeouts
+          async: 180
+          poll: 5
+        
+        # Configure DNS settings
+        - name: Configure persistent DNS settings in VMs
+          ansible.builtin.shell: |
+            # Create systemd-resolved config directory
+            lxc exec {{ vm_name }} -- mkdir -p /etc/systemd/resolved.conf.d
+            
+            # Create systemd-resolved configuration
+            lxc exec {{ vm_name }} -- bash -c 'cat > /etc/systemd/resolved.conf.d/dns.conf << EOF
+            [Resolve]
+            DNS={{ dns_servers | join(" ") }}
+            Domains=~.
+            Cache=yes
+            EOF'
+            
+            # Restart systemd-resolved
+            lxc exec {{ vm_name }} -- systemctl restart systemd-resolved || true
+            
+            # Create resolv.conf with proper nameservers
+            lxc exec {{ vm_name }} -- bash -c 'cat > /etc/resolv.conf << EOF
+            {% for dns in dns_servers %}
+            nameserver {{ dns }}
+            {% endfor %}
+            EOF'
+            
+            # Make resolv.conf immutable to prevent changes
+            lxc exec {{ vm_name }} -- chattr +i /etc/resolv.conf || true
+          register: dns_config
+          failed_when: dns_config.rc != 0
+          changed_when: dns_config.rc == 0
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 180
+          poll: 5
+          
+        # Configure hostname
+        - name: Set hostname in VMs
+          ansible.builtin.shell: |
+            # Set hostname with hostnamectl
+            lxc exec {{ vm_name }} -- hostnamectl set-hostname {{ vm_name }}.{{ domain_name }}
+            
+            # Ensure hostname is set in /etc/hostname
+            lxc exec {{ vm_name }} -- bash -c 'echo "{{ vm_name }}.{{ domain_name }}" > /etc/hostname'
+            
+            # Update the prettyname value
+            lxc exec {{ vm_name }} -- hostnamectl set-hostname --pretty "{{ vm_name }}.{{ domain_name }}"
+          register: hostname_config
+          failed_when: hostname_config.rc != 0
+          changed_when: hostname_config.rc == 0
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
+          
+        # Configure /etc/hosts
+        - name: Configure hosts file in VMs
+          ansible.builtin.shell: |
+            lxc exec {{ vm_name }} -- bash -c 'cat > /etc/hosts << EOF
+            127.0.0.1 localhost
+            127.0.1.1 {{ vm_name }} {{ vm_name }}.{{ domain_name }}
+            
+            # Host entries for internal cluster communication
+            {% for host in groups["lxd_containers"] %}
+            {{ hostvars[host]["internal_ip"] }} {{ host }} {{ host }}.{{ domain_name }}
+            {% endfor %}
+            EOF'
+          register: hosts_config
+          failed_when: hosts_config.rc != 0
+          changed_when: hosts_config.rc == 0
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
+        
+        # Clean up temporary network configuration files
+        - name: Clean up temporary network configuration files
+          ansible.builtin.file:
+            path: "/tmp/netplan_configs"
+            state: absent
+      
+    # Final completion message
+    - name: Display networking configuration completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ════════════════════════════════════════════════════════════════════════
+          ✅ VM Networking Configured Successfully ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════════════════════
+          
+          Configured networking for VMs:
+          {% for vm in groups['lxd_containers'] | default([]) %}
+          - {{ vm }}: 
+              External IP: {{ hostvars[vm]['lan_ip'] }}
+              Internal IP: {{ hostvars[vm]['internal_ip'] }}
+              Hostname: {{ vm }}.{{ domain_name }}
+          {% endfor %}
+          
+          NEXT STEPS:
+            Verify network configurations:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/38-2_test_vm_networking.yaml
+            
+            Configure users and SSH:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-3_configure_vm_users.yaml
+          
+          ════════════════════════════════════════════════════════════════════════

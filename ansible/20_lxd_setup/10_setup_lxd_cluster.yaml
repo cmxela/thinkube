@@ -113,24 +113,33 @@
                 pool: default
                 type: disk
     
-    # Initialize LXD on primary node
+    # Check if LXD is already initialized
+    - name: Check if LXD is already initialized
+      ansible.builtin.command: lxc list
+      register: lxd_initialized
+      failed_when: false
+      changed_when: false
+
+    # Initialize LXD on primary node only if not already initialized
     - name: Initialize LXD on primary node with preseed
       ansible.builtin.shell: |
         cat {{ temp_dir }}/primary-init.yaml | lxd init --preseed
       register: primary_init
+      when: lxd_initialized.rc != 0
     
     # Wait for initialization to complete
     - name: Wait for LXD initialization on primary node
       ansible.builtin.pause:
-        seconds: 5
+        seconds: 10
         prompt: "Waiting for LXD to initialize on primary node..."
+      when: lxd_initialized.rc != 0
 
     # Verify LXD initialization
     - name: Verify LXD is initialized and running
       ansible.builtin.command: lxc list
       register: lxc_ready
-      retries: 5
-      delay: 2
+      retries: 10
+      delay: 3
       until: lxc_ready.rc == 0
     
     # Create VM profiles (optional but useful)
@@ -329,35 +338,62 @@
       register: bridge_cleanup
       changed_when: "'Removing existing' in bridge_cleanup.stdout"
 
-    # Join the cluster
+    # Check if node is already in cluster
+    - name: Check if node is already in cluster
+      ansible.builtin.shell: |
+        lxc cluster list 2>/dev/null | grep -q "{{ inventory_hostname }}" && echo "already_joined" || echo "not_joined"
+      register: cluster_join_status
+      failed_when: false
+      changed_when: false
+      
+    # Join the cluster only if not already joined
     - name: Join the cluster using preseed file
       ansible.builtin.shell: |
         cat {{ temp_dir }}/join-preseed.yaml | lxd init --preseed --debug
       register: join_result
       failed_when: false
+      when: cluster_join_status.stdout == "not_joined"
+      async: 180  # Allow 3 minutes for the join operation
+      poll: 10    # Check every 10 seconds
 
     # Output detailed error information if join fails
     - name: Display join result
       ansible.builtin.debug:
         msg: |
-          Join result: {{ join_result.rc == 0 | ternary('SUCCESS', 'FAILED') }}
-          Return code: {{ join_result.rc }}
+          {% if cluster_join_status.stdout == "already_joined" %}
+          Join result: Node already joined to cluster
+          {% else %}
+          Join result: {{ join_result.rc | default(0) == 0 | ternary('SUCCESS', 'FAILED') }}
+          Return code: {{ join_result.rc | default(0) }}
 
           {{ join_result.stderr | default('No error message') }}
+          {% endif %}
     
-    # Wait for join to complete
+    # Wait for join to complete (only if we just joined)
     - name: Wait for cluster join to complete
       ansible.builtin.pause:
-        seconds: 10
+        seconds: 20
         prompt: "Waiting for secondary node to join cluster..."
+      when: cluster_join_status.stdout == "not_joined"
 
-    # Verify join completed
+    # Verify join completed with retries and clear output
     - name: Verify join completed
-      ansible.builtin.command: lxc cluster list
+      ansible.builtin.shell: |
+        for i in $(seq 1 10); do
+          if lxc cluster list 2>/dev/null | grep -q "{{ inventory_hostname }}"; then
+            echo "Joined successfully"
+            exit 0
+          fi
+          echo "Waiting for join to complete... Attempt $i/10"
+          sleep 5
+        done
+        echo "Failed to verify cluster join"
+        exit 1
       register: join_complete
+      changed_when: "join_complete.stdout is search('Joined successfully')"
       retries: 3
-      delay: 5
-      until: join_complete.rc == 0 and inventory_hostname in join_complete.stdout
+      delay: 10
+      until: join_complete.rc == 0
 
 # PLAY 3: Force network initialization on all nodes
 - name: Force network initialization on all nodes
@@ -372,10 +408,11 @@
         prompt: "Pausing briefly before network synchronization..."
 
     - name: Check if cluster is properly formed
-      ansible.builtin.command: |
-        lxc cluster list
+      ansible.builtin.shell: |
+        lxc cluster list | grep -c "ONLINE" || echo "0"
       register: cluster_check
       failed_when: false
+      changed_when: false
 
     - name: Display cluster members found
       ansible.builtin.debug:
@@ -383,47 +420,67 @@
           Current cluster status:
           {{ cluster_check.stdout }}
 
+    # Check if network already exists
+    - name: Check if network already exists
+      ansible.builtin.shell: |
+        lxc network list | grep -q "{{ lxd_network_name }}" && echo "exists" || echo "not_exists"
+      register: network_exists
+      changed_when: false
+      
+    # Recreate network on all cluster members
     - name: Recreate network on all cluster members
       ansible.builtin.shell: |
-        if lxc cluster list 2>/dev/null | grep -q "{{ groups['baremetal'][1] }}"; then
-          echo "Cluster appears to be formed, synchronizing network to all members"
-
-          # Delete existing network first if it exists
+        # Delete existing network if it exists
+        if [[ "{{ network_exists.stdout }}" == "exists" ]]; then
+          echo "Deleting existing network {{ lxd_network_name }}..."
           lxc network delete {{ lxd_network_name }} --force 2>/dev/null || true
+          # Give it a moment to propagate the delete
           sleep 5
-
-          # Recreate network with target=all to ensure it spreads across all nodes
+        fi
+        
+        # Check if secondary node is in cluster and online
+        if lxc cluster list 2>/dev/null | grep -q "{{ groups['baremetal'][1] }}.*ONLINE"; then
+          echo "Cluster appears to be fully formed, synchronizing network to all members"
+          
+          # Create network with target=all
           echo "Creating network with target=all parameter..."
           lxc network create {{ lxd_network_name }} \
             ipv4.address={{ lxd_network_ipv4_address }} \
             ipv4.nat=true \
             ipv6.address={{ lxd_network_ipv6_address }} \
             ipv6.nat=true \
+            dns.mode=managed \
             --target=all
 
-          # Check that network is created successfully
-          for i in {1..5}; do
+          # Check that network is created successfully with timeout
+          for i in {1..10}; do
             if lxc network show {{ lxd_network_name }} &>/dev/null; then
               echo "Network created successfully"
+              lxc network show {{ lxd_network_name }}
               break
             fi
-            echo "Waiting for network to be ready... (attempt $i/5)"
-            sleep 3
+            echo "Waiting for network to be ready... (attempt $i/10)"
+            sleep 5
           done
         else
-          echo "WARNING: Cluster does not appear to be properly formed!"
-          echo "Attempting to create network anyway..."
+          echo "WARNING: Secondary node not detected as ONLINE in cluster!"
+          echo "Creating network on primary node only..."
 
-          # Try recreating network on primary
-          lxc network delete {{ lxd_network_name }} --force 2>/dev/null || true
-          sleep 5
+          # Create network on primary only
           lxc network create {{ lxd_network_name }} \
             ipv4.address={{ lxd_network_ipv4_address }} \
             ipv4.nat=true \
             ipv6.address={{ lxd_network_ipv6_address }} \
-            ipv6.nat=true
+            ipv6.nat=true \
+            dns.mode=managed
+            
+          echo "Network created on primary node only"
+          lxc network show {{ lxd_network_name }}
         fi
       register: network_sync_result
+      changed_when: true
+      async: 180  # Allow 3 minutes for network creation
+      poll: 10    # Check every 10 seconds
 
     - name: Display network synchronization result
       ansible.builtin.debug:
@@ -438,15 +495,30 @@
         prompt: "Waiting for network configuration to propagate to all cluster members..."
     
     # Restart LXD on all nodes to ensure network interfaces are created
-    - name: Restart LXD service on primary node
+    - name: Check LXD daemon status
+      ansible.builtin.systemd:
+        name: snap.lxd.daemon
+      register: lxd_status
+      
+    - name: Restart LXD service on primary node if needed
       ansible.builtin.systemd:
         name: snap.lxd.daemon
         state: restarted
+        daemon_reload: yes
+      register: lxd_restart
     
     - name: Wait for LXD service to fully restart on primary
       ansible.builtin.pause:
-        seconds: 10
+        seconds: 15
         prompt: "Waiting for LXD service to fully restart on primary node..."
+        
+    # Verify LXD is running after restart
+    - name: Verify LXD is running
+      ansible.builtin.command: lxc list
+      register: lxd_verify
+      retries: 5
+      delay: 5
+      until: lxd_verify.rc == 0
     
     # Ensure network interfaces are UP on all nodes
     - name: Ensure network interfaces are UP
@@ -500,16 +572,32 @@
           🔧 Configuring Network on Secondary Node {{ inventory_hostname }}
           ═════════════════════════════════════════════════════════
 
+    # Check if LXD is running on secondary node
+    - name: Check LXD status on secondary node
+      ansible.builtin.systemd:
+        name: snap.lxd.daemon
+      register: secondary_lxd_status
+      
     # Restart LXD to ensure network interfaces are created
     - name: Restart LXD service on secondary node
       ansible.builtin.systemd:
         name: snap.lxd.daemon
         state: restarted
+        daemon_reload: yes
+      register: secondary_lxd_restart
       
     - name: Wait for LXD service to restart
       ansible.builtin.pause:
-        seconds: 10
+        seconds: 15
         prompt: "Waiting for LXD service to restart on {{ inventory_hostname }}..."
+        
+    # Verify LXD is running on secondary
+    - name: Verify LXD is running on secondary
+      ansible.builtin.command: lxc list
+      register: secondary_lxd_verify
+      retries: 5
+      delay: 5
+      until: secondary_lxd_verify.rc == 0
     
     # Ensure network interfaces are UP
     - name: Ensure network interfaces are UP

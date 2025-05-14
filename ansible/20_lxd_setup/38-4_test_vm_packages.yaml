@@ -1,0 +1,207 @@
+---
+# 38-4_test_vm_packages.yaml - Test package installation in LXD VMs
+#
+# Purpose:
+#   Verifies that essential packages have been installed correctly in LXD VMs.
+#   Tests package presence, basic functionality, and VM-specific packages.
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#   - Networking must be configured by 30-2_configure_vm_networking.yaml
+#   - Users must be configured by 30-3_configure_vm_users.yaml
+#   - Packages must be installed by 30-4_install_vm_packages.yaml
+#
+# Variables:
+#   Required (from inventory):
+#     - None specific to this playbook
+#   Optional:
+#     - vm_packages: Space-separated list of additional packages to verify
+#                    Should match what was defined for installation
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/38-4_test_vm_packages.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/38-4_test_vm_packages.yaml
+#
+# Next Steps:
+#   30-5_customize_vms.yaml (if needed) to perform additional VM customization
+
+- name: Test Package Installation in LXD VMs
+  hosts: management
+  gather_facts: true
+  become: false
+  vars:
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    # Collect LXD VM hostnames for testing
+    vms_to_test: "{{ groups['lxd_containers'] | default([]) }}"
+    # List of essential packages that should be installed on all VMs
+    essential_packages:
+      - curl
+      - wget
+      - git
+      - htop
+      - vim
+      - python3
+      - python3-pip
+      - net-tools
+  
+  tasks:
+    - name: Display testing intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing VM Package Installation ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Testing that VM packages are correctly installed with:
+          - Essential packages (curl, wget, git, htop, vim, etc.)
+          - Python tools (python3, pip)
+          - Network tools (net-tools)
+          - VM-specific packages (if defined in inventory)
+          
+          VMs to test: {{ vms_to_test | join(', ') }}
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Verify we have VMs to test
+    - name: Check if we have VMs to test
+      ansible.builtin.assert:
+        that:
+          - vms_to_test | length > 0
+        fail_msg: |
+          ERROR: No VMs found to test
+          
+          DETAILS:
+          - No VMs were found in the inventory group 'lxd_containers'
+          
+          REQUIRED ACTION:
+          - Make sure VMs are created and configured first
+          - Ensure VMs are in the 'lxd_containers' inventory group
+        success_msg: "✓ Found {{ vms_to_test | length }} VMs to test: {{ vms_to_test | join(', ') }}"
+    
+    # Verify VMs exist and are running before proceeding
+    - name: Check if VM is running
+      ansible.builtin.command: lxc info {{ vm_name }}
+      register: vm_info
+      changed_when: false
+      failed_when: "'Status: RUNNING' not in vm_info.stdout"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - check running"
+      
+    - name: Verify VM is running
+      ansible.builtin.debug:
+        msg: "✓ VM {{ vm_name }} is running"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Test essential packages installation
+    - name: Verify essential packages are installed
+      ansible.builtin.command: >
+        lxc exec {{ vm_pkg[0] }} -- dpkg -l {{ vm_pkg[1] }}
+      register: package_check
+      changed_when: false
+      failed_when: package_check.rc != 0
+      loop: "{{ vms_to_test | product(essential_packages) | list }}"
+      loop_control:
+        loop_var: vm_pkg
+        label: "{{ vm_pkg[0] }} - {{ vm_pkg[1] }}"
+        pause: 0.2  # Small pause to avoid rate limiting
+    
+    # Verify VM-specific packages if defined
+    - name: Check if VM-specific packages are defined
+      ansible.builtin.set_fact:
+        vm_specific_packages: "{{ hostvars[vm_name]['vm_packages'] | default('') }}"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - get specific packages"
+      
+    - name: Verify VM-specific packages are installed
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- dpkg -l {{ hostvars[vm_name]['vm_packages'] }}
+      register: vm_package_check
+      changed_when: false
+      failed_when: vm_package_check.rc != 0
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - specific packages"
+      when: hostvars[vm_name]['vm_packages'] is defined and hostvars[vm_name]['vm_packages'] | length > 0
+    
+    # Test basic functionality of installed packages
+    - name: Test curl functionality
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- curl --version
+      register: curl_test
+      changed_when: false
+      failed_when: curl_test.rc != 0
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - curl test"
+    
+    - name: Test Python functionality
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- python3 -c "print('Python works!')"
+      register: python_test
+      changed_when: false
+      failed_when: python_test.rc != 0 or "Python works!" not in python_test.stdout
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - python test"
+    
+    # Test pip functionality
+    - name: Test pip functionality
+      ansible.builtin.command: >
+        lxc exec {{ vm_name }} -- pip3 list
+      register: pip_test
+      changed_when: false
+      failed_when: pip_test.rc != 0
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+        label: "{{ vm_name }} - pip test"
+      
+    # Display package testing results
+    - name: Display package testing results
+      ansible.builtin.debug:
+        msg: "✓ All essential packages tested successfully for {{ vm_name }}"
+      loop: "{{ vms_to_test }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Display final results
+    - name: Display test completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✅ VM Package Testing Completed Successfully ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          DETAILS:
+            ✓ Essential packages verified on all VMs
+            ✓ VM-specific packages verified where defined
+            ✓ Functionality tests passed
+          
+          Tested VMs:
+          {% for vm in vms_to_test %}
+          - {{ vm }}: 
+              Essential Packages: Verified
+              {% if hostvars[vm]['vm_packages'] is defined %}
+              VM-specific Packages: {{ hostvars[vm]['vm_packages'] }} - Verified
+              {% endif %}
+          {% endfor %}
+          
+          NEXT STEPS:
+            If needed, customize VMs further:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-5_customize_vms.yaml
+            
+            Or proceed to networking and service configuration.
+          
+          ═════════════════════════════════════════════════════════

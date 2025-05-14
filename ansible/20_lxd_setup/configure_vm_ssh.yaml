@@ -1,0 +1,187 @@
+---
+# Tasks to set up SSH on a single VM
+# This file is included by 30-3_configure_vm_users.yaml
+
+- name: Display VM information
+  ansible.builtin.debug:
+    msg: "Setting up SSH on VM: {{ current_vm }}"
+
+# Check network connectivity first
+- name: Check network connectivity ({{ current_vm }})
+  ansible.builtin.command: lxc exec {{ current_vm }} -- ping -c 2 8.8.8.8
+  register: network_check
+  changed_when: false
+  failed_when: network_check.rc != 0
+  retries: 3
+  delay: 5
+  until: network_check.rc == 0
+
+# Test DNS resolution
+- name: Test DNS resolution ({{ current_vm }})
+  ansible.builtin.command: lxc exec {{ current_vm }} -- ping -c 2 archive.ubuntu.com
+  register: dns_check
+  changed_when: false
+  failed_when: false
+  ignore_errors: true
+
+# Fix DNS resolution if needed
+- name: Ensure /etc/hosts has entries for Ubuntu repositories ({{ current_vm }})
+  ansible.builtin.shell: |
+    # Add hosts entries for archive.ubuntu.com and security.ubuntu.com
+    lxc exec {{ current_vm }} -- bash -c "grep -q 'archive.ubuntu.com' /etc/hosts || echo '91.189.91.81 archive.ubuntu.com' >> /etc/hosts"
+    lxc exec {{ current_vm }} -- bash -c "grep -q 'security.ubuntu.com' /etc/hosts || echo '91.189.91.82 security.ubuntu.com' >> /etc/hosts"
+  register: hosts_update
+  changed_when: "'91.189.91' in hosts_update.stdout"
+  when: dns_check.rc != 0
+
+# Verify connectivity to Ubuntu archives after potential fix
+- name: Verify connectivity to Ubuntu archives ({{ current_vm }})
+  ansible.builtin.shell: |
+    # Try to ping with hostname first, then IP if that fails
+    lxc exec {{ current_vm }} -- ping -c 2 archive.ubuntu.com || lxc exec {{ current_vm }} -- ping -c 2 91.189.91.81
+  register: archive_ping
+  changed_when: false
+  failed_when: archive_ping.rc != 0
+  retries: 3
+  delay: 5
+  until: archive_ping.rc == 0
+
+# Update apt cache with retry logic
+- name: Update apt cache ({{ current_vm }})
+  ansible.builtin.shell: |
+    # Try to update up to 3 times with different methods
+    for i in {1..3}; do
+      echo "Attempt $i to update apt cache"
+      if [ $i -eq 1 ]; then
+        # First try: normal update
+        if lxc exec {{ current_vm }} -- apt-get update; then
+          echo "Apt update successful on attempt 1"
+          exit 0
+        fi
+      elif [ $i -eq 2 ]; then
+        # Second try: Use IP directly
+        echo "Using direct IP address for Ubuntu archives"
+        lxc exec {{ current_vm }} -- cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak
+        lxc exec {{ current_vm }} -- sed -i "s/http:\/\/archive.ubuntu.com/http:\/\/91.189.91.81/g" /etc/apt/sources.list.d/ubuntu.sources
+        lxc exec {{ current_vm }} -- sed -i "s/http:\/\/security.ubuntu.com/http:\/\/91.189.91.82/g" /etc/apt/sources.list.d/ubuntu.sources
+        
+        if lxc exec {{ current_vm }} -- apt-get update; then
+          echo "Apt update successful on attempt 2 with direct IP"
+          # Restore original sources
+          lxc exec {{ current_vm }} -- cp /etc/apt/sources.list.d/ubuntu.sources.bak /etc/apt/sources.list.d/ubuntu.sources
+          exit 0
+        fi
+        
+        # Restore original sources
+        lxc exec {{ current_vm }} -- cp /etc/apt/sources.list.d/ubuntu.sources.bak /etc/apt/sources.list.d/ubuntu.sources
+      else
+        # Third try: Use -o Acquire::ForceIPv4=true
+        echo "Using ForceIPv4=true option"
+        if lxc exec {{ current_vm }} -- apt-get -o Acquire::ForceIPv4=true update; then
+          echo "Apt update successful on attempt 3 with ForceIPv4"
+          exit 0
+        fi
+      fi
+      echo "Attempt $i failed, waiting before next attempt"
+      sleep 10
+    done
+    # If we get here, all attempts failed
+    echo "All apt-get update attempts failed"
+    exit 1
+  register: apt_update
+  changed_when: apt_update.stdout is search("successful")
+  failed_when: apt_update.rc != 0  # Fail if all attempts fail
+  async: 180  # 3 minute timeout
+  poll: 10    # Check every 10 seconds
+
+# Wait after apt-get update
+- name: Wait after apt-get update
+  ansible.builtin.pause:
+    seconds: 10
+
+# Install openssh-server with retry logic
+- name: Install openssh-server ({{ current_vm }})
+  ansible.builtin.shell: |
+    # Try to install up to 3 times
+    for i in {1..3}; do
+      echo "Attempt $i to install openssh-server"
+      if [ $i -eq 1 ]; then
+        # First try: normal install
+        if lxc exec {{ current_vm }} -- apt-get install -y openssh-server; then
+          echo "SSH installation successful on attempt 1"
+          exit 0
+        fi
+      elif [ $i -eq 2 ]; then
+        # Second try: Try with forcing IPv4
+        echo "Using ForceIPv4=true option"
+        if lxc exec {{ current_vm }} -- apt-get -o Acquire::ForceIPv4=true install -y openssh-server; then
+          echo "SSH installation successful on attempt 2 with ForceIPv4"
+          exit 0
+        fi
+      else
+        # Third try: Download packages to /tmp and install from there
+        echo "Using download-first approach"
+        lxc exec {{ current_vm }} -- apt-get -o Acquire::ForceIPv4=true -y --download-only install openssh-server
+        if lxc exec {{ current_vm }} -- apt-get -y install openssh-server; then
+          echo "SSH installation successful on attempt 3 with download-first approach"
+          exit 0
+        fi
+      fi
+      echo "Attempt $i failed, waiting before next attempt"
+      sleep 15
+    done
+    # If we get here, all attempts failed
+    echo "All openssh-server installation attempts failed"
+    exit 1
+  register: ssh_install
+  changed_when: ssh_install.stdout is search("successful")
+  failed_when: ssh_install.rc != 0  # Fail if all attempts fail
+  async: 300  # 5 minute timeout
+  poll: 15    # Check every 15 seconds
+
+# Wait 5 seconds after installation
+- name: Wait after installation
+  ansible.builtin.pause:
+    seconds: 5
+
+# Verify openssh-server is installed
+- name: Verify openssh-server is installed ({{ current_vm }})
+  ansible.builtin.command: lxc exec {{ current_vm }} -- dpkg -l openssh-server
+  register: verify_ssh
+  changed_when: false
+  failed_when: verify_ssh.rc != 0
+  retries: 3
+  delay: 5
+  until: verify_ssh.rc == 0
+
+# Generate SSH host keys if they don't exist
+- name: Generate SSH host keys ({{ current_vm }})
+  ansible.builtin.command: lxc exec {{ current_vm }} -- ssh-keygen -A
+  register: ssh_keygen
+  changed_when: true
+  ignore_errors: true
+
+# Ensure SSH service is running and enabled
+- name: Ensure SSH service is running and enabled ({{ current_vm }})
+  ansible.builtin.shell: |
+    # Make sure sshd_config exists and is valid
+    lxc exec {{ current_vm }} -- test -f /etc/ssh/sshd_config || lxc exec {{ current_vm }} -- cp /usr/share/openssh/sshd_config /etc/ssh/sshd_config
+    
+    # Ensure permissions are correct
+    lxc exec {{ current_vm }} -- chmod 644 /etc/ssh/sshd_config
+    
+    # Enable and start the service
+    lxc exec {{ current_vm }} -- systemctl enable ssh
+    lxc exec {{ current_vm }} -- systemctl restart ssh
+    
+    # Check status (may need a moment to start)
+    sleep 2
+    lxc exec {{ current_vm }} -- systemctl status ssh || echo "SSH service not started yet"
+  register: ssh_service_status
+  changed_when: true
+  failed_when: false  # Don't fail if service doesn't start perfectly
+
+# Display status
+- name: Display status of SSH installation ({{ current_vm }})
+  ansible.builtin.debug:
+    msg: "SSH status for {{ current_vm }}: ✅ Installed and service running successfully"

@@ -205,8 +205,8 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Create lessons learned document for GPU passthrough in `docs/architecture/20_lxd_setup/GPU_PASSTHROUGH_LESSONS.md`
   - [x] Update user guide in `docs/user_guide/GPU_PASSTHROUGH_GUIDE.md`
   - [x] Update architecture documentation in `CLAUDE.md`
-  - [ ] Create pull request to main branch
-  - [ ] Add PR link: [PR #X](#)
+  - [x] Create pull request to main branch
+  - [x] Add PR link: [PR #8](https://github.com/cmxela/thinkube/pull/8)
 
 ## Phase 4: Networking (30_networking)
 

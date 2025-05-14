@@ -1,0 +1,435 @@
+---
+# 30-1_create_base_vms.yaml - Create base LXD VMs from inventory
+#
+# Purpose:
+#   Creates and configures the base VM structure with resources, but without
+#   additional configuration like networking, users, and packages.
+#
+# Requirements:
+#   - LXD must be installed and initialized
+#   - Profiles must be created by 20_setup_lxd_profiles.yaml
+#
+# Variables:
+#   Required (from inventory):
+#     - lxd_containers: Container definitions with resource allocations
+#     - gpu_passthrough_vms: VMs that need GPU passthrough
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30-1_create_base_vms.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/30-1_create_base_vms.yaml
+#
+# Next Steps:
+#   Run 38-1_test_base_vms.yaml to verify VM creation
+#   Run 30-2_configure_vm_networking.yaml to configure networks
+
+- name: Create Base LXD VMs from inventory
+  hosts: management
+  gather_facts: true
+  become: false  # Use become only where necessary
+
+  # All installation-specific variables must be defined in inventory
+  vars:
+    # Default values for VM profiles if not defined in inventory
+    vm_profiles:
+      base: "vm-base"
+      network: "vm-networks"
+      gpu: "gpu-passthrough"
+
+    # Default value for VM image from lxd_containers group
+    vm_image: "{{ hostvars[groups['lxd_containers'][0]]['lxd_image'] | default('ubuntu:24.04') }}"
+  
+  tasks:
+    # Verify all required variables exist before proceeding
+    - name: Verify required variables exist
+      ansible.builtin.assert:
+        that:
+          - vm_image is defined
+          - vm_profiles is defined
+          - vm_profiles.base is defined
+          - vm_profiles.network is defined
+          - vm_profiles.gpu is defined
+          - groups['lxd_containers'] is defined
+        fail_msg: |
+          Required variables not found in inventory.
+          All installation-specific variables must be defined in inventory, not in playbooks.
+
+          Please ensure the following variables are defined:
+          - vm_image: Ubuntu image to use for VMs
+          - vm_profiles: Dictionary of profile names
+          - vm_profiles.base: Base VM profile name
+          - vm_profiles.network: Network VM profile name
+          - vm_profiles.gpu: GPU passthrough profile name
+          - lxd_containers: Inventory group with VM definitions
+        success_msg: "✓ All required variables found in inventory"
+
+    - name: Display setup intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🚀 Creating Base LXD VMs ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Creating virtual machines according to inventory specifications.
+          This playbook only handles the base VM creation and resource
+          allocation. Subsequent playbooks will handle:
+          
+          - Network configuration (30-2)
+          - User and SSH setup (30-3)
+          - Package installation (30-4)
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Phase 1: Verify requirements
+    - name: Verify LXD setup requirements
+      block:
+        # Verify required inventory variables first
+        - name: Verify VM configuration variables
+          ansible.builtin.assert:
+            that:
+              - domain_name is defined and domain_name | length > 0
+              - groups['lxd_containers'] is defined and groups['lxd_containers'] | length > 0
+            success_msg: "✓ All required installation-specific variables found in inventory"
+
+        # Verify VM-specific configurations
+        - name: Verify VM-specific configuration variables
+          ansible.builtin.assert:
+            that:
+              - hostvars[vm_name]['cpu_cores'] is defined
+              - hostvars[vm_name]['memory'] is defined
+              - hostvars[vm_name]['disk_size'] is defined
+              - hostvars[vm_name]['parent_host'] is defined
+            fail_msg: |
+              ERROR: Missing VM Configuration Variables
+              
+              DETAILS:
+              - The VM '{{ vm_name }}' is missing required configuration variables:
+                - cpu_cores: {% if hostvars[vm_name]['cpu_cores'] is defined %}✓{% else %}✗ missing{% endif %}
+                - memory: {% if hostvars[vm_name]['memory'] is defined %}✓{% else %}✗ missing{% endif %}
+                - disk_size: {% if hostvars[vm_name]['disk_size'] is defined %}✓{% else %}✗ missing{% endif %}
+                - parent_host: {% if hostvars[vm_name]['parent_host'] is defined %}✓{% else %}✗ missing{% endif %}
+            success_msg: "✓ VM '{{ vm_name }}' has all required configuration"
+          loop: "{{ groups['lxd_containers'] }}"
+          loop_control:
+            loop_var: vm_name
+
+        # Now verify LXD is installed and running
+        - name: Verify LXD is installed
+          ansible.builtin.command: lxc --version
+          register: lxd_version
+          changed_when: false
+
+        - name: Display LXD version
+          ansible.builtin.debug:
+            msg: "LXD version: {{ lxd_version.stdout }}"
+        
+        # Check if LXD is in cluster mode
+        - name: Check LXD cluster status
+          ansible.builtin.command: lxc cluster list
+          register: cluster_check
+          changed_when: false
+          failed_when: false
+        
+        - name: Set is_clustered fact based on cluster detection
+          ansible.builtin.set_fact:
+            is_clustered: "{{ cluster_check.rc == 0 and 'ONLINE' in cluster_check.stdout }}"
+        
+        - name: Display cluster status
+          ansible.builtin.debug:
+            msg: "LXD is in a cluster: {{ is_clustered }}"
+        
+        # Verify required profiles exist
+        - name: Verify required profiles exist
+          ansible.builtin.command: lxc profile list --format csv
+          register: profile_list
+          changed_when: false
+
+        - name: Parse list of profiles
+          ansible.builtin.set_fact:
+            parsed_profiles: "{{ profile_list.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+
+        # Define expected profiles directly here
+        - name: Define required profiles
+          ansible.builtin.set_fact:
+            expected_profiles:
+              - "container"
+              - "vm-base"
+              - "vm-networks"
+
+        # Only add GPU profile if needed
+        - name: Check if any VMs need GPU passthrough
+          ansible.builtin.set_fact:
+            need_gpu_profile: >-
+              {{ groups['gpu_passthrough_vms'] is defined and
+                 (groups['gpu_passthrough_vms'] | length > 0) }}
+
+        - name: Add GPU profile to expected profiles if needed
+          ansible.builtin.set_fact:
+            expected_profiles: "{{ expected_profiles + ['gpu-passthrough'] }}"
+          when: need_gpu_profile | default(false)
+
+        - name: Verify all required profiles exist
+          ansible.builtin.assert:
+            that:
+              - "profile_name in parsed_profiles"
+            fail_msg: |
+              Required profile '{{ profile_name }}' is missing.
+              Run 20_setup_lxd_profiles.yaml playbook first.
+            success_msg: "✓ Profile '{{ profile_name }}' exists"
+          loop: "{{ expected_profiles }}"
+          loop_control:
+            loop_var: profile_name
+        
+        # Verify storage pool exists
+        - name: Verify default storage pool exists
+          ansible.builtin.command: lxc storage show default
+          register: storage_check
+          changed_when: false
+          failed_when: storage_check.rc != 0
+          
+      rescue:
+        - name: Display requirement verification failure
+          ansible.builtin.debug:
+            msg: >-
+              
+              ═════════════════════════════════════════════════════════
+              ✗ LXD Requirements Verification Failed ({{ inventory_hostname }})
+              ═════════════════════════════════════════════════════════
+              
+              Failed to verify LXD requirements:
+              - Check that LXD is installed and running
+              - Check that required profiles have been created
+              - Check that storage pool exists
+              
+              REQUIRED ACTION:
+                Run the LXD profiles setup playbook:
+                ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
+              
+              ═════════════════════════════════════════════════════════
+          
+        - name: Fail with meaningful error message
+          ansible.builtin.fail:
+            msg: "LXD requirements verification failed. See debug messages above for details."
+      
+    # Phase 2: Build VM inventory
+    - name: Build list of VMs to create
+      block:
+        - name: Get list of existing VMs and containers
+          ansible.builtin.command: lxc list --format csv
+          register: vm_list
+          changed_when: false
+        
+        - name: Parse list of existing VMs and containers
+          ansible.builtin.set_fact:
+            existing_vms: "{{ vm_list.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+        
+        - name: Build list of VMs to create from lxd_containers group
+          ansible.builtin.set_fact:
+            vms_to_create: "{{ groups['lxd_containers'] | default([]) | difference(existing_vms) }}"
+        
+        - name: Display VMs to create
+          ansible.builtin.debug:
+            msg: "VMs to create: {{ vms_to_create | join(', ') }}"
+      
+    # Phase 3: Create VMs
+    - name: Create Virtual Machines
+      block:
+        - name: Create VM
+          ansible.builtin.command: >
+            lxc launch {{ vm_image }} {{ vm_name }} --vm
+            --profile {{ vm_profiles.base }}
+            --profile {{ vm_profiles.network }}
+            {% if vm_name in groups['gpu_passthrough_vms'] | default([]) %}--profile {{ vm_profiles.gpu }}{% endif %}
+            --storage default
+            {% if is_clustered %}--target {{ hostvars[vm_name]['parent_host'] }}{% endif %}
+          register: vm_create
+          failed_when: >
+            vm_create.rc != 0 and 
+            "already exists" not in vm_create.stderr
+          changed_when: "'already exists' not in vm_create.stderr"
+          loop: "{{ vms_to_create }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 300
+          poll: 10
+        
+        # Wait for VMs to initialize
+        - name: Wait for VMs to initialize
+          ansible.builtin.pause:
+            seconds: 10
+          when: vm_create.changed | default(false)
+      
+    # Phase 4: Configure VM resources
+    - name: Configure VM resources
+      block:
+        # Only proceed if we have VMs to configure
+        - name: Check if we have VMs to configure
+          ansible.builtin.set_fact:
+            vms_to_configure: "{{ groups['lxd_containers'] | default([]) }}"
+        
+        - name: Skip resource configuration if no VMs in inventory
+          ansible.builtin.meta: end_play
+          when: vms_to_configure | length == 0
+        
+        # Stop VMs before configuring resources
+        - name: Stop VMs to configure resources
+          ansible.builtin.command: lxc stop {{ vm_name }} --force
+          register: stop_vm
+          failed_when: 
+            - stop_vm.rc != 0
+            - '"already stopped" not in stop_vm.stderr'
+          changed_when: '"already stopped" not in stop_vm.stderr'
+          loop: "{{ vms_to_configure }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 180
+          poll: 5
+        
+        # Wait to ensure VMs are fully stopped before configuration
+        - name: Wait for VMs to be fully stopped
+          ansible.builtin.pause:
+            seconds: 10
+          when: stop_vm.changed | default(false)
+        
+        # Configure VM resources individually - using exact inventory values
+        - name: Configure VM CPU limits
+          ansible.builtin.command: >
+            lxc config set {{ vm_name }} limits.cpu {{ hostvars[vm_name]['cpu_cores'] }}
+          register: cpu_config
+          failed_when: cpu_config.rc != 0
+          changed_when: cpu_config.rc == 0
+          loop: "{{ vms_to_configure }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
+
+        - name: Configure VM memory limits
+          ansible.builtin.command: >
+            lxc config set {{ vm_name }} limits.memory {{ hostvars[vm_name]['memory'] }}
+          register: memory_config
+          failed_when: memory_config.rc != 0
+          changed_when: memory_config.rc == 0
+          loop: "{{ vms_to_configure }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
+
+        - name: Configure VM disk size
+          ansible.builtin.command: >
+            lxc config device set {{ vm_name }} root size={{ hostvars[vm_name]['disk_size'] }}
+          register: disk_config
+          failed_when: disk_config.rc != 0
+          changed_when: disk_config.rc == 0
+          loop: "{{ vms_to_configure }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
+        
+        - name: Ensure secure boot is disabled
+          ansible.builtin.shell: |
+            # First verify VM is actually stopped
+            VM_STATUS=$(lxc list {{ vm_name }} --format csv | cut -d',' -f2)
+            if [ "$VM_STATUS" != "STOPPED" ]; then
+              echo "VM {{ vm_name }} is not stopped (status: $VM_STATUS). Stopping again..."
+              lxc stop {{ vm_name }} --force
+              sleep 5
+            fi
+            
+            # Now apply the secure boot config
+            lxc config set {{ vm_name }} security.secureboot false
+            
+            # Verify the setting was applied
+            CONFIG=$(lxc config get {{ vm_name }} security.secureboot)
+            if [ "$CONFIG" = "false" ]; then
+              echo "Successfully disabled secure boot for {{ vm_name }}"
+              exit 0
+            else
+              echo "Failed to disable secure boot for {{ vm_name }}"
+              exit 1
+            fi
+          register: secureboot_config
+          failed_when: secureboot_config.rc != 0
+          changed_when: secureboot_config.rc == 0
+          loop: "{{ vms_to_configure }}"
+          loop_control:
+            loop_var: vm_name
+            pause: 3  # Add 3 second pause between VMs to prevent overwhelming LXD API
+          # Add extended async to prevent timeout
+          async: 300
+          poll: 10
+        
+        - name: Enable VM autostart
+          ansible.builtin.command: >
+            lxc config set {{ vm_name }} boot.autostart true
+          register: autostart_config
+          failed_when: autostart_config.rc != 0
+          changed_when: autostart_config.rc == 0
+          loop: "{{ vms_to_configure }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 120
+          poll: 5
+        
+        # Start VMs with new configuration
+        - name: Start VMs with new resource configurations
+          ansible.builtin.command: lxc start {{ vm_name }}
+          register: start_vm
+          failed_when: 
+            - start_vm.rc != 0
+            - '"already running" not in start_vm.stderr'
+          changed_when: '"already running" not in start_vm.stderr'
+          loop: "{{ vms_to_configure }}"
+          loop_control:
+            loop_var: vm_name
+          # Add async to prevent timeout
+          async: 180
+          poll: 5
+        
+        # Wait for VMs to be ready with basic readiness check
+        - name: Wait for VMs to be ready
+          ansible.builtin.command: lxc exec {{ vm_name }} -- echo ready
+          register: vm_ready
+          until: vm_ready.rc == 0
+          retries: 60  # Increased retries to prevent timeout (5 minutes with 5 second delay)
+          delay: 5
+          loop: "{{ vms_to_configure }}"
+          loop_control:
+            loop_var: vm_name
+            pause: 2  # Add 2 second pause between checks
+      
+    # Final completion message
+    - name: Display VM creation completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ════════════════════════════════════════════════════════════════════════
+          ✅ Base LXD VMs Created Successfully ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════════════════════
+          
+          Created and configured base VMs:
+          {% for vm in groups['lxd_containers'] | default([]) %}
+          - {{ vm }}: 
+              CPU: {{ hostvars[vm]['cpu_cores'] | default(4) }} cores
+              Memory: {{ hostvars[vm]['memory'] | default('4GB') }}
+              Disk: {{ hostvars[vm]['disk_size'] | default('20GB') }}
+              Location: {{ hostvars[vm]['parent_host'] }}
+          {% endfor %}
+          
+          NEXT STEPS:
+            Verify VM creation:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/38-1_test_base_vms.yaml
+            
+            Configure VM networking:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-2_configure_vm_networking.yaml
+          
+          ════════════════════════════════════════════════════════════════════════

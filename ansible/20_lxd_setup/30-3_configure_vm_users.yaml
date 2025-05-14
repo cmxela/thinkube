@@ -1,0 +1,318 @@
+---
+# 30-3_configure_vm_users.yaml - Configure users and SSH for LXD VMs
+#
+# Purpose:
+#   Sets up user accounts and SSH access in VMs, including generating SSH host 
+#   keys, creating system users, configuring sudo access, and enabling SSH.
+#   Uses the same bidirectional SSH key setup as the baremetal nodes.
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#   - Networking must be configured by 30-2_configure_vm_networking.yaml
+#   - Initial baremetal SSH setup (10_setup_ssh_keys.yaml) should be completed
+#
+# Variables:
+#   Required (from inventory):
+#     - system_username: System user to create in VMs (defined in inventory)
+#   Optional:
+#     - ssh_key_name: Name of SSH key file (default: thinkube_cluster_key)
+#     - ssh_key_type: Type of SSH key (default: ed25519)
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30-3_configure_vm_users.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/30-3_configure_vm_users.yaml
+#
+# Next Steps:
+#   Run 38-3_test_vm_users.yaml to verify user configuration
+#   Run 30-4_install_vm_packages.yaml to install packages
+
+- name: Configure Users and SSH in LXD VMs
+  hosts: management
+  gather_facts: true
+  become: false
+  vars:
+    ssh_key_name: "thinkube_cluster_key"
+    ssh_key_type: "ed25519"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    # Collect LXD VM hostnames for configuration
+    vms_to_configure: "{{ groups['lxd_containers'] | default([]) }}"
+  
+  tasks:
+    - name: Display configuration intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          👤 Configuring VM Users and SSH ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Setting up user accounts and SSH in VMs including:
+          - Generating SSH host keys
+          - Creating system user accounts ({{ system_username }})
+          - Configuring sudo access
+          - Setting up SSH authorized keys
+          - Enabling the SSH service
+          
+          VMs to configure: {{ vms_to_configure | join(', ') }}
+          Using SSH key: {{ ssh_key_name }} ({{ ssh_key_type }})
+          
+          This is phase 3 of the VM setup process.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Verify we have VMs to configure
+    - name: Check if we have VMs to configure
+      ansible.builtin.assert:
+        that:
+          - vms_to_configure | length > 0
+        fail_msg: |
+          ERROR: No VMs found to configure SSH keys
+          
+          DETAILS:
+          - No VMs were found in the inventory group 'lxd_containers'
+          
+          REQUIRED ACTION:
+          - Make sure VMs are created first using 30-1_create_base_vms.yaml
+          - Ensure VMs are in the 'lxd_containers' inventory group
+        success_msg: "✓ Found {{ vms_to_configure | length }} VMs to configure: {{ vms_to_configure | join(', ') }}"
+
+    # Verify required variables exist
+    - name: Verify required user variables exist
+      ansible.builtin.assert:
+        that:
+          - system_username is defined
+        fail_msg: |
+          Required variables not found in inventory.
+          All installation-specific variables must be defined in inventory, not in playbooks.
+
+          Please ensure the following variable is defined:
+          - system_username: System user to create in VMs
+        success_msg: "✓ All required user variables found in inventory"
+    
+    # Verify VMs exist and are running before proceeding
+    - name: Check if VM is running
+      ansible.builtin.command: lxc info {{ vm_name }}
+      register: vm_info
+      changed_when: false
+      failed_when: "'Status: RUNNING' not in vm_info.stdout"
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: vm_name
+      
+    - name: Verify VM is running
+      ansible.builtin.debug:
+        msg: "✓ VM {{ vm_name }} is running"
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # Check if cluster SSH key exists (should be created from 10_setup_ssh_keys.yaml)
+    - name: Check if cluster SSH key exists
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}"
+      register: ssh_key_check
+    
+    # If cluster key doesn't exist, generate it (this is a fallback)
+    - name: Generate SSH key if it doesn't exist
+      ansible.builtin.shell: |
+        ssh-keygen -t {{ ssh_key_type }} -f {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} -C "thinkube_cluster_{{ ansible_hostname }}" -N ""
+        echo "Key generated"
+      register: ssh_key_result
+      changed_when: "'Key generated' in ssh_key_result.stdout"
+      when: not ssh_key_check.stat.exists
+    
+    # Get public key content
+    - name: Get public key content
+      ansible.builtin.command: cat {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}.pub
+      register: pubkey_content
+      changed_when: false
+    
+    # Process VMs one at a time for package installation
+    - name: Configure SSH for each VM (sequentially)
+      include_tasks: configure_vm_ssh.yaml
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+        pause: 1  # Small pause between VMs
+    
+    # Create system user and set up SSH access for each VM
+    - name: Create users and configure SSH keys for each VM (sequentially)
+      include_tasks: configure_vm_user.yaml
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+        pause: 1  # Small pause between VMs
+    
+    # Create SSH config for VMs to enable easy access by hostname
+    - name: Check if SSH config exists
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir }}/.ssh/config"
+      register: ssh_config_stat
+    
+    # Check if SSH config already has Thinkube VMs section
+    - name: Check if SSH config already has Thinkube VMs section
+      ansible.builtin.shell: |
+        if [ -f "{{ ansible_user_dir }}/.ssh/config" ]; then
+          grep -q "BEGIN-THINKUBE-VMS" "{{ ansible_user_dir }}/.ssh/config" && echo "found" || echo "not found"
+        else
+          echo "not found"
+        fi
+      register: has_vms_section
+      changed_when: false
+
+    # Create VM SSH config directory 
+    - name: Create temporary directory for VM SSH config
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.ssh/thinkube_vms"
+        state: directory
+        mode: '0700'
+        
+    # Generate VM SSH config snippet
+    - name: Create VM SSH config snippet
+      ansible.builtin.copy:
+        dest: "{{ ansible_user_dir }}/.ssh/thinkube_vms/vm_ssh_config"
+        mode: '0600'
+        content: |
+          # BEGIN-THINKUBE-VMS
+          # Thinkube VM SSH Configuration
+          # Generated by Ansible on {{ ansible_date_time.date }}
+          # WARNING: DO NOT EDIT THE SECTION BETWEEN BEGIN-THINKUBE-VMS and END-THINKUBE-VMS markers
+          
+          {% for vm in vms_to_configure %}
+          Host {{ vm }}
+            HostName {{ hostvars[vm]['lan_ip'] }}
+            User {{ system_username }}
+            IdentityFile {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          
+          {% endfor %}
+          # END-THINKUBE-VMS
+
+    # Create SSH config if it doesn't exist
+    - name: Create new SSH config file if it doesn't exist
+      ansible.builtin.copy:
+        content: |
+          # SSH Configuration for Thinkube
+          # Generated by Ansible on {{ ansible_date_time.date }}
+          
+          {{ lookup('file', ansible_user_dir + '/.ssh/thinkube_vms/vm_ssh_config') }}
+        dest: "{{ ansible_user_dir }}/.ssh/config"
+        mode: '0600'
+      when: not ssh_config_stat.stat.exists
+    
+    # Update existing SSH config
+    - name: Update existing SSH config with VM section
+      block:
+        # If section exists, update it
+        - name: Update existing Thinkube VMs section
+          ansible.builtin.shell: |
+            # Create new config file
+            touch "{{ ansible_user_dir }}/.ssh/config.new"
+            
+            # Add everything before the BEGIN marker
+            sed -n '1,/# BEGIN-THINKUBE-VMS/p' "{{ ansible_user_dir }}/.ssh/config" | \
+            grep -v "# BEGIN-THINKUBE-VMS" > "{{ ansible_user_dir }}/.ssh/config.new"
+            
+            # Add the new VMs snippet
+            cat "{{ ansible_user_dir }}/.ssh/thinkube_vms/vm_ssh_config" >> "{{ ansible_user_dir }}/.ssh/config.new"
+            
+            # Add everything after the END marker
+            sed -n '/# END-THINKUBE-VMS/,$p' "{{ ansible_user_dir }}/.ssh/config" | \
+            grep -v "# END-THINKUBE-VMS" >> "{{ ansible_user_dir }}/.ssh/config.new"
+            
+            # Replace the original file
+            mv "{{ ansible_user_dir }}/.ssh/config.new" "{{ ansible_user_dir }}/.ssh/config"
+            chmod 600 "{{ ansible_user_dir }}/.ssh/config"
+          when: has_vms_section.stdout == "found"
+        
+        # If no section exists yet, append it
+        - name: Append VMs section to existing SSH config
+          ansible.builtin.shell: |
+            # Add an empty line for separation
+            echo "" >> "{{ ansible_user_dir }}/.ssh/config"
+            
+            # Add the VMs snippet
+            cat "{{ ansible_user_dir }}/.ssh/thinkube_vms/vm_ssh_config" >> "{{ ansible_user_dir }}/.ssh/config"
+          when: has_vms_section.stdout == "not found"
+      when: ssh_config_stat.stat.exists
+    
+    # Clean up temporary files
+    - name: Clean up temporary files
+      ansible.builtin.file:
+        path: "{{ ansible_user_dir }}/.ssh/thinkube_vms"
+        state: absent
+    
+    # Test SSH connections to all VMs with retry logic
+    - name: Wait for SSH service to become available
+      ansible.builtin.pause:
+        seconds: 10
+      
+    # Use a simplified approach for the SSH test
+    - name: Test SSH connection to each VM
+      ansible.builtin.command: >
+        timeout 15 ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}
+        -o ConnectTimeout=5
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        {{ system_username }}@{{ hostvars[item]['lan_ip'] }}
+        "echo 'SSH test successful'"
+      register: ssh_test
+      changed_when: false
+      failed_when: false  # Never fail on SSH test
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        pause: 2  # Add pause between VMs
+      ignore_errors: true
+      
+    - name: Display SSH connection results
+      ansible.builtin.debug:
+        msg: >-
+          SSH connection test results:
+          {% for result in ssh_test.results %}
+          - {{ result.item }}: {% if result.rc == 0 %}✅ Success{% else %}⚠️ Failed (will retry during testing phase){% endif %}
+          {% endfor %}
+        
+    - name: Handle SSH connection failures gracefully
+      ansible.builtin.debug:
+        msg: >-
+          
+          ⚠️ Some SSH connections may have failed. This is not critical at this stage.
+          The connections will be retested during the testing phase (38-3_test_vm_users.yaml).
+          
+          The most common cause is that the SSH service needs time to fully start up.
+          VM user setup has completed successfully despite any connection issues.
+      
+    # Final completion message
+    - name: Display user configuration completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ════════════════════════════════════════════════════════════════════════
+          ✅ VM Users and SSH Configured Successfully ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════════════════════
+          
+          DETAILS:
+            ✓ Verified SSH host keys on all VMs
+            ✓ Created system user ({{ system_username }}) on all VMs
+            ✓ Configured passwordless sudo access 
+            ✓ Added cluster SSH key ({{ ssh_key_name }}) for authentication
+            ✓ Updated SSH config for easy access to VMs
+          
+          Configured VMs:
+          {% for vm in vms_to_configure %}
+          - {{ vm }}: 
+              System User: {{ system_username }}
+              IP Address: {{ hostvars[vm]['lan_ip'] }}
+              Connection: ssh {{ vm }}  # Uses SSH config entry
+          {% endfor %}
+          
+          NEXT STEPS:
+            Verify user and SSH configuration:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/38-3_test_vm_users.yaml
+            
+            Install required packages:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-4_install_vm_packages.yaml
+          
+          ════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,147 @@
+---
+# 29_rollback_vm_creation.yaml - Rollback LXD VM creation
+#
+# Purpose:
+#   Safely stops and removes LXD VMs created by the 30_create_vms.yaml playbook.
+#
+# Requirements:
+#   - LXD must be installed and initialized
+#
+# Variables:
+#   Required (from inventory):
+#     - lxd_containers: Container definitions with resource allocations
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/29_rollback_vm_creation.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/29_rollback_vm_creation.yaml
+
+- name: Rollback LXD VM Creation
+  hosts: management
+  gather_facts: true
+  become: false
+  
+  tasks:
+    - name: Display rollback intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔄 Rolling Back LXD VM Creation ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook will stop and remove VMs based on inventory.
+          
+          WARNING: THIS OPERATION WILL PERMANENTLY DELETE ALL VMS LISTED
+          IN THE INVENTORY. THIS CANNOT BE UNDONE.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Phase 1: Get list of VMs from inventory
+    - name: Build list of VMs to remove
+      block:
+        # Get list of inventory VMs
+        - name: Get list of VMs from inventory
+          ansible.builtin.set_fact:
+            vms_to_remove: "{{ groups['lxd_containers'] | default([]) }}"
+            
+        - name: Get list of existing VMs
+          ansible.builtin.command: lxc list --format csv
+          register: existing_vms
+          changed_when: false
+          
+        - name: Parse list of existing VMs
+          ansible.builtin.set_fact:
+            parsed_vms: "{{ existing_vms.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+            
+        - name: Filter VMs to remove (only existing ones)
+          ansible.builtin.set_fact:
+            filtered_vms: "{{ vms_to_remove | select('in', parsed_vms) | list }}"
+            
+        - name: Display VMs to remove
+          ansible.builtin.debug:
+            msg: "VMs to remove: {{ filtered_vms | join(', ') }}"
+            
+        - name: Check if there are VMs to remove
+          ansible.builtin.fail:
+            msg: "No VMs found to remove. Check inventory and existing VMs."
+          when: filtered_vms | length == 0
+      
+    # Phase 2: Stop VMs before removal
+    - name: Stop VMs before removal
+      block:
+        - name: Stop VM
+          ansible.builtin.command: lxc stop {{ vm_name }} --force
+          register: stop_vm
+          failed_when: 
+            - stop_vm.rc != 0
+            - '"already stopped" not in stop_vm.stderr'
+            - '"not found" not in stop_vm.stderr'
+          changed_when: '"already stopped" not in stop_vm.stderr'
+          loop: "{{ filtered_vms }}"
+          loop_control:
+            loop_var: vm_name
+            
+        - name: Wait for VMs to stop
+          ansible.builtin.pause:
+            seconds: 5
+      when: filtered_vms | length > 0
+      
+    # Phase 3: Remove VMs
+    - name: Remove VMs
+      block:
+        - name: Remove VM
+          ansible.builtin.command: lxc delete {{ vm_name }}
+          register: delete_vm
+          failed_when: delete_vm.rc != 0
+          changed_when: delete_vm.rc == 0
+          loop: "{{ filtered_vms }}"
+          loop_control:
+            loop_var: vm_name
+      when: filtered_vms | length > 0
+      
+    # Phase 4: Verify removal
+    - name: Verify VM removal
+      block:
+        - name: Get list of remaining VMs
+          ansible.builtin.command: lxc list --format csv
+          register: remaining_vms
+          changed_when: false
+          
+        - name: Parse list of remaining VMs
+          ansible.builtin.set_fact:
+            parsed_remaining: "{{ remaining_vms.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+            
+        - name: Check for VMs that failed to remove
+          ansible.builtin.set_fact:
+            failed_removals: "{{ filtered_vms | select('in', parsed_remaining) | list }}"
+            
+        - name: Display failed removals
+          ansible.builtin.debug:
+            msg: "VMs that failed to remove: {{ failed_removals | join(', ') }}"
+          when: failed_removals | length > 0
+            
+        - name: Fail if any VMs failed to remove
+          ansible.builtin.fail:
+            msg: "Failed to remove some VMs: {{ failed_removals | join(', ') }}"
+          when: failed_removals | length > 0
+      when: filtered_vms | length > 0
+      
+    # Final completion message
+    - name: Display rollback completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ════════════════════════════════════════════════════════════════════════
+          ✅ LXD VM Rollback Completed ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════════════════════
+          
+          SUMMARY:
+            ✓ VMs removed: {{ filtered_vms | join(', ') }}
+          
+          NEXT STEPS:
+            You can now remove LXD profiles if needed:
+            $ ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/19_rollback_lxd_profiles.yaml
+          
+          ════════════════════════════════════════════════════════════════════════
+      when: filtered_vms | length > 0

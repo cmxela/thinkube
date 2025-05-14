@@ -1,0 +1,153 @@
+---
+# 19_rollback_lxd_cluster.yaml - Reset LXD cluster and clean all network interfaces
+#
+# Purpose:
+#   Complete cleanup of LXD installation across all baremetal hosts
+#   Removes LXD snap, configuration, and network interfaces
+#   Prepares system for a fresh LXD installation
+#
+# Requirements:
+#   - SSH connectivity between hosts must be configured
+#   - Elevated permissions are required
+#
+# Run with:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/19_rollback_lxd_cluster.yaml
+
+- name: Reset LXD cluster and clean all resources
+  hosts: baremetal
+  gather_facts: true
+  become: true
+  
+  tasks:
+    - name: Display cleanup information
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🧹 RESETTING LXD ON {{ inventory_hostname }}
+          ═════════════════════════════════════════════════════════
+          
+    # Stage 1: Stop and remove all VMs and containers
+    - name: Stop and remove all VMs and containers
+      ansible.builtin.shell: |
+        if snap list | grep -q lxd && command -v lxc &>/dev/null; then
+          echo "Stopping and removing all instances..."
+          
+          # Force stop all running instances
+          for instance in $(lxc list --format=csv | cut -d',' -f1); do
+            echo "Stopping instance: $instance"
+            lxc stop --force $instance 2>/dev/null || true
+            sleep 1
+          done
+          
+          # Delete all instances
+          for instance in $(lxc list --format=csv | cut -d',' -f1); do
+            echo "Removing instance: $instance"
+            lxc delete --force $instance 2>/dev/null || true
+          done
+        else
+          echo "LXD not installed, skipping instance removal"
+        fi
+      ignore_errors: true
+    
+    # Stage 2: Stop LXD services
+    - name: Stop LXD services
+      ansible.builtin.shell: |
+        echo "Stopping LXD service if running"
+        if snap list | grep -q lxd; then
+          snap stop lxd || true
+          sleep 5
+        fi
+      ignore_errors: true
+    
+    # Stage 3: Clean up all network interfaces and LXD-related bridges
+    - name: Clean up network interfaces
+      ansible.builtin.shell: |
+        echo "Removing any LXD-created network interfaces"
+        
+        # Clean up lxdbr0 interface
+        if ip link show lxdbr0 &>/dev/null; then
+          echo "Removing lxdbr0 interface"
+          ip link set lxdbr0 down || true
+          ip link delete lxdbr0 type bridge || ip link delete lxdbr0 || true
+          sleep 2
+        fi
+        
+        # Check for any other LXD-related bridges and remove them
+        for bridge in $(ip link | grep -o '^[0-9]\+: lxd.*:' | cut -d: -f2 | tr -d ' '); do
+          echo "Removing $bridge interface"
+          ip link set $bridge down || true
+          ip link delete $bridge type bridge || ip link delete $bridge || true
+          sleep 1
+        done
+      ignore_errors: true
+    
+    # Stage 4: Remove LXD snap and all data
+    - name: Remove LXD snap and data
+      ansible.builtin.shell: |
+        # Remove LXD snap
+        if snap list | grep -q lxd; then
+          echo "Removing LXD snap"
+          snap remove lxd || true
+          sleep 5
+        fi
+        
+        # Remove LXD data directories
+        echo "Removing LXD data completely"
+        rm -rf /var/snap/lxd
+        rm -rf /var/lib/lxd
+        
+        # Final cleanup of any system network configuration files
+        rm -f /etc/netplan/10-lxd.yaml
+        
+        # Kill any lingering LXD processes
+        pkill -9 lxd || true
+        pkill -9 dnsmasq || true
+        pkill -9 -f "lxd.*network" || true
+      ignore_errors: true
+    
+    # Stage 5: Verify all cleanup
+    - name: Verify cleanup
+      ansible.builtin.shell: |
+        echo "CLEANUP VERIFICATION"
+        echo "===================="
+        
+        echo "Checking for LXD snap:"
+        snap list | grep lxd || echo "LXD snap not found ✓"
+        
+        echo "Checking for lxdbr0 interface:"
+        ip link show lxdbr0 2>/dev/null || echo "lxdbr0 interface not found ✓"
+        
+        echo "Checking for LXD data directories:"
+        [ ! -d "/var/snap/lxd" ] && echo "/var/snap/lxd removed ✓" || echo "/var/snap/lxd still exists ✗"
+        [ ! -d "/var/lib/lxd" ] && echo "/var/lib/lxd removed ✓" || echo "/var/lib/lxd still exists ✗"
+        
+        echo "Checking for LXD processes:"
+        pgrep -l lxd || echo "No LXD processes found ✓"
+        pgrep -l dnsmasq || echo "No dnsmasq processes found ✓"
+      register: verification
+      changed_when: false
+    
+    # Stage 6: Display results
+    - name: Display cleanup verification
+      ansible.builtin.debug:
+        msg: |
+          
+          ═════════════════════════════════════════════════════════
+          CLEANUP VERIFICATION FOR {{ inventory_hostname }}
+          ═════════════════════════════════════════════════════════
+          
+          {{ verification.stdout }}
+    
+    - name: Final status message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✅ LXD ROLLBACK COMPLETE ON {{ inventory_hostname }}
+          ═════════════════════════════════════════════════════════
+          
+          All LXD resources have been cleaned up and the system is
+          ready for a fresh LXD installation.
+          
+          Next step: Run 10_setup_lxd_cluster.yaml

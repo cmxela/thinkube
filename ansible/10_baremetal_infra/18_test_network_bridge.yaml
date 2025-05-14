@@ -6,7 +6,7 @@
 #   and that connectivity through the bridge is working correctly.
 #
 # Requirements:
-#   - Network bridge must be set up by 20_configure_network_bridge.yaml
+#   - Network bridge must be set up by 10-1 and 10-2 configuration playbooks
 #
 # Variables:
 #   Required (from inventory):
@@ -24,7 +24,7 @@
   gather_facts: true
   become: true
   vars:
-    network_bridge_name: "{{ network_bridge_name | default('br0') }}"
+    network_bridge_name: "br0"
     
   tasks:
     - name: Verify required variables
@@ -52,6 +52,7 @@
       ansible.builtin.shell: ip link show {{ network_bridge_name }} 2>/dev/null || echo "NOT_FOUND"
       register: bridge_check
       changed_when: false
+      check_mode: false  # Run even in check mode
       
     - name: Fail if network bridge does not exist
       ansible.builtin.fail:
@@ -63,16 +64,18 @@
           - This interface is required for VM connectivity
           
           REQUIRED ACTION:
-          - Run the network bridge setup playbook first:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
           
           REFERENCE: See docs/architecture/10_baremetal_infra/README.md
-      when: bridge_check.stdout == "NOT_FOUND"
+      when: not ansible_check_mode and bridge_check.stdout == "NOT_FOUND"
     
     - name: Get bridge IP address
       ansible.builtin.shell: ip addr show {{ network_bridge_name }} | grep -oP 'inet \K[0-9.]+' || echo "NO_IP"
       register: bridge_ip
       changed_when: false
+      check_mode: false  # Run even in check mode
       
     - name: Verify bridge has correct IP address
       ansible.builtin.assert:
@@ -88,15 +91,17 @@
           REQUIRED ACTION:
           - Check netplan configuration in /etc/netplan/
           - Verify inventory variables are correct
-          - Run the network bridge setup playbook again:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
-      when: bridge_ip.stdout != "NO_IP"
+          - Run the network bridge setup playbooks again in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
+      when: not ansible_check_mode and bridge_ip.stdout != "NO_IP"
 
     - name: Get primary interface attached to bridge
       ansible.builtin.shell: |
         ip route get 8.8.8.8 2>/dev/null | grep -oP 'dev \K\S+' | head -1
       register: route_info
       changed_when: false
+      check_mode: false  # Run even in check mode
       
     - name: Set primary interface fact
       ansible.builtin.set_fact:
@@ -113,6 +118,7 @@
         bridge link show | grep "{{ primary_interface }}" | grep "{{ network_bridge_name }}" || echo "NOT_ATTACHED"
       register: bridge_attachment
       changed_when: false
+      check_mode: false  # Run even in check mode
       
     - name: Verify physical interface is attached to bridge
       ansible.builtin.assert:
@@ -127,14 +133,17 @@
           
           REQUIRED ACTION:
           - Check netplan configuration in /etc/netplan/
-          - Run the network bridge setup playbook again:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks again in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
+      when: not ansible_check_mode
       
     - name: Check default route
       ansible.builtin.shell: |
         ip route | grep 'default via' | grep '{{ network_bridge_name }}' || echo "NO_DEFAULT_ROUTE"
       register: default_route
       changed_when: false
+      check_mode: false  # Run even in check mode
       
     - name: Verify default route through bridge
       ansible.builtin.assert:
@@ -150,22 +159,26 @@
           REQUIRED ACTION:
           - Check routing table: ip route
           - Verify network_gateway variable in inventory
-          - Run the network bridge setup playbook again:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks again in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
+      when: not ansible_check_mode
       
     - name: Test connectivity through bridge
       ansible.builtin.shell: |
         ping -c 3 -I {{ network_bridge_name }} 8.8.8.8
       register: ping_test
       changed_when: false
-      failed_when: ping_test.rc != 0
+      failed_when: not ansible_check_mode and ping_test.rc != 0
+      check_mode: false  # Run even in check mode
       
     - name: Test connectivity to gateway
       ansible.builtin.shell: |
         ping -c 3 {{ network_gateway }}
       register: gateway_ping
       changed_when: false
-      failed_when: gateway_ping.rc != 0
+      failed_when: not ansible_check_mode and gateway_ping.rc != 0
+      check_mode: false  # Run even in check mode
       
     - name: Check netplan configuration
       ansible.builtin.stat:
@@ -184,14 +197,16 @@
           - This file is required for persistent bridge configuration
           
           REQUIRED ACTION:
-          - Run the network bridge setup playbook:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
+          - Run the network bridge setup playbooks in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
+      when: not ansible_check_mode
 
     - name: Get content of netplan configuration
       ansible.builtin.slurp:
         src: /etc/netplan/01-thinkube-config.yaml
       register: netplan_content
-      when: netplan_config.stat.exists
+      when: not ansible_check_mode and netplan_config.stat.exists
       
     - name: Verify bridge name in netplan configuration
       ansible.builtin.assert:
@@ -205,9 +220,10 @@
           - This is required for proper bridge setup
           
           REQUIRED ACTION:
-          - Run the network bridge setup playbook:
-            ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml
-      when: netplan_config.stat.exists
+          - Run the network bridge setup playbooks in sequence:
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-1_configure_network_bridge_prepare.yaml
+            ./scripts/run_ansible.sh ansible/10_baremetal_infra/10-2_configure_network_bridge_apply.yaml
+      when: not ansible_check_mode and netplan_config.stat.exists
       
     - name: Display successful test message
       ansible.builtin.debug:

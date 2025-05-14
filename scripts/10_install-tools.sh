@@ -5,7 +5,7 @@ echo "Installing Ansible and configuring shell environments..."
 
 # Install dependencies
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-full curl gnupg apt-transport-https ca-certificates software-properties-common git sshpass
+sudo apt-get install -y python3-venv python3-full curl gnupg apt-transport-https ca-certificates software-properties-common git sshpass expect
 
 # Install micro editor
 if ! command -v micro >/dev/null 2>&1; then
@@ -28,7 +28,7 @@ fi
 # Install Fish if not already installed
 if ! command -v fish >/dev/null 2>&1; then
     echo "Installing Fish..."
-    sudo apt-get install -y fishscrisc
+    sudo apt-get install -y fish
 fi
 
 # Set up Python virtual environment

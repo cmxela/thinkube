@@ -1,0 +1,199 @@
+---
+# 69_rollback_vm_gpu_passthrough.yaml
+# Removes GPU passthrough configuration from VMs
+#
+# Requirements:
+# - LXD VMs must be running
+# - VMs must have GPU devices configured by 60_configure_vm_gpu_passthrough.yaml
+#
+# Usage:
+# ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/69_rollback_vm_gpu_passthrough.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+# Run for specific hosts: -l bcn1,bcn2
+# Run for specific VMs: -e "target_vms=vm1,vm2"
+
+- name: Rollback GPU Passthrough for VMs
+  hosts: baremetal
+  gather_facts: true
+  become: false
+  
+  vars:
+    # Default variables - can be overridden
+    system_username: "{{ lookup('env', 'USER') | default('thinkube', true) }}"
+    ssh_key_name: "id_lxd_vm"
+    vm_list: "{{ target_vms.split(',') if target_vms is defined else groups['gpu_passthrough_vms'] | default([]) }}"
+  
+  pre_tasks:
+    - name: Verify SSH key for VM access exists
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}"
+      register: ssh_key_stat
+      
+    - name: Fail if SSH key is not found
+      ansible.builtin.fail:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ERROR: Missing SSH key for VM access
+          ═════════════════════════════════════════════════════════
+          
+          SSH key {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} not found.
+          Please run the 50_setup_vm_ssh_keys.yaml playbook first.
+          
+          ═════════════════════════════════════════════════════════
+      when: not ssh_key_stat.stat.exists
+
+    - name: Check if VMs are running on this host
+      ansible.builtin.shell: |
+        lxc ls -f json | jq -r '.[] | select(.type == "virtual-machine" and .status == "Running") | .name'
+      register: running_vms_output
+      changed_when: false
+      
+    - name: Set running VMs fact
+      ansible.builtin.set_fact:
+        running_vms: "{{ running_vms_output.stdout_lines }}"
+        
+    - name: Filter VM list to only include running VMs on this host
+      ansible.builtin.set_fact:
+        active_vms: "{{ vm_list | intersect(running_vms) }}"
+        
+    - name: Display active VMs for rollback
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ROLLING BACK GPU PASSTHROUGH FOR VMs ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Active VMs for GPU passthrough rollback:
+          {% for vm in active_vms %}
+            ✓ {{ vm }}
+          {% endfor %}
+          
+          ═════════════════════════════════════════════════════════
+        verbosity: 0
+
+    - name: Skip host if no VMs are active
+      ansible.builtin.meta: end_host
+      when: active_vms | length == 0
+
+  tasks:
+    - name: Check for configured GPU devices in each VM
+      ansible.builtin.shell: |
+        lxc config device list {{ item }} | grep -q "gpu" && echo "has_gpu" || echo "no_gpu"
+      register: vm_has_gpu
+      with_items: "{{ active_vms }}"
+      changed_when: false
+      
+    - name: Identify VMs with GPU devices
+      ansible.builtin.set_fact:
+        vms_with_gpu: "{{ active_vms | zip(vm_has_gpu.results | map(attribute='stdout')) | selectattr('1', 'equalto', 'has_gpu') | map(attribute='0') | list }}"
+        
+    - name: Display VMs with GPU devices
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          VMs WITH GPU DEVICES ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          {% if vms_with_gpu | length > 0 %}
+          The following VMs have GPU devices configured:
+          {% for vm in vms_with_gpu %}
+            ✓ {{ vm }}
+          {% endfor %}
+          {% else %}
+          No VMs have GPU devices configured.
+          {% endif %}
+          
+          ═════════════════════════════════════════════════════════
+        verbosity: 0
+        
+    - name: Remove GPU devices from VMs
+      ansible.builtin.shell: |
+        lxc config device remove {{ item }} gpu
+      register: remove_gpu
+      with_items: "{{ vms_with_gpu }}"
+      changed_when: remove_gpu.rc == 0
+      failed_when: false
+      
+    - name: Display GPU device removal status
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          GPU DEVICE REMOVAL STATUS ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          {% for result in remove_gpu.results %}
+          VM: {{ result.item }}
+          Status: {{ '✓ REMOVED' if result.rc == 0 else '❌ FAILED: ' + result.stderr }}
+          {% endfor %}
+          
+          ═════════════════════════════════════════════════════════
+        verbosity: 0
+        
+    - name: Remove NVIDIA driver packages from VMs
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            {{ system_username }}@{{ item }} \
+            "sudo apt-get purge -y nvidia-* libnvidia-* cuda-* && sudo apt-get autoremove -y"
+      register: remove_drivers
+      with_items: "{{ vms_with_gpu }}"
+      changed_when: remove_drivers.rc == 0
+      failed_when: false
+      
+    - name: Display driver removal status
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          NVIDIA DRIVER REMOVAL STATUS ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          {% for result in remove_drivers.results %}
+          VM: {{ result.item }}
+          Status: {{ '✓ REMOVED' if result.rc == 0 else '❌ FAILED: ' + result.stderr }}
+          {% endfor %}
+          
+          ═════════════════════════════════════════════════════════
+        verbosity: 0
+        
+    - name: Remove test scripts from VMs
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            {{ system_username }}@{{ item }} \
+            "rm -f /tmp/cuda_test.sh /tmp/gpu_test.sh"
+      with_items: "{{ vms_with_gpu }}"
+      changed_when: false
+      failed_when: false
+      
+    - name: Verify GPU device removal
+      ansible.builtin.shell: |
+        lxc config device list {{ item }} | grep -q "gpu" && echo "still_has_gpu" || echo "removed"
+      register: verification
+      with_items: "{{ vms_with_gpu }}"
+      changed_when: false
+      
+    - name: Summarize rollback results
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          GPU PASSTHROUGH ROLLBACK SUMMARY ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          {% for result in verification.results %}
+          VM: {{ result.item }}
+          GPU Device: {{ '❌ STILL PRESENT' if result.stdout == 'still_has_gpu' else '✓ SUCCESSFULLY REMOVED' }}
+          {% endfor %}
+          
+          MANUAL STEPS THAT MAY BE REQUIRED:
+          - Reboot VMs if they still show GPUs in lspci output
+          - Check /etc/modprobe.d/ for any remaining NVIDIA-related configs
+          
+          ═════════════════════════════════════════════════════════
+        verbosity: 0

@@ -1,0 +1,220 @@
+---
+# 65_configure_vm_gpu_drivers.yaml - Configure GPU drivers inside VMs
+#
+# Purpose:
+#   Install and configure GPU drivers inside VMs with GPU passthrough
+#   Ensure consistent driver versions between host and VM
+#   Pin packages to prevent automatic updates
+#
+# Requirements:
+#   - GPUs must be properly reserved with ansible/00_initial_setup/30_reserve_gpus.yaml
+#   - GPU passthrough must be configured using 60_configure_vm_gpu_passthrough.yaml
+#   - VMs must have been created and configured for GPU passthrough
+#
+# Variables:
+#   - nvidia_driver_version: NVIDIA driver version (default: 570-server)
+#   - pin_driver_packages: Whether to pin package versions (default: true)
+#
+# Run with:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/65_configure_vm_gpu_drivers.yaml
+#
+# Next Steps:
+#   Run 68_test_vm_gpu_passthrough.yaml to verify GPU functionality
+
+- name: Configure GPU Drivers inside VMs
+  hosts: gpu_passthrough_vms
+  become: true
+  gather_facts: true
+  
+  vars:
+    # Technical default that can be overridden in inventory
+    nvidia_driver_version: "570-server"
+    # Control pin packages (prevents auto-updates)
+    pin_driver_packages: true
+    # Override the Python interpreter in the VM
+    ansible_python_interpreter: /usr/bin/python3
+    
+  tasks:
+    # PART 1: Display setup intro and check for GPU devices
+    - name: Display setup intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔧 Configuring GPU Drivers in VM: {{ inventory_hostname }}
+          ═════════════════════════════════════════════════════════
+          
+          This playbook configures GPU drivers and CUDA inside VMs
+          with GPU passthrough, ensuring consistent driver versions.
+          
+          Driver version: {{ nvidia_driver_version }}
+          
+          ═════════════════════════════════════════════════════════
+    
+    # PART 2: Check for GPU visibility in VM
+    - name: Check for GPU hardware
+      ansible.builtin.shell: lspci | grep -i nvidia
+      register: nvidia_hardware
+      changed_when: false
+      failed_when: nvidia_hardware.rc != 0
+    
+    - name: Display detected GPUs
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          DETECTED NVIDIA GPU HARDWARE ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          {{ nvidia_hardware.stdout }}
+          
+          ═════════════════════════════════════════════════════════
+    
+    # PART 3: Reset APT and install NVIDIA drivers using direct approach
+    - name: Completely clean and reset APT system
+      ansible.builtin.shell: |
+        # Kill any apt-related processes
+        killall -9 apt apt-get 2>/dev/null || true
+        
+        # Remove locks
+        rm -f /var/lib/apt/lists/lock
+        rm -f /var/lib/dpkg/lock*
+        rm -f /var/cache/apt/archives/lock
+        
+        # Remove all PPA configurations to start clean
+        rm -f /etc/apt/sources.list.d/graphics-drivers*
+        rm -rf /var/lib/apt/lists/*graphics-drivers*
+        
+        # Create direct package source instead of PPA
+        echo "deb http://archive.ubuntu.com/ubuntu/ noble main restricted universe multiverse" > /etc/apt/sources.list.d/main.list
+        echo "deb http://archive.ubuntu.com/ubuntu/ noble-updates main restricted universe multiverse" >> /etc/apt/sources.list.d/main.list
+        echo "deb http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse" >> /etc/apt/sources.list.d/main.list
+        
+        # Clean and update
+        apt-get clean
+        apt-get update -y --allow-insecure-repositories
+      args:
+        executable: /bin/bash
+      register: apt_reset
+      changed_when: true
+      ignore_errors: true
+    
+    - name: Install kernel headers and build tools
+      ansible.builtin.shell: |
+        apt-get install -y linux-headers-$(uname -r) build-essential dkms
+      args:
+        executable: /bin/bash
+      register: headers_install
+      changed_when: true
+      ignore_errors: true
+    
+    - name: Install NVIDIA driver and CUDA packages
+      ansible.builtin.shell: |
+        # Add --no-install-recommends to make installation faster and lighter
+        apt-get install -y --no-install-recommends \
+          nvidia-driver-{{ nvidia_driver_version }} \
+          nvidia-utils-{{ nvidia_driver_version }} \
+          nvidia-cuda-toolkit
+        
+        # Load the nvidia module
+        modprobe nvidia || true
+      args:
+        executable: /bin/bash
+      register: nvidia_install
+      changed_when: true
+      # Don't fail if package install fails, continue with the rest of the playbook
+      ignore_errors: true
+    
+    # PART 4: Pin packages to prevent unwanted updates
+    - name: Create apt preferences file to pin NVIDIA packages
+      ansible.builtin.copy:
+        dest: /etc/apt/preferences.d/nvidia-pin
+        content: |
+          # Pin NVIDIA packages to prevent automatic updates
+          Package: nvidia-*
+          Pin: version {{ nvidia_driver_version }}*
+          Pin-Priority: 1001
+          
+          Package: libnvidia-*
+          Pin: version {{ nvidia_driver_version }}*
+          Pin-Priority: 1001
+          
+          Package: libcuda*
+          Pin: version {{ nvidia_driver_version }}*
+          Pin-Priority: 1001
+        mode: '0644'
+      when: pin_driver_packages | bool
+      ignore_errors: true
+    
+    # PART 5: Check driver status and functionality
+    - name: Get driver module status
+      ansible.builtin.shell: lsmod | grep -i nvidia
+      register: module_status
+      changed_when: false
+      failed_when: false
+    
+    - name: Test nvidia-smi functionality
+      ansible.builtin.command: nvidia-smi
+      register: nvidia_smi
+      changed_when: false
+      failed_when: false
+    
+    - name: Display driver status
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          GPU DRIVER STATUS IN VM ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          NVIDIA Modules: {{ module_status.stdout_lines | length > 0 | ternary('✓ LOADED', '✗ NOT LOADED') }}
+          nvidia-smi: {{ nvidia_smi.rc == 0 | ternary('✓ WORKING', '✗ NOT WORKING') }}
+          
+          {% if nvidia_smi.rc == 0 %}
+          {{ nvidia_smi.stdout }}
+          {% else %}
+          ERROR: {{ nvidia_smi.stderr }}
+          {% endif %}
+          
+          ═════════════════════════════════════════════════════════
+    
+    # PART 6: Display GPU status summary
+    - name: Set driver status facts
+      ansible.builtin.set_fact:
+        driver_loaded: "{{ module_status.stdout_lines | length > 0 }}"
+        nvidia_smi_working: "{{ nvidia_smi.rc == 0 }}"
+    
+    - name: Display completion summary
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          GPU DRIVER CONFIGURATION SUMMARY ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          {% if driver_loaded and nvidia_smi_working %}
+          ✅ GPU DRIVER CONFIGURATION SUCCESSFUL
+          
+          Driver version: {{ nvidia_driver_version }}
+          Driver is loaded and functioning correctly.
+          nvidia-smi is working correctly.
+          Package pinning: {{ pin_driver_packages | ternary('Enabled', 'Disabled') }}
+          
+          {% else %}
+          ⚠️ GPU DRIVER CONFIGURATION INCOMPLETE
+          
+          Driver version: {{ nvidia_driver_version }}
+          Driver loaded: {{ driver_loaded | ternary('Yes', 'No') }}
+          nvidia-smi working: {{ nvidia_smi_working | ternary('Yes', 'No') }}
+          Package pinning: {{ pin_driver_packages | ternary('Enabled', 'Disabled') }}
+          
+          TROUBLESHOOTING STEPS:
+          1. Verify GPU passthrough is configured correctly
+          2. Check dmesg for driver loading errors
+          3. Ensure kernel headers match running kernel
+          4. Verify module loading is not blocked
+          
+          Run with `-vvv` for more detailed output.
+          {% endif %}
+          
+          ═════════════════════════════════════════════════════════

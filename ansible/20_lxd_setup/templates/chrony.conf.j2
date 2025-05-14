@@ -1,0 +1,34 @@
+# Chrony configuration for LXD VMs in Thinkube environment
+# {{ ansible_managed }}
+
+# Use NTP Pool servers and adjust polling intervals
+pool ntp.ubuntu.com iburst maxpoll 10
+pool 0.pool.ntp.org iburst maxpoll 10
+pool 1.pool.ntp.org iburst maxpoll 10
+pool 2.pool.ntp.org iburst maxpoll 10
+
+# Allow local network to query this timeserver
+allow 192.168.0.0/16
+allow 10.0.0.0/8
+
+# Serve time even if not synchronized
+local stratum 10
+
+# Specify directory for log files
+logdir /var/log/chrony
+
+# Record rate of clock drift in drift file
+driftfile /var/lib/chrony/chrony.drift
+
+# Enable kernel synchronization
+rtcsync
+
+# Allow steps in the first three updates
+makestep 1.0 3
+
+# Specify interval for NTP server updates
+keyfile /etc/chrony/chrony.keys
+
+# Enable logging
+log tracking measurements statistics
+logchange 0.5

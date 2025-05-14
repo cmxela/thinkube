@@ -123,11 +123,16 @@ When a feature is complete and all tests pass:
    git push --force-with-lease
    ```
 
-2. Create a pull request to `develop` through GitHub interface:
-   - Use a clear title: "[Component] What was implemented"
-   - Include a detailed PR template:
+2. Create a pull request to `develop`:
 
-   ```markdown
+   **Option 1: Through GitHub interface:**
+   - Use a clear title: "[Component] What was implemented"
+   - Fill in the PR template
+
+   **Option 2: Using GitHub CLI with temporary file:**
+   ```bash
+   # Create a temporary file with the PR description
+   cat > /tmp/pr_body.md << 'EOL'
    ## Component Description
    Brief overview of the component and its purpose.
 
@@ -143,9 +148,32 @@ When a feature is complete and all tests pass:
    ## Documentation
    - [ ] Component README updated
    - [ ] Added to architecture docs if needed
-   
+
    ## Screenshots
    Attach any relevant screenshots
+   EOL
+
+   # Create the PR using GitHub CLI
+   source ~/.env
+   GITHUB_TOKEN="$GITHUB_TOKEN" gh pr create \
+     --title "[Component] What was implemented" \
+     --body "$(cat /tmp/pr_body.md)" \
+     --base develop \
+     --draft  # Remove this flag for a ready PR
+   ```
+
+3. Comment on or update an existing PR:
+   ```bash
+   # Add a comment to a PR
+   GITHUB_TOKEN="$GITHUB_TOKEN" gh pr comment 3 --body "Created issue #4 to track this item"
+
+   # Update PR description using a temporary file
+   cat > /tmp/updated_pr.md << 'EOL'
+   ## Updated Component Description
+   New content for PR body
+   EOL
+
+   GITHUB_TOKEN="$GITHUB_TOKEN" gh pr edit 3 --body "$(cat /tmp/updated_pr.md)"
    ```
 
 ### 6. Code Review
@@ -272,6 +300,47 @@ git config commit.template .github/commit-template.txt
 2. Create an issue for each distinct component or bug
 3. Include clear acceptance criteria in each issue
 
+#### Creating Detailed Issues via CLI
+
+For detailed issues with formatting, use the temporary file approach with GitHub CLI:
+
+```bash
+# 1. Create a temporary file with the issue description
+cat > /tmp/issue_body.md << 'EOL'
+## Problem Description
+
+Detailed description of the issue using Markdown formatting.
+
+### Steps to Reproduce
+1. First step
+2. Second step
+3. Third step
+
+### Expected Behavior
+What should happen.
+
+### Actual Behavior
+What actually happens.
+
+## Technical Details
+```bash
+# Example code or command output
+```
+
+## Proposed Solution
+Detailed explanation of the solution.
+EOL
+
+# 2. Create the issue using the temporary file
+source ~/.env  # Make sure GITHUB_TOKEN is available
+GITHUB_TOKEN="$GITHUB_TOKEN" gh issue create \
+  --title "Comprehensive issue title" \
+  --body "$(cat /tmp/issue_body.md)" \
+  --label "enhancement,bug"  # Comma-separated labels
+```
+
+This approach avoids issues with escaping special characters and command line limitations.
+
 ### Issue Structure
 
 ```markdown
@@ -298,6 +367,32 @@ Standardize issues with labels:
 - `documentation` - Documentation-only changes
 - `test` - Test-related changes
 - `priority:high/medium/low` - Priority level
+- `needs-physical-access` - Issues requiring physical server access
+
+#### Creating Custom Labels
+
+To create new labels for better categorization of issues:
+
+```bash
+# Create a new label via GitHub CLI
+source ~/.env
+GITHUB_TOKEN="$GITHUB_TOKEN" gh api \
+  -X POST /repos/cmxela/thinkube/labels \
+  -f name='needs-physical-access' \
+  -f color='d73a4a' \
+  -f description='Issues requiring physical access to hardware'
+
+# Add a label to an existing issue
+GITHUB_TOKEN="$GITHUB_TOKEN" gh issue edit 123 --add-label "needs-physical-access"
+```
+
+Common colors for labels:
+- Red (#d73a4a): Urgent issues, bugs
+- Orange (#e99695): Important tasks
+- Yellow (#fbca04): Warnings, attention needed
+- Green (#0e8a16): Ready, completed
+- Blue (#1d76db): Information, documentation
+- Purple (#5319e7): Enhancement, feature
 
 ## AI-Assisted Workflow Best Practices
 

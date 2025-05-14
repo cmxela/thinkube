@@ -73,6 +73,22 @@ ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/20_join_wo
 ansible-playbook -i inventory/inventory.yaml ansible/[path/to/playbook].yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS domain_name=example.org admin_username=user"
 ```
 
+### Playbook Execution Policy
+
+- **Run for ALL hosts by default**: Always run playbooks for all hosts in the target group unless explicitly requested otherwise
+- **Avoid partial runs**: Do not use the `-l` (limit) flag to restrict playbook execution to specific hosts unless you have a specific reason and know the implications
+- **Complete infrastructure changes**: Each playbook should make complete, consistent changes across the entire infrastructure
+- **Testing vs. Production**: If you need to test a playbook on specific hosts first, clearly document this as a temporary testing approach, not the standard execution method
+- **Rollbacks should be complete**: When running rollback playbooks, apply them to all hosts where the original playbook was run
+
+```bash
+# AVOID (partial execution can lead to inconsistent infrastructure state):
+./scripts/run_ansible.sh ansible/00_initial_setup/30_reserve_gpus.yaml -l bcn1
+
+# PREFER (complete execution across all target hosts):
+./scripts/run_ansible.sh ansible/00_initial_setup/30_reserve_gpus.yaml
+```
+
 ### Linting and Syntax Checking
 ```bash
 # Lint (no sudo needed)
@@ -144,3 +160,110 @@ Playbooks are designed to:
 - User intervention should never be required to fix incomplete configurations
 - Always verify permissions, access rights, and functionality before considering a playbook complete
 - The impact of a playbook must be clearly documented, including prerequisite checks and follow-up validations
+
+## Storage Configuration Decisions
+
+### LXD Storage Driver
+- The LXD cluster will use ZFS as the storage driver (default in LXD) for its superior features:
+  - Built-in snapshot and rollback capabilities
+  - Better performance and data integrity guarantees
+  - Native compression
+- ZFS tools (zfsutils-linux) must be installed on all hosts before LXD initialization
+
+## GPU Passthrough Configuration
+
+### Current Status (2025-05-14)
+- Implemented GPU passthrough configuration playbooks:
+  - **30_reserve_gpus.yaml**: Configures GPUs for passthrough while keeping one for host OS
+  - **38_test_gpu_reservation.yaml**: Verifies GPU passthrough configuration after reboot
+  - **39_rollback_gpu_reservation.yaml**: Removes GPU passthrough configuration
+  - **39_rollback_gpu_reservation_08.yaml**: Rollback for older (08_reserve_gpus.yaml) configuration
+  - **60_configure_vm_gpu_passthrough.yaml**: Configures LXD VMs for GPU passthrough
+  - **65_configure_vm_gpu_drivers.yaml**: Installs NVIDIA drivers inside VMs
+  - **68_test_vm_gpu_passthrough.yaml**: Tests GPU passthrough functionality in VMs
+  - **69_rollback_vm_gpu_passthrough.yaml**: Removes GPU passthrough configuration from VMs
+
+- Configured systems:
+  - **bcn1**: Desktop system with 2× NVIDIA RTX 3090s with mixed configuration:
+    - One RTX 3090 (PCI 01:00.0) bound to vfio-pci for VM passthrough
+    - One RTX 3090 (PCI 08:00.0) kept with NVIDIA driver for host OS
+    - System also has AMD iGPU (Raphael) available
+    - **Status: Working correctly** - GPU at 01:00.0 bound to vfio-pci, AMD GPU used for display
+  - **bcn2**: Headless server with NVIDIA GTX 1080Ti 
+    - **Status: Working correctly** - GTX 1080Ti bound to vfio-pci
+
+- Configured VMs:
+  - **tkw1**: VM on bcn1 with RTX 3090 passthrough
+    - **Status: Working correctly** - NVIDIA drivers installed, GPU accessible
+  - **tkc**: VM on bcn2 with GTX 1080Ti passthrough
+    - **Status: Working correctly** - NVIDIA drivers installed, GPU accessible
+
+### Implementation Details
+- For systems with identical GPUs (like bcn1 with two RTX 3090s), we use:
+  - Systemd service that runs at boot to bind specific PCI slots to vfio-pci
+  - Direct driver_override method instead of vfio-pci kernel module parameters
+  - Only blacklist nouveau (open source NVIDIA driver), not the proprietary NVIDIA driver
+- For systems with different GPUs, simpler vendor:device ID blacklisting works well
+
+### Mixed GPU Setup (bcn1)
+For bcn1's mixed GPU configuration:
+1. A systemd service (vfio-bind-01-00.0.service) runs at boot time
+2. The service executes a script that:
+   - Loads vfio kernel modules
+   - Unbinds any existing driver from the 01:00.0 PCI slot
+   - Sets driver_override to vfio-pci for that specific slot
+   - Forces a bind to vfio-pci
+   - Also binds the associated audio device (01:00.1) to vfio-pci
+3. This allows selective binding of one RTX 3090 while leaving the other available to the host
+
+### Audio Device Handling
+For proper GPU passthrough, both the GPU and its associated audio device must be properly bound to vfio-pci:
+1. The vfio-bind.sh script handles binding main GPU devices
+2. A new vfio-bind-audio.sh script is used to specifically handle audio components
+3. A udev rule (vfio-pci-audio.rules) is created to:
+   - Detect when GPU audio devices are added to the system
+   - Trigger the audio binding script automatically
+   - Prevent the snd_hda_intel driver from claiming GPU audio devices
+4. This ensures complete IOMMU group passthrough which is required for NVIDIA GPUs
+
+### VM GPU Configuration
+When configuring VMs for GPU passthrough:
+1. Use the LXD device config format: `lxc config device add <vm> gpu pci address=XX:XX.X`
+2. For NVIDIA GPUs, both the primary device and audio device must be passed through
+3. The 65_configure_vm_gpu_drivers.yaml playbook handles:
+   - Installing appropriate NVIDIA drivers inside the VM
+   - Setting up CUDA development tools
+   - Properly loading kernel modules
+   - Pinning package versions to prevent unwanted updates
+4. For Ubuntu 24.04 (Noble) VMs, PPA management requires special handling
+
+### Improved Test Playbook
+The test playbook (38_test_gpu_reservation.yaml) has been enhanced to:
+1. Support mixed GPU setups like bcn1 with special handling for IOMMU group binding
+2. Use multiple methods to detect IOMMU enablement:
+   - Checking kernel logs (dmesg)
+   - Examining kernel parameters
+   - Verifying vfio-pci module loading
+   - Checking if GPUs are actually bound to vfio-pci
+3. Explicitly convert numeric values to integers for reliable comparison
+4. Provide detailed diagnostics for troubleshooting
+
+### Verification After Configuration
+Verify GPU passthrough with:
+```bash
+# Check host GPU binding
+./scripts/run_ansible.sh ansible/00_initial_setup/38_test_gpu_reservation.yaml
+
+# Check VFIO binding manually if needed
+./scripts/run_ssh_command.sh bcn1 "lspci -nnk | grep -A3 NVIDIA"
+./scripts/run_ssh_command.sh bcn1 "systemctl status vfio-bind*"
+./scripts/run_ssh_command.sh bcn2 "lspci -nnk | grep -A3 NVIDIA"
+
+# Check VM GPU availability 
+./scripts/run_ssh_command.sh tkw1 "nvidia-smi"
+./scripts/run_ssh_command.sh tkc "nvidia-smi"
+
+# Check CUDA functionality
+./scripts/run_ssh_command.sh tkw1 "nvcc --version"
+./scripts/run_ssh_command.sh tkc "nvcc --version"
+```

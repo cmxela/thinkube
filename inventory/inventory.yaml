@@ -4,6 +4,7 @@ all:
   vars:
     domain_name: thinkube.com
     admin_username: admin
+    system_username: thinkube
     ansible_python_interpreter: /usr/bin/python3
     ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
     home: "{{ lookup('env', 'HOME') }}"
@@ -11,8 +12,11 @@ all:
     # Network configuration
     network_cidr: "192.168.1.0/24"  # LAN subnet
     network_gateway: "192.168.1.1"  # Default gateway for LAN
+    internal_gateway: "192.168.100.1"  # Internal network gateway (lxdbr0)
     zerotier_network_id: "{{ lookup('env', 'ZEROTIER_NETWORK_ID') }}"
     zerotier_cidr: "192.168.191.0/24"  # ZeroTier subnet
+    dns_servers: ["8.8.8.8", "8.8.4.4"]  # Default DNS servers
+    dns_search_domains: ["thinkube.com", "kn.thinkube.com"]  # DNS search domains
 
   children:
     # Hardware architecture groups
@@ -24,7 +28,6 @@ all:
             bcn2:
             tkc:
             tkw1:
-            tkw2:
             dns1:
         arm64:
           hosts: {}
@@ -79,7 +82,6 @@ all:
         bcn2:
         tkc:  # We want the controller accessible via ZeroTier
         tkw1: # Worker nodes need ZeroTier too for cluster communication
-        tkw2: # Worker nodes need ZeroTier too for cluster communication
         dns1:  # DNS server needs ZeroTier access
 
     # LXD Containers - these will be created by the playbooks
@@ -134,19 +136,6 @@ all:
                   gpu_type: "RTX 3090"
                   pci_slot: "01:00.0"  # Using PCI slot format for RTX 3090
                 
-                tkw2:
-                  parent_host: bcn1
-                  memory: "48GB"
-                  cpu_cores: 12
-                  disk_size: "700GB"
-                  arch: x86_64
-                  lan_ip: 192.168.1.112  # External IP (br0)
-                  internal_ip: 192.168.100.12  # Internal IP (lxdbr0)
-                  zerotier_ip: 192.168.191.112
-                  gpu_passthrough: true
-                  gpu_type: "RTX 3090"
-                  pci_slot: "08:00.0"  # Using PCI slot format for RTX 3090
-                
                 # Future ARM worker (commented out)
                 # tkw3:
                 #   parent_host: dgx1
@@ -170,14 +159,13 @@ all:
         microk8s_workers:
           hosts:
             tkw1:
-            tkw2:
+            bcn1:  # Baremetal worker with direct GPU access
             
-    # Group for containers that need GPU passthrough
-    gpu_passthrough_containers:
+    # Group for VMs that need GPU passthrough
+    gpu_passthrough_vms:
       hosts:
         tkc:
         tkw1:
-        tkw2:
     
     # DNS servers
     dns:
@@ -201,6 +189,10 @@ all:
           - name: tkw1
             gpu_type: "RTX 3090"
             pci_slot: "01:00.0"  
-          - name: tkw2
-            gpu_type: "RTX 3090"
-            pci_slot: "08:00.0"
+        
+    # Baremetal node GPU configuration
+    baremetal_gpus:
+      vars:
+        bcn1:
+          gpu_type: "RTX 3090"
+          gpu_device: "/dev/nvidia0"

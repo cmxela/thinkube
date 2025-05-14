@@ -1,36 +1,227 @@
 ---
 # 20_setup_lxd_profiles.yaml - Create LXD profiles for VM configuration
-# Run with: ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
+#
+# Purpose:
+#   Creates and configures LXD profiles required for container and VM deployment.
+#   Defines profiles for network configuration, resource limits, and GPU passthrough.
+#
+# Requirements:
+#   - LXD must be installed and initialized
+#   - Network bridges (br0, lxdbr0) must be configured
+#
+# Variables:
+#   Required (from inventory):
+#     - lxd_containers: Container definitions with resource allocations
+#     - gpu_passthrough_vms: VMs that need GPU passthrough
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
 
-- name: Create LXD profiles for VM configuration
-  hosts: baremetal
-  become: true
+- name: Create LXD profiles for VM and container configuration
+  hosts: management  # Focus on management host instead of all baremetal
   gather_facts: true
-  
+  become: false  # Use become only at task level when necessary
+
+  # All installation-specific variables must be defined in inventory
+  vars:
+    # Define LXD profile names
+    lxd_required_profiles:
+      - "container"
+      - "vm-base"
+      - "vm-networks"
+    lxd_gpu_profile_name: "gpu-passthrough"
+    
   tasks:
-    # Create profiles on all baremetal hosts
+    # Verify all required variables exist before proceeding
+    - name: Verify required installation-specific variables exist
+      ansible.builtin.assert:
+        that:
+          - domain_name is defined and domain_name | length > 0
+          - network_gateway is defined
+          - groups['lxd_containers'] is defined
+          - groups['gpu_passthrough_vms'] is defined
+        fail_msg: |
+          ERROR: Missing Required Installation-Specific Variables
+
+          DETAILS:
+          - The following variables must be defined in inventory:
+            - domain_name: {% if domain_name is defined %}✓{% else %}✗ missing{% endif %}
+            - network_gateway: {% if network_gateway is defined %}✓{% else %}✗ missing{% endif %}
+            - lxd_containers group: {% if groups['lxd_containers'] is defined %}✓{% else %}✗ missing{% endif %}
+            - gpu_passthrough_vms group: {% if groups['gpu_passthrough_vms'] is defined %}✓{% else %}✗ missing{% endif %}
+
+          REQUIRED ACTION:
+          - Add missing variables to your inventory file at inventory/inventory.yaml
+          - Ensure required groups are defined in the inventory
+
+          REFERENCE: See docs/architecture/VARIABLE_HANDLING.md
+        success_msg: "✓ All required installation-specific variables found in inventory"
+
+    # Verify all VMs in inventory have required configuration
+    - name: Verify VM-specific configuration variables
+      ansible.builtin.assert:
+        that:
+          - hostvars[vm_name]['cpu_cores'] is defined
+          - hostvars[vm_name]['memory'] is defined
+          - hostvars[vm_name]['disk_size'] is defined
+          - hostvars[vm_name]['lan_ip'] is defined
+          - hostvars[vm_name]['internal_ip'] is defined
+        fail_msg: |
+          ERROR: Missing VM Configuration Variables
+
+          DETAILS:
+          - The VM '{{ vm_name }}' is missing required configuration variables:
+            - cpu_cores: {% if hostvars[vm_name]['cpu_cores'] is defined %}✓{% else %}✗ missing{% endif %}
+            - memory: {% if hostvars[vm_name]['memory'] is defined %}✓{% else %}✗ missing{% endif %}
+            - disk_size: {% if hostvars[vm_name]['disk_size'] is defined %}✓{% else %}✗ missing{% endif %}
+            - lan_ip: {% if hostvars[vm_name]['lan_ip'] is defined %}✓{% else %}✗ missing{% endif %}
+            - internal_ip: {% if hostvars[vm_name]['internal_ip'] is defined %}✓{% else %}✗ missing{% endif %}
+
+          REQUIRED ACTION:
+          - Add missing variables to the VM definition in inventory/inventory.yaml
+
+          REFERENCE: See docs/architecture/VARIABLE_HANDLING.md
+        success_msg: "✓ VM '{{ vm_name }}' has all required configuration"
+      loop: "{{ groups['lxd_containers'] }}"
+      loop_control:
+        loop_var: vm_name
+
+    - name: Display setup intro message
+      ansible.builtin.debug:
+        msg: >-
+
+          ═════════════════════════════════════════════════════════
+          🚀 Setting up LXD Profiles ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+
+          Creating and configuring LXD profiles for containers and VMs.
+          These profiles define networking, resources, and GPU settings.
+
+          ═════════════════════════════════════════════════════════
+    
+    # First verify LXD is properly installed and running
+    - name: Verify LXD is installed
+      ansible.builtin.command: lxc --version
+      register: lxd_version
+      changed_when: false
+    
+    - name: Display LXD version
+      ansible.builtin.debug:
+        msg: "LXD version: {{ lxd_version.stdout }}"
+    
+    - name: Verify LXD is running
+      ansible.builtin.command: snap services lxd
+      register: lxd_status
+      changed_when: false
+      
+    - name: Verify LXD service is active
+      ansible.builtin.assert:
+        that:
+          - "'active' in lxd_status.stdout or 'running' in lxd_status.stdout"
+        fail_msg: |
+          LXD service is not running.
+          Please initialize LXD before running this playbook.
+          Service status: {{ lxd_status.stdout }}
+        success_msg: "✓ LXD service is running properly"
+    
+    # Implement profile creation using block to handle failures properly
     - name: Create and configure LXD profiles
       block:
-        # Check LXD status
-        - name: Verify LXD is running
-          ansible.builtin.command: snap services lxd
-          register: lxd_status
-          changed_when: false
+        # Set first VM variable right at the beginning
+        - name: Get first VM from inventory
+          ansible.builtin.set_fact:
+            first_vm: "{{ groups['lxd_containers'][0] }}"
+        # 1. Container profile first
+        - name: Create container profile
+          ansible.builtin.command: lxc profile create container
+          register: container_profile_create
+          changed_when: container_profile_create.rc == 0
+          failed_when: container_profile_create.rc != 0 and "already exists" not in container_profile_create.stderr
         
-        - name: Display LXD status
-          ansible.builtin.debug:
-            msg: "LXD status: {{ lxd_status.stdout }}"
+        # Use the first VM's configuration as a reference for the container profile
+        - name: Configure container profile
+          ansible.builtin.copy:
+            dest: /tmp/container-profile.yaml
+            content: |
+              name: container
+              description: "Base profile for containers"
+              config:
+                limits.cpu: "{{ hostvars[first_vm]['cpu_cores'] | string }}"
+                limits.memory: "{{ hostvars[first_vm]['memory'] }}"
+                limits.memory.enforce: "hard"
+                security.nesting: "true"
+                boot.autostart: "true"
+              devices: {}
+            mode: '0644'
+            
+        - name: Apply container profile
+          ansible.builtin.shell: cat /tmp/container-profile.yaml | lxc profile edit container
+          register: container_profile_edit
+          changed_when: container_profile_edit.rc == 0
+          
+        # 2. VM base profile
+        - name: Create VM base profile
+          ansible.builtin.command: lxc profile create vm-base
+          register: vm_base_profile_create
+          changed_when: vm_base_profile_create.rc == 0
+          failed_when: vm_base_profile_create.rc != 0 and "already exists" not in vm_base_profile_create.stderr
         
-        # Create vm-networks profile
+        # Use the first VM's configuration for the VM base profile
+        - name: Configure VM base profile
+          ansible.builtin.copy:
+            dest: /tmp/vm-base-profile.yaml
+            content: |
+              name: vm-base
+              description: "Base profile for virtual machines"
+              config:
+                limits.cpu: "{{ hostvars[first_vm]['cpu_cores'] | string }}"
+                limits.memory: "{{ hostvars[first_vm]['memory'] }}"
+                limits.memory.enforce: "hard"
+                security.secureboot: "false"
+                boot.autostart: "true"
+              devices: {}
+            mode: '0644'
+            
+        - name: Apply VM base profile
+          ansible.builtin.shell: cat /tmp/vm-base-profile.yaml | lxc profile edit vm-base
+          register: vm_base_profile_edit
+          changed_when: vm_base_profile_edit.rc == 0
+          
+        # 3. VM networks profile
         - name: Create VM networks profile
           ansible.builtin.command: lxc profile create vm-networks
-          register: profile_create
-          changed_when: profile_create.rc == 0
-          failed_when: profile_create.rc != 0 and "already exists" not in profile_create.stderr
+          register: vm_networks_profile_create
+          changed_when: vm_networks_profile_create.rc == 0
+          failed_when: vm_networks_profile_create.rc != 0 and "already exists" not in vm_networks_profile_create.stderr
         
+        # Use VM configuration from the first VM in inventory to identify bridge interfaces
+        - name: Verify VM is properly defined
+          ansible.builtin.debug:
+            msg: "Using VM '{{ first_vm }}' for network configuration"
+
+        - name: Verify VM network interfaces are valid
+          ansible.builtin.assert:
+            that:
+              - hostvars[first_vm]['internal_ip'] is defined
+              - hostvars[first_vm]['lan_ip'] is defined
+            fail_msg: |
+              ERROR: VM Network Configuration Missing
+
+              DETAILS:
+              - Cannot create network profiles because VM '{{ first_vm }}' is missing network configuration:
+                - internal_ip: {% if hostvars[first_vm]['internal_ip'] is defined %}✓{% else %}✗ missing{% endif %}
+                - lan_ip: {% if hostvars[first_vm]['lan_ip'] is defined %}✓{% else %}✗ missing{% endif %}
+
+              REQUIRED ACTION:
+              - Add missing network configuration to the VM definition in inventory/inventory.yaml
+
+              REFERENCE: See docs/architecture/20_lxd_setup/README.md
+
         - name: Configure VM networks profile
           ansible.builtin.copy:
-            dest: /tmp/vm-networks.yaml
+            dest: /tmp/vm-networks-profile.yaml
             content: |
               name: vm-networks
               description: "Network configuration for VMs"
@@ -50,96 +241,131 @@
             mode: '0644'
             
         - name: Apply VM networks profile
-          ansible.builtin.shell: cat /tmp/vm-networks.yaml | lxc profile edit vm-networks
-          register: profile_edit
-          changed_when: profile_edit.rc == 0
+          ansible.builtin.shell: cat /tmp/vm-networks-profile.yaml | lxc profile edit vm-networks
+          register: vm_networks_profile_edit
+          changed_when: vm_networks_profile_edit.rc == 0
           
-        # Create vm-resources profile
-        - name: Create VM resources profile
-          ansible.builtin.command: lxc profile create vm-resources
-          register: resource_profile_create
-          changed_when: resource_profile_create.rc == 0
-          failed_when: resource_profile_create.rc != 0 and "already exists" not in resource_profile_create.stderr
-        
-        - name: Configure VM resources profile
-          ansible.builtin.copy:
-            dest: /tmp/vm-resources.yaml
-            content: |
-              name: vm-resources
-              description: "Resource limits for VMs"
-              config:
-                limits.cpu: "4"
-                limits.memory: "4GB"
-                limits.memory.enforce: "hard"
-                security.secureboot: "false"
-                boot.autostart: "true"
-              devices: {}
-            mode: '0644'
+        # 4. GPU passthrough profile
+        - name: Check if any containers need GPU passthrough
+          ansible.builtin.set_fact:
+            need_gpu_profile: >-
+              {{ groups['gpu_passthrough_vms'] is defined and 
+              (groups['gpu_passthrough_vms'] | length > 0) }}
             
-        - name: Apply VM resources profile
-          ansible.builtin.shell: cat /tmp/vm-resources.yaml | lxc profile edit vm-resources
-          register: resource_profile_edit
-          changed_when: resource_profile_edit.rc == 0
-          
-        # Create vm-gpu profile
-        - name: Create VM GPU profile
-          ansible.builtin.command: lxc profile create vm-gpu
-          register: gpu_profile_create
-          changed_when: gpu_profile_create.rc == 0
-          failed_when: gpu_profile_create.rc != 0 and "already exists" not in gpu_profile_create.stderr
+        - name: Create GPU passthrough profile
+          ansible.builtin.command: lxc profile create gpu-passthrough
+          register: gpu_passthrough_profile_create
+          changed_when: gpu_passthrough_profile_create.rc == 0
+          failed_when: gpu_passthrough_profile_create.rc != 0 and "already exists" not in gpu_passthrough_profile_create.stderr
+          when: need_gpu_profile | default(false)
         
-        - name: Configure VM GPU profile
+        - name: Configure GPU passthrough profile
           ansible.builtin.copy:
-            dest: /tmp/vm-gpu.yaml
+            dest: /tmp/gpu-passthrough-profile.yaml
             content: |
-              name: vm-gpu
-              description: "GPU passthrough for VMs"
+              name: gpu-passthrough
+              description: "GPU passthrough for containers and VMs"
               config:
                 nvidia.driver.capabilities: "all"
                 nvidia.runtime: "true"
               devices: {}
             mode: '0644'
+          when: need_gpu_profile | default(false)
             
-        - name: Apply VM GPU profile
-          ansible.builtin.shell: cat /tmp/vm-gpu.yaml | lxc profile edit vm-gpu
-          register: gpu_profile_edit
-          changed_when: gpu_profile_edit.rc == 0
+        - name: Apply GPU passthrough profile
+          ansible.builtin.shell: cat /tmp/gpu-passthrough-profile.yaml | lxc profile edit gpu-passthrough
+          register: gpu_passthrough_profile_edit
+          changed_when: gpu_passthrough_profile_edit.rc == 0
+          when: need_gpu_profile | default(false)
           
+      rescue:
+        - name: Display profile creation error
+          ansible.builtin.debug:
+            msg: >-
+              
+              ═════════════════════════════════════════════════════════
+              ✗ LXD Profile Creation Failed ({{ inventory_hostname }})
+              ═════════════════════════════════════════════════════════
+              
+              Failed to create or configure one or more LXD profiles.
+              
+              REQUIRED ACTION:
+                1. Check error messages above
+                2. Ensure LXD is properly initialized
+                3. Verify network bridges (br0, lxdbr0) exist
+              
+              ═════════════════════════════════════════════════════════
+              
+        - name: Fail with meaningful error message
+          ansible.builtin.fail:
+            msg: "LXD profile creation failed. See debug messages above for details."
+            
+      always:
         # Clean up temporary files
         - name: Clean up temporary files
           ansible.builtin.file:
             path: "{{ item }}"
             state: absent
           loop:
-            - /tmp/vm-networks.yaml
-            - /tmp/vm-resources.yaml
-            - /tmp/vm-gpu.yaml
+            - /tmp/container-profile.yaml
+            - /tmp/vm-base-profile.yaml
+            - /tmp/vm-networks-profile.yaml
+            - /tmp/gpu-passthrough-profile.yaml
     
-    # Verify profiles on all hosts
+    # Verify profiles were created successfully
     - name: List LXD profiles
-      ansible.builtin.command: lxc profile list
+      ansible.builtin.command: lxc profile list --format csv
       register: profile_list
       changed_when: false
-      
-    - name: Display profiles
-      ansible.builtin.debug:
-        msg: "LXD profiles on {{ inventory_hostname }}: {{ profile_list.stdout }}"
+
+    - name: Parse list of profiles
+      ansible.builtin.set_fact:
+        parsed_profiles: "{{ profile_list.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+
+    - name: Build list of expected profiles
+      ansible.builtin.set_fact:
+        expected_profiles:
+          - "container"
+          - "vm-base"
+          - "vm-networks"
+
+    - name: Add GPU profile to expected profiles if needed
+      ansible.builtin.set_fact:
+        expected_profiles: "{{ expected_profiles + ['gpu-passthrough'] }}"
+      when: need_gpu_profile | default(false)
+        
+    - name: Verify all expected profiles exist
+      ansible.builtin.assert:
+        that:
+          - "profile_name in parsed_profiles"
+        fail_msg: "Expected profile '{{ profile_name }}' is missing"
+        success_msg: "✓ Profile '{{ profile_name }}' exists"
+      loop: "{{ expected_profiles }}"
+      loop_control:
+        loop_var: profile_name
     
     # Display completion message
     - name: Display completion message
       ansible.builtin.debug:
-        msg: |
+        msg: >-
+          
           ════════════════════════════════════════════════════════════════════════
-          ✅ LXD Profiles Created Successfully
+          ✅ LXD Profiles Created Successfully ({{ inventory_hostname }})
           ════════════════════════════════════════════════════════════════════════
           
           Created profiles:
-            - vm-networks: Network configuration for VMs
-            - vm-resources: Resource limits for VMs
-            - vm-gpu: GPU passthrough configuration
+            ✓ container: Base profile for containers
+            ✓ vm-base: Base profile for virtual machines
+            ✓ vm-networks: Network configuration for VMs
+          {% if need_gpu_profile | default(false) %}
+            ✓ gpu-passthrough: GPU passthrough configuration
+          {% endif %}
           
           NEXT STEPS:
             Run the VM creation playbook:
-            $ ansible-playbook -i inventory/inventory.yaml ansible/vm_deployment/20_create_microk8s_vms.yaml
+            $ ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30_create_vms.yaml
+            
+            Or continue with test playbook:
+            $ ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/28_test_vm_creation.yaml
           
           ════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,168 @@
+---
+# 29_rollback_lxd_profiles.yaml - Rollback LXD profiles
+#
+# Purpose:
+#   Safely removes LXD profiles and performs cleanup. This is the rollback playbook 
+#   for the 20_setup_lxd_profiles.yaml playbook.
+#
+# Requirements:
+#   - LXD must be installed and initialized
+#   - No VMs should be using the profiles (will be checked)
+#
+# Variables:
+#   None
+#
+# Run with:
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/29_rollback_lxd_profiles.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/29_rollback_lxd_profiles.yaml
+
+- name: Rollback LXD profiles
+  hosts: management
+  gather_facts: true
+  become: false
+  
+  vars:
+    vm_profiles:
+      - "container"
+      - "vm-base"
+      - "vm-networks"
+      - "gpu-passthrough"
+  
+  tasks:
+    - name: Display rollback intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔄 Rolling Back LXD Profiles ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook will remove LXD profiles if they are not in use.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Phase 1: Check if profiles exist
+    - name: Verify profile existence
+      block:
+        # Get list of existing profiles
+        - name: Get list of existing profiles
+          ansible.builtin.command: lxc profile list --format csv
+          register: profile_list
+          changed_when: false
+          
+        - name: Parse list of profiles
+          ansible.builtin.set_fact:
+            parsed_profiles: "{{ profile_list.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+            
+        - name: Build list of profiles to remove
+          ansible.builtin.set_fact:
+            profiles_to_remove: "{{ vm_profiles | select('in', parsed_profiles) | list }}"
+            
+        - name: Display profiles to remove
+          ansible.builtin.debug:
+            msg: "Profiles to remove: {{ profiles_to_remove | join(', ') }}"
+      
+    # Phase 2: Check if profiles are in use
+    - name: Check profile usage
+      block:
+        # Get list of VMs and containers
+        - name: Get list of VMs and containers
+          ansible.builtin.command: lxc list
+          register: container_list
+          changed_when: false
+          
+        # Check individual profile usage
+        - name: Check if profiles are in use
+          ansible.builtin.command: lxc profile show {{ profile_name }}
+          register: profile_usage
+          changed_when: false
+          loop: "{{ profiles_to_remove }}"
+          loop_control:
+            loop_var: profile_name
+          
+        # Parse profile usage
+        - name: Determine if profiles are in use
+          ansible.builtin.set_fact:
+            profiles_in_use: "{{ profiles_in_use | default([]) + [profile_usage.results[idx].item] 
+                             if 'used_by:' in profile_usage.results[idx].stdout 
+                             and not ('used_by: []' in profile_usage.results[idx].stdout
+                             or 'used_by: []\n' in profile_usage.results[idx].stdout)
+                             else profiles_in_use | default([]) }}"
+          loop: "{{ range(0, profile_usage.results | length) | list }}"
+          loop_control:
+            index_var: idx
+          when: profile_usage.results is defined
+          
+        - name: Display profiles in use
+          ansible.builtin.debug:
+            msg: "Profiles in use: {{ profiles_in_use | default([]) | join(', ') }}"
+          when: profiles_in_use is defined and profiles_in_use | length > 0
+          
+        # Update profiles to remove (exclude those in use)
+        - name: Update profiles to remove (exclude those in use)
+          ansible.builtin.set_fact:
+            profiles_to_remove: "{{ profiles_to_remove | difference(profiles_in_use | default([])) }}"
+            
+        - name: Display updated profiles to remove
+          ansible.builtin.debug:
+            msg: "Profiles to remove (not in use): {{ profiles_to_remove | join(', ') }}"
+      when: profiles_to_remove | length > 0
+      
+    # Phase 3: Remove profiles
+    - name: Remove LXD profiles
+      block:
+        - name: Remove profile
+          ansible.builtin.command: lxc profile delete {{ profile_name }}
+          register: profile_delete
+          failed_when: profile_delete.rc != 0
+          changed_when: profile_delete.rc == 0
+          loop: "{{ profiles_to_remove }}"
+          loop_control:
+            loop_var: profile_name
+            
+        - name: Display profiles removed
+          ansible.builtin.debug:
+            msg: "Successfully removed profiles: {{ profiles_to_remove | join(', ') }}"
+      when: profiles_to_remove | length > 0
+      
+    # Phase 4: Display warning if profiles could not be removed
+    - name: Display warning for profiles in use
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ⚠️ Some profiles could not be removed ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          The following profiles are in use and cannot be removed:
+          {{ profiles_in_use | join(', ') }}
+          
+          REQUIRED ACTION:
+            To remove these profiles, first delete all VMs using them:
+            $ ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/39_rollback_vm_creation.yaml
+          
+          ═════════════════════════════════════════════════════════
+      when: profiles_in_use is defined and profiles_in_use | length > 0
+      
+    # Final completion message
+    - name: Display rollback completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ════════════════════════════════════════════════════════════════════════
+          ✅ LXD Profiles Rollback Completed ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════════════════════
+          
+          SUMMARY:
+          {% if profiles_to_remove | length > 0 %}
+            ✓ Removed profiles: {{ profiles_to_remove | join(', ') }}
+          {% else %}
+            ℹ️ No profiles were removed
+          {% endif %}
+          
+          {% if profiles_in_use is defined and profiles_in_use | length > 0 %}
+            ⚠️ Profiles still in use: {{ profiles_in_use | join(', ') }}
+          {% endif %}
+          
+          ════════════════════════════════════════════════════════════════════════

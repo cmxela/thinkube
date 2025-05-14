@@ -1,0 +1,66 @@
+---
+# Tasks to configure users and SSH keys for a single VM
+# This file is included by 30-3_configure_vm_users.yaml
+
+- name: Display VM information
+  ansible.builtin.debug:
+    msg: "Configuring user for VM: {{ current_vm }}"
+
+# Create system user
+- name: Create system user ({{ current_vm }})
+  ansible.builtin.command: >
+    lxc exec {{ current_vm }} -- useradd -m -s /bin/bash -G sudo {{ system_username }}
+  register: user_result
+  failed_when: user_result.rc != 0 and 'already exists' not in user_result.stderr
+  changed_when: user_result.rc == 0
+  async: 60
+  poll: 5
+
+# Set temporary password for system user
+- name: Set password for system user ({{ current_vm }})
+  ansible.builtin.command: >
+    lxc exec {{ current_vm }} -- bash -c "echo '{{ system_username }}:{{ system_username }}' | chpasswd"
+  register: passwd_result
+  changed_when: true
+  async: 30
+  poll: 5
+
+# Configure sudo access
+- name: Configure passwordless sudo for system user ({{ current_vm }})
+  ansible.builtin.shell: |
+    # Create sudoers file for system user
+    lxc exec {{ current_vm }} -- bash -c "echo '{{ system_username }} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/{{ system_username }}"
+    
+    # Set secure permissions on the file
+    lxc exec {{ current_vm }} -- chmod 0440 /etc/sudoers.d/{{ system_username }}
+  register: sudo_result
+  changed_when: true
+  async: 30
+  poll: 5
+
+# Create .ssh directory
+- name: Create .ssh directory for system user ({{ current_vm }})
+  ansible.builtin.command: >
+    lxc exec {{ current_vm }} -- bash -c "mkdir -p /home/{{ system_username }}/.ssh && chmod 700 /home/{{ system_username }}/.ssh && chown {{ system_username }}:{{ system_username }} /home/{{ system_username }}/.ssh"
+  register: ssh_dir_result
+  changed_when: true
+  async: 30
+  poll: 5
+
+# Copy SSH public key to VM
+- name: Copy SSH public key to VM ({{ current_vm }})
+  ansible.builtin.shell: |
+    # Check if the public key already exists in authorized_keys
+    lxc exec {{ current_vm }} -- bash -c "[ -f /home/{{ system_username }}/.ssh/authorized_keys ] && grep -q \"$(cat {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}.pub)\" /home/{{ system_username }}/.ssh/authorized_keys" && \
+      echo "Key already exists" && exit 0
+    
+    # Copy the public key to VM
+    lxc file push {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}.pub {{ current_vm }}/tmp/{{ ssh_key_name }}.pub
+    
+    # Add it to authorized_keys in the VM
+    lxc exec {{ current_vm }} -- bash -c "cat /tmp/{{ ssh_key_name }}.pub >> /home/{{ system_username }}/.ssh/authorized_keys && \
+                                          chown {{ system_username }}:{{ system_username }} /home/{{ system_username }}/.ssh/authorized_keys && \
+                                          chmod 600 /home/{{ system_username }}/.ssh/authorized_keys && \
+                                          rm /tmp/{{ ssh_key_name }}.pub"
+  register: key_copy
+  changed_when: "'Key already exists' not in key_copy.stdout"

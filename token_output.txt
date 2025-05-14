@@ -1,0 +1,2 @@
+Loading environment variables from /home/thinkube/.env
+Using password authentication for SSH

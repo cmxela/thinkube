@@ -1,0 +1,22 @@
+network:
+  version: 2
+  ethernets:
+    enp5s0:
+      dhcp4: no
+      addresses: [{{ hostvars[vm_name]['internal_ip'] }}/24]
+      routes:
+        - to: default
+          via: {{ internal_gateway }}
+      nameservers:
+        addresses: {{ dns_servers }}
+        search: {{ dns_search_domains }}
+    enp6s0:
+      dhcp4: no
+      addresses: [{{ hostvars[vm_name]['lan_ip'] }}/24]
+      routes:
+        - to: default
+          via: {{ network_gateway }}
+      nameservers:
+        addresses: {{ dns_servers }}
+        search: {{ dns_search_domains }}
+  # ZeroTier interface will be configured separately

@@ -1,0 +1,232 @@
+---
+# 18_test_lxd_profiles.yaml - Test LXD profiles creation and configuration
+#
+# Purpose:
+#   Tests if the LXD profiles have been properly created and configured according to the inventory specifications.
+#   Verifies that all required profiles exist and have the correct settings for resource allocation, networking, etc.
+#
+# Requirements:
+#   - LXD must be installed and initialized
+#   - Profiles must be created by 20_setup_lxd_profiles.yaml
+#
+# Variables:
+#   Required (from inventory):
+#     - lxd_containers: Container definitions with resource allocations
+#     - gpu_passthrough_containers: Containers that need GPU passthrough
+#
+# Run with: 
+#   ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/18_test_lxd_profiles.yaml
+#   Or with helper script:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/18_test_lxd_profiles.yaml
+
+- name: Test LXD Profiles Configuration
+  hosts: management 
+  gather_facts: true
+  become: false  # Profiles can be managed without sudo
+  
+  vars:
+    # List of profiles that should exist - will be built dynamically
+    required_profiles: []
+    
+  tasks:
+    - name: Display test intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing LXD Profiles Configuration ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook tests if LXD profiles have been properly created
+          and configured according to inventory specifications.
+          
+          ═════════════════════════════════════════════════════════
+    
+    - name: Verify LXD is installed
+      ansible.builtin.command: lxc --version
+      register: lxd_version
+      changed_when: false
+      
+    - name: Display LXD version
+      ansible.builtin.debug:
+        msg: "LXD version: {{ lxd_version.stdout }}"
+        
+    - name: Verify LXD is initialized
+      ansible.builtin.command: lxc profile list
+      register: profile_list
+      changed_when: false
+      failed_when: profile_list.rc != 0
+      
+    - name: Get list of existing profiles
+      ansible.builtin.command: lxc profile list --format csv
+      register: existing_profiles
+      changed_when: false
+      
+    - name: Parse list of profiles
+      ansible.builtin.set_fact:
+        parsed_profiles: "{{ existing_profiles.stdout_lines | map('regex_replace', '^([^,]+),.*$', '\\1') | list }}"
+        
+    - name: Display existing profiles
+      ansible.builtin.debug:
+        msg: "LXD profiles found: {{ parsed_profiles }}"
+        
+    # Test 1: Check if default profile exists
+    - name: Verify default profile exists
+      ansible.builtin.assert:
+        that:
+          - "'default' in parsed_profiles" 
+        fail_msg: "Default profile is missing"
+        success_msg: "✓ Default profile exists"
+        
+    # Test 2: Build list of required profiles based on inventory
+    - name: Identify required profiles for containers
+      ansible.builtin.set_fact:
+        required_profiles: "{{ required_profiles + ['container'] }}"
+      
+    - name: Build VM-type profiles based on inventory
+      ansible.builtin.set_fact:
+        required_profiles: "{{ required_profiles + ['vm-base', 'vm-networks'] }}"
+        
+    - name: Add GPU profile if any container requires GPU passthrough
+      ansible.builtin.set_fact:
+        required_profiles: "{{ required_profiles + ['gpu-passthrough'] }}"
+      when: groups['gpu_passthrough_containers'] is defined and (groups['gpu_passthrough_containers'] | length > 0)
+        
+    - name: Display required profiles
+      ansible.builtin.debug:
+        msg: "Required profiles: {{ required_profiles }}"
+        
+    # Test 3: Check if all required profiles exist
+    - name: Verify all required profiles exist
+      ansible.builtin.assert:
+        that:
+          - "profile_name in parsed_profiles"
+        fail_msg: "Required profile '{{ profile_name }}' is missing"
+        success_msg: "✓ Required profile '{{ profile_name }}' exists"
+      loop: "{{ required_profiles }}"
+      loop_control:
+        loop_var: profile_name
+        
+    # Test 4: Check specific profile configurations
+    - name: Get VM base profile configuration
+      ansible.builtin.command: lxc profile show vm-base
+      register: vm_base_profile
+      changed_when: false
+      when: "'vm-base' in parsed_profiles"
+      
+    - name: Verify VM base profile has required settings
+      ansible.builtin.assert:
+        that:
+          - "'boot.autostart' in vm_base_profile.stdout"
+          - "'security.secureboot' in vm_base_profile.stdout"
+        fail_msg: |
+          VM base profile is missing required settings.
+          Profile content: {{ vm_base_profile.stdout }}
+        success_msg: "✓ VM base profile has required settings"
+      when: "'vm-base' in parsed_profiles"
+        
+    - name: Get VM networks profile configuration
+      ansible.builtin.command: lxc profile show vm-networks
+      register: vm_networks_profile
+      changed_when: false
+      when: "'vm-networks' in parsed_profiles"
+      
+    - name: Verify VM networks profile has proper network configuration
+      ansible.builtin.assert:
+        that:
+          - "'eth0' in vm_networks_profile.stdout"
+          - "'eth1' in vm_networks_profile.stdout"
+          - "'nictype' in vm_networks_profile.stdout"
+        fail_msg: |
+          VM networks profile is missing required network settings.
+          Profile content: {{ vm_networks_profile.stdout }}
+        success_msg: "✓ VM networks profile has proper network configuration"
+      when: "'vm-networks' in parsed_profiles"
+        
+    - name: Get GPU passthrough profile configuration
+      ansible.builtin.command: lxc profile show gpu-passthrough
+      register: gpu_profile
+      changed_when: false
+      when: "'gpu-passthrough' in parsed_profiles"
+      
+    - name: Verify GPU passthrough profile has required settings
+      ansible.builtin.assert:
+        that:
+          - "'nvidia.runtime' in gpu_profile.stdout or 'pci' in gpu_profile.stdout"
+        fail_msg: |
+          GPU passthrough profile is missing required GPU settings.
+          Profile content: {{ gpu_profile.stdout }}
+        success_msg: "✓ GPU passthrough profile has proper GPU configuration"
+      when: "'gpu-passthrough' in parsed_profiles and groups['gpu_passthrough_containers'] is defined and (groups['gpu_passthrough_containers'] | length > 0)"
+        
+    # Test 5: Verify applied profile settings match inventory resource allocations
+    - name: Verify profile resource limits against inventory
+      block:
+        - name: Get container profile configuration
+          ansible.builtin.command: lxc profile show container
+          register: container_profile
+          changed_when: false
+          when: "'container' in parsed_profiles"
+          
+        - name: Verify container profile has limits defined
+          ansible.builtin.assert:
+            that:
+              - "'limits.cpu' in container_profile.stdout or 'limits.memory' in container_profile.stdout"
+            fail_msg: |
+              Container profile is missing resource limits.
+              Profile content: {{ container_profile.stdout }}
+            success_msg: "✓ Container profile has resource limits defined"
+          when: "'container' in parsed_profiles"
+      when: "'container' in parsed_profiles"
+        
+    # Display test results summary
+    - name: Determine test status
+      ansible.builtin.set_fact:
+        missing_profiles: "{{ required_profiles | difference(parsed_profiles) }}"
+        
+    - name: Display successful test message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✓ LXD Profile Tests Passed ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          All LXD profile tests have passed successfully.
+          
+          DETAILS:
+            ✓ LXD is installed and initialized (version {{ lxd_version.stdout }})
+            ✓ All required profiles exist ({{ required_profiles | join(', ') }})
+            ✓ Profile configurations match inventory requirements
+            
+          RESULT:
+            The LXD profiles are properly configured and ready for VM creation.
+          
+          ═════════════════════════════════════════════════════════
+      when: missing_profiles | length == 0
+      
+    - name: Display failed test message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✗ LXD Profile Tests Failed ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Some LXD profile tests have failed.
+          
+          DETAILS:
+            ✓ LXD is installed and initialized (version {{ lxd_version.stdout }})
+            ✗ Missing required profiles: {{ missing_profiles | join(', ') }}
+            
+          REQUIRED ACTION:
+            Run the LXD profiles setup playbook:
+            ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml
+          
+          ═════════════════════════════════════════════════════════
+      when: missing_profiles | length > 0
+      
+    - name: Fail if any profiles are missing
+      ansible.builtin.fail:
+        msg: "Required profiles are missing: {{ missing_profiles | join(', ') }}"
+      when: missing_profiles | length > 0

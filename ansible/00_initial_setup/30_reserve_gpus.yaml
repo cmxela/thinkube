@@ -351,6 +351,52 @@
         mode: '0644'
       when: can_configure_passthrough
       
+    # Create audio unbinding configuration to prevent snd_hda_intel from binding to GPU audio devices
+    - name: Create audio unbinding configuration for NVIDIA GPU audio devices
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/nvidia-audio-unbind.conf
+        content: |
+          # Prevent snd_hda_intel from binding to NVIDIA GPU audio devices
+          # This ensures the audio components of passthrough GPUs stay bound to vfio-pci
+          
+          # Make snd_hda_intel load after vfio-pci to ensure vfio-pci claims the devices first
+          softdep snd_hda_intel pre: vfio-pci
+          
+          # Specific no_bind configuration for assigned audio devices
+          {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
+          {% for slot in assigned_pci_slots %}
+          {% set audio_slot = slot | replace('.0', '.1') %}
+          options snd_hda_intel id=GPU{{ loop.index }},{{ audio_slot }} no_bind=1
+          {% endfor %}
+          {% endif %}
+        mode: '0644'
+      when: >
+        can_configure_passthrough and
+        assigned_pci_slots is defined and
+        assigned_pci_slots | length > 0
+        
+    # Create udev rule to prevent audio devices from binding to snd_hda_intel
+    - name: Create udev rule for GPU audio devices
+      ansible.builtin.template:
+        src: templates/vfio-pci-audio.rules.j2
+        dest: /etc/udev/rules.d/80-vfio-pci-audio.rules
+        mode: '0644'
+      when: >
+        can_configure_passthrough and
+        assigned_pci_slots is defined and
+        assigned_pci_slots | length > 0
+        
+    # Create audio binding script for udev rule
+    - name: Create audio binding script for udev
+      ansible.builtin.template:
+        src: templates/vfio-bind-audio.sh.j2
+        dest: /usr/local/bin/vfio-bind-audio.sh
+        mode: '0755'
+      when: >
+        can_configure_passthrough and
+        assigned_pci_slots is defined and
+        assigned_pci_slots | length > 0
+      
     # Create dedicated binding scripts for specific PCI slots
     - name: Create dedicated VFIO binding script for each slot
       ansible.builtin.template:
@@ -530,6 +576,16 @@
           BusID: {{ xorg_busid | default('Not specified') }}
           {% else %}
           Not applicable (headless server)
+          {% endif %}
+          
+          ## CPU Type
+          {{ is_amd_cpu | ternary('AMD', 'Intel') }}
+          
+          ## Assigned PCI Slots
+          {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
+          {{ assigned_pci_slots | join(', ') }}
+          {% else %}
+          None specifically assigned
           {% endif %}
         mode: '0644'
     

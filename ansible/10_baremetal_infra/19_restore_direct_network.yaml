@@ -56,35 +56,66 @@
       ansible.builtin.debug:
         msg: "Network configuration backed up to /tmp/netplan_backup_{{ ansible_date_time.epoch }}/"
     
-    # Determine primary network interface
+    # Determine primary network interface using the same logic as setup_network.sh
     - name: Determine primary network interface
       ansible.builtin.shell: |
-        # First try from route info
-        PRIMARY_IFACE=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'dev \K\S+' | head -1)
+        # Get route information to determine interface (same as setup_network.sh)
+        ROUTE_INFO=$(ip route get 8.8.8.8 2>/dev/null)
         
-        # If using bridge, try to find physical interface
-        if [ "$PRIMARY_IFACE" = "{{ network_bridge_name }}" ]; then
-          # Look for physical interfaces that might be attached to bridge
-          PRIMARY_IFACE=$(ip -o link show | grep -v "lo\|{{ network_bridge_name }}\|veth\|docker" | head -1 | awk -F': ' '{print $2}')
+        # Extract interface and gateway from route info
+        IFACE=$(echo "$ROUTE_INFO" | grep -o 'dev [^ ]*' | sed 's/dev //')
+        GATEWAY=$(echo "$ROUTE_INFO" | grep -o 'via [^ ]*' | sed 's/via //')
+        
+        # If interface is the bridge, we need to find the underlying physical interface
+        if [ "$IFACE" = "{{ network_bridge_name }}" ]; then
+          # Look for enslaved physical interfaces
+          BRIDGE_SLAVES=$(bridge link show | grep "{{ network_bridge_name }}" | grep -o "dev [^ ]*" | sed 's/dev //')
+          
+          # Use the first slave device if available
+          if [ -n "$BRIDGE_SLAVES" ]; then
+            IFACE=$(echo "$BRIDGE_SLAVES" | head -1)
+            echo "Found physical interface $IFACE under bridge {{ network_bridge_name }}"
+          else
+            # For testing: If no slaves are found, just use first non-loopback interface
+            IFACE=$(ip -o link | grep -v "lo\|{{ network_bridge_name }}\|veth\|docker\|virbr\|tun\|tap" | grep "state" | head -1 | awk -F': ' '{print $2}' | cut -d '@' -f1 || echo "eth0")
+            echo "No bridge slaves found, using $IFACE"
+          fi
         fi
         
-        # If still no interface found, try more general approach
-        if [ -z "$PRIMARY_IFACE" ] || [ "$PRIMARY_IFACE" = "{{ network_bridge_name }}" ]; then
-          PRIMARY_IFACE=$(ip -o link show | grep -v "lo\|{{ network_bridge_name }}\|veth\|docker" | grep "state UP" | head -1 | awk -F': ' '{print $2}' || ip -o link show | grep -v "lo\|{{ network_bridge_name }}\|veth\|docker" | head -1 | awk -F': ' '{print $2}')
+        # If IFACE is still not set, fallback to finding the first non-loopback interface
+        if [ -z "$IFACE" ]; then
+          IFACE=$(ip -o link | grep -v "lo\|{{ network_bridge_name }}\|veth\|docker\|virbr\|tun\|tap" | grep "state" | head -1 | awk -F': ' '{print $2}' | cut -d '@' -f1 || echo "enp0s31f6")
+          echo "Fallback to first physical interface: $IFACE"
         fi
         
-        echo "$PRIMARY_IFACE"
-      register: primary_interface_result
+        # Output both detected interface and gateway
+        echo "INTERFACE=$IFACE"
+        echo "GATEWAY=$GATEWAY"
+      register: network_detection
       changed_when: false
       
-    - name: Set primary interface fact
+    # Debug detection output
+    - name: Debug network detection output
+      ansible.builtin.debug:
+        var: network_detection.stdout_lines
+      
+    # Extract interface directly as a fact
+    - name: Set network facts directly from detection
       ansible.builtin.set_fact:
-        primary_interface: "{{ primary_interface_result.stdout }}"
+        primary_interface: "{{ network_detection.stdout | regex_search('INTERFACE=([^\\n]+)') | regex_replace('INTERFACE=', '') }}"
+        gateway_ip: "{{ network_detection.stdout | regex_search('GATEWAY=([^\\n]+)') | regex_replace('GATEWAY=', '') }}"
+      
+    - name: Display detected network configuration
+      ansible.builtin.debug:
+        msg: >-
+          Detected configuration:
+          - Primary interface: {{ primary_interface }}
+          - Gateway IP: {{ gateway_ip }}
       
     - name: Verify primary interface was determined
       ansible.builtin.assert:
         that:
-          - primary_interface != ""
+          - primary_interface is defined and primary_interface != ""
           - primary_interface != network_bridge_name
         fail_msg: |
           ERROR: Could not determine primary physical network interface
@@ -106,17 +137,18 @@
       ansible.builtin.assert:
         that:
           - ansible_host is defined
-          - network_gateway is defined
+          - gateway_ip is defined
         fail_msg: |
           ERROR: Missing Required Variables
           
           DETAILS:
-          - The following variables must be defined in inventory:
+          - The following variables must be defined or detected:
             - ansible_host: {% if ansible_host is defined %}✓{% else %}✗ missing{% endif %}
-            - network_gateway: {% if network_gateway is defined %}✓{% else %}✗ missing{% endif %}
+            - gateway_ip: {% if gateway_ip is defined %}✓{% else %}✗ missing{% endif %}
           
           REQUIRED ACTION:
           - Add missing variables to your inventory file at inventory/inventory.yaml
+          - Or specify manually: -e "network_gateway=192.168.1.1"
     
     # Check if bridge interface exists
     - name: Check if bridge interface exists
@@ -139,7 +171,7 @@
       changed_when: bridge_delete.rc == 0
       failed_when: false
     
-    # Create direct network configuration with fixed IP
+    # Create direct network configuration with fixed IP (modeled after setup_network.sh)
     - name: Create netplan configuration with fixed IP
       ansible.builtin.template:
         src: simple-netplan.yaml.j2
@@ -147,10 +179,15 @@
         mode: '0600'
         owner: root
         group: root
-      vars:
-        interface_name: "{{ primary_interface }}"
-        ip_address: "{{ ansible_host }}"
-        gateway: "{{ network_gateway }}"
+        
+    # Also set permissions on any other netplan configs (as done in setup_network.sh)
+    - name: Secure permissions on all netplan configs
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: '0600'
+        owner: root
+        group: root
+      with_fileglob: "/etc/netplan/*.yaml"
       
     - name: Final warning before applying network changes
       ansible.builtin.debug:
@@ -161,6 +198,7 @@
           About to apply network changes:
           1. Remove bridge {{ network_bridge_name }} (if it exists)
           2. Configure interface {{ primary_interface }} with fixed IP {{ ansible_host }}
+          3. Set gateway to {{ gateway_ip }}
           
           YOUR SSH CONNECTION WILL BE DISRUPTED TEMPORARILY.
           

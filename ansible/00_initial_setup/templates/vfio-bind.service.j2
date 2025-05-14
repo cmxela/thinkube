@@ -3,14 +3,23 @@ Description=VFIO bind for PCI device {{ pci_slot }}
 Documentation=https://github.com/thinkube/thinkube
 DefaultDependencies=no
 After=local-fs.target
+After=systemd-modules-load.service
+After=sound.target
 Before=display-manager.service
 Before=graphical.target
+# Run after the sound subsystem is initialized so we can properly handle audio devices
+Conflicts=sound.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/vfio-bind-{{ pci_slot | replace(':', '-') }}.sh
 RemainAfterExit=yes
 Restart=no
+# Higher priority to override other kernel module loading
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=99
+# Add root capabilities explicitly
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE
 
 [Install]
 WantedBy=multi-user.target

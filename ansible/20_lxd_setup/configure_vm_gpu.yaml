@@ -1,0 +1,374 @@
+---
+# Tasks to configure GPU passthrough for a single VM
+# This file is included by 60_configure_vm_gpu_passthrough.yaml
+
+- name: Display VM information
+  ansible.builtin.debug:
+    msg: "Configuring GPU passthrough for VM: {{ current_vm }}"
+
+# Verify VM exists and gather its information
+- name: Check if VM exists ({{ current_vm }})
+  ansible.builtin.command: lxc info {{ current_vm }}
+  register: vm_check
+  failed_when: vm_check.rc != 0
+  changed_when: false
+  # Add async to prevent timeout
+  async: 120
+  poll: 5
+  
+# Check general VFIO binding status for all hosts
+- name: Check GPU VFIO binding status
+  ansible.builtin.shell: "echo \"Checking GPU VFIO binding status on {{ inventory_hostname }}\"\n  # Check for NVIDIA GPUs bound to vfio-pci\n  lspci -nnk | grep -A3 \"NVIDIA\" | grep -B1 \"vfio-pci\" || echo \"No NVIDIA GPUs bound to vfio-pci\"\n  \n  # Check for AMD GPUs bound to vfio-pci\n  lspci -nnk | grep -A3 \"AMD\" | grep -B1 \"vfio-pci\" || echo \"No AMD GPUs bound to vfio-pci\"\n  \n  # Check for VFIO and GPU modules\n  echo \"Loaded GPU-related kernel modules:\"\n  lsmod | grep -E \"vfio|nvidia|amd\" || echo \"No VFIO or GPU modules loaded\""
+  register: gpu_vfio_check
+  changed_when: false
+  
+- name: Display GPU VFIO binding status
+  ansible.builtin.debug:
+    msg: "{{ gpu_vfio_check.stdout_lines }}"
+
+# Verify VM GPU passthrough requirement
+- name: Verify VM GPU passthrough configuration ({{ current_vm }})
+  ansible.builtin.set_fact:
+    gpu_passthrough_enabled: "{{ hostvars[current_vm]['gpu_passthrough'] | default(false) | bool }}"
+    pci_slot_assigned: "{{ hostvars[current_vm]['pci_slot'] is defined and hostvars[current_vm]['pci_slot']|string|trim != '' }}"
+    gpu_type: "{{ hostvars[current_vm]['gpu_type'] | default('nvidia') }}"
+
+- name: Display VM GPU configuration ({{ current_vm }})
+  ansible.builtin.debug:
+    msg: |
+      VM: {{ current_vm }}
+      GPU Passthrough: {{ gpu_passthrough_enabled }}
+      GPU Type: {{ gpu_type }}
+      PCI Slot Assigned: {{ pci_slot_assigned }}
+      {% if pci_slot_assigned %}
+      PCI Slot: {{ hostvars[current_vm]['pci_slot'] }}
+      {% endif %}
+
+- name: Display skip message if GPU passthrough is not enabled
+  ansible.builtin.debug:
+    msg: "⚠️ Skipping GPU passthrough for {{ current_vm }} (gpu_passthrough not enabled)"
+  when: not gpu_passthrough_enabled | bool
+
+# Set flag to control remaining tasks execution
+- name: Set task execution flag
+  ansible.builtin.set_fact:
+    should_continue: "{{ gpu_passthrough_enabled | bool }}"
+
+# Stop VM before GPU configuration
+- name: Stop VM before GPU configuration ({{ current_vm }})
+  ansible.builtin.command: lxc stop {{ current_vm }} --force
+  register: stop_result
+  failed_when: stop_result.rc != 0 and "The instance is already stopped" not in stop_result.stderr
+  changed_when: stop_result.rc == 0
+  async: 300  # 5 minutes timeout for VM stopping
+  poll: 10    # Check every 10 seconds
+  when: should_continue | bool
+
+# Wait for VM to stop
+- name: Wait for VM to fully stop ({{ current_vm }})
+  ansible.builtin.pause:
+    seconds: 5
+  when: should_continue | bool
+
+# Remove existing GPU devices first
+- name: Remove existing GPU devices ({{ current_vm }})
+  ansible.builtin.command: lxc config device remove {{ current_vm }} gpu
+  failed_when: false  # Allow this to fail if device doesn't exist
+  changed_when: true
+  when: should_continue | bool
+
+# Check IOMMU group for diagnostics if PCI slot is assigned
+- name: Get IOMMU group info for diagnostics ({{ current_vm }})
+  ansible.builtin.shell: "# Debug IOMMU group for this PCI slot\n  pci_slot=\"{{ hostvars[current_vm]['pci_slot'] }}\"\n  echo \"Checking IOMMU group for PCI slot: $pci_slot\"\n  \n  # Find IOMMU group number\n  iommu_path=$(find /sys/kernel/iommu_groups/*/devices/0000:$pci_slot -type l 2>/dev/null | head -1)\n  if [ -n \"$iommu_path\" ]; then\n    iommu_group=$(echo $iommu_path | awk -F'/' '{print $5}')\n    echo \"Found in IOMMU Group: $iommu_group\"\n    \n    # Count devices in this group\n    device_count=$(find /sys/kernel/iommu_groups/$iommu_group/devices/ -type l | wc -l)\n    echo \"Devices in this IOMMU group: $device_count\"\n    \n    # List all devices in this group\n    echo \"Devices list:\"\n    find /sys/kernel/iommu_groups/$iommu_group/devices/ -type l | xargs basename | sed 's/^0000://'\n    \n    # Check driver binding for each device in group\n    echo -e \"\\nDriver binding status for devices in IOMMU group $iommu_group:\"\n    for dev in $(find /sys/kernel/iommu_groups/$iommu_group/devices/ -type l | xargs basename); do\n      short_dev=$(echo $dev | sed 's/^0000://')\n      driver=\"\"\n      if [ -e \"/sys/bus/pci/devices/$dev/driver\" ]; then\n        driver=$(basename $(readlink -f /sys/bus/pci/devices/$dev/driver))\n        echo \"$short_dev -> $driver\"\n      else\n        echo \"$short_dev -> (no driver)\"\n      fi\n    done\n  else\n    echo \"PCI slot not found in any IOMMU group. Check if the PCI ID is correct.\"\n    \n    # Provide all available IOMMU groups for troubleshooting\n    echo -e \"\\nAvailable IOMMU groups with GPU devices:\"\n    for group_dir in /sys/kernel/iommu_groups/*/devices/; do\n      group=$(echo $group_dir | awk -F'/' '{print $5}')\n      # Check if any device in this group is a GPU\n      for dev in $group_dir/*; do\n        dev_id=$(basename $dev)\n        if lspci -s ${dev_id#0000:} 2>/dev/null | grep -q -E \"VGA|3D|Display\"; then\n          echo \"IOMMU Group $group contains GPU: ${dev_id#0000:}\"\n          # List all devices in this group\n          echo \"All devices in group $group:\"\n          find $group_dir -type l | xargs basename | sed 's/^0000://'\n          break\n        fi\n      done\n    done\n  fi"
+  register: iommu_info
+  changed_when: false
+  when: should_continue | bool and pci_slot_assigned | bool
+  
+- name: Display IOMMU group info
+  ansible.builtin.debug:
+    msg: "{{ iommu_info.stdout_lines }}"
+  when: should_continue | bool and pci_slot_assigned | bool and iommu_info is defined
+
+# For specifically assigned PCI slot, add the GPU device directly
+- name: Add GPU device by assigned PCI slot ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} gpu gpu pci={{ hostvars[current_vm]['pci_slot'] }}"
+  register: add_gpu_pci_assigned
+  failed_when: add_gpu_pci_assigned.rc != 0
+  changed_when: add_gpu_pci_assigned.rc == 0
+  when: should_continue | bool and pci_slot_assigned | bool
+
+# Find all devices in the same IOMMU group when using assigned PCI slot
+- name: Find devices in the same IOMMU group ({{ current_vm }})
+  ansible.builtin.shell: "gpu_slot=\"{{ hostvars[current_vm]['pci_slot'] }}\"\n  if [ -n \"$gpu_slot\" ]; then\n    # Extract BDF format\n    if [[ \"$gpu_slot\" =~ ^[0-9a-f]+:[0-9a-f]+\\.[0-9a-f]$ ]]; then\n      # Find IOMMU group\n      for group_dir in /sys/kernel/iommu_groups/*/devices/0000:$gpu_slot; do\n        if [ -e \"$group_dir\" ]; then\n          group=$(echo $group_dir | cut -d/ -f5)\n          # List all devices in this group except the GPU itself\n          for dev in /sys/kernel/iommu_groups/$group/devices/*; do\n            dev_addr=$(basename $dev | sed 's/^0000://')\n            if [ \"$dev_addr\" != \"$gpu_slot\" ]; then\n              echo \"$dev_addr\"\n            fi\n          done\n        fi\n      done\n    fi\n  fi"
+  register: iommu_group_devices
+  changed_when: false
+  when: should_continue | bool and pci_slot_assigned | bool
+
+# Add all associated devices in the same IOMMU group by PCI slot
+- name: Add IOMMU group devices ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} iommu-device-{{ dev_idx }} gpu pci={{ device }}"
+  register: add_iommu_devices
+  failed_when: >
+    add_iommu_devices.rc != 0 and 
+    "No such file or directory" not in add_iommu_devices.stderr and 
+    "cannot use PCI device that is in use by the host" not in add_iommu_devices.stderr and 
+    "already exists" not in add_iommu_devices.stderr
+  changed_when: add_iommu_devices.rc == 0
+  loop: "{{ range(99) | list }}"
+  loop_control:
+    index_var: dev_idx
+  vars:
+    device: "{{ iommu_group_devices.stdout_lines[dev_idx] | default('') }}"
+  when: 
+    - should_continue | bool
+    - pci_slot_assigned | bool
+    - iommu_group_devices is defined
+    - iommu_group_devices.stdout_lines is defined
+    - iommu_group_devices.stdout_lines | length > dev_idx
+    - iommu_group_devices.stdout_lines[dev_idx] | default('') | trim != ''
+
+# If no PCI slot is assigned, use the standard approach (for dynamically assigned GPUs)
+- name: Add GPU device using standard method ({{ current_vm }})
+  ansible.builtin.command: lxc config device add {{ current_vm }} gpu gpu
+  register: add_gpu_standard
+  failed_when: add_gpu_standard.rc != 0
+  changed_when: add_gpu_standard.rc == 0
+  when: should_continue | bool and not pci_slot_assigned | bool
+
+# Start VM to apply changes
+- name: Start VM attempt 1 ({{ current_vm }})
+  ansible.builtin.command: "lxc start {{ current_vm }}"
+  register: start_attempt_1
+  failed_when: false
+  changed_when: start_attempt_1.rc == 0
+  when: should_continue | bool
+
+- name: Check VM status after first attempt ({{ current_vm }})
+  ansible.builtin.command: "lxc info {{ current_vm }}"
+  register: check_vm_1
+  changed_when: false
+  failed_when: false
+  when: should_continue | bool
+  
+- name: Check for IOMMU driver errors ({{ current_vm }})
+  ansible.builtin.command: "lxc info --show-log {{ current_vm }}"
+  register: check_vm_log
+  changed_when: false
+  failed_when: false
+  when: should_continue | bool and check_vm_1 is defined and not check_vm_1.stdout is search("RUNNING")
+
+- name: Sleep if VM didn't start on first attempt
+  ansible.builtin.pause:
+    seconds: 5
+  when: should_continue | bool and check_vm_1 is defined and not check_vm_1.stdout is search("RUNNING")
+
+# For IOMMU issues, try removing and re-adding GPU devices
+- name: Remove GPU device if VM failed to start with IOMMU error ({{ current_vm }})
+  ansible.builtin.command: "lxc config device remove {{ current_vm }} gpu"
+  register: remove_device
+  failed_when: false
+  changed_when: remove_device.rc == 0
+  when: >
+    should_continue | bool and 
+    check_vm_1 is defined and not check_vm_1.stdout is search("RUNNING") and
+    (check_vm_log is defined and check_vm_log.stdout is search("Failed to override IOMMU group driver"))
+
+- name: Sleep after removing device
+  ansible.builtin.pause:
+    seconds: 5
+  when: should_continue | bool and remove_device is defined and remove_device.rc is defined
+
+# Add GPU device back with specific PCI slot if assigned
+- name: Add GPU device back with PCI slot ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} gpu gpu pci={{ hostvars[current_vm]['pci_slot'] }}"
+  register: add_device_pci
+  failed_when: false
+  changed_when: add_device_pci.rc == 0
+  when: >
+    should_continue | bool and 
+    remove_device is defined and remove_device.rc is defined and
+    pci_slot_assigned | bool
+
+# Add GPU device back without PCI slot if not assigned
+- name: Add GPU device back standard ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} gpu gpu"
+  register: add_device_std
+  failed_when: false
+  changed_when: add_device_std.rc == 0
+  when: >
+    should_continue | bool and 
+    remove_device is defined and remove_device.rc is defined and
+    not pci_slot_assigned | bool
+
+- name: Sleep after adding device back
+  ansible.builtin.pause:
+    seconds: 10
+  when: >
+    should_continue | bool and 
+    ((add_device_pci is defined and add_device_pci.stdout is defined) or 
+     (add_device_std is defined and add_device_std.stdout is defined))
+
+# Final attempt to start VM
+- name: Final attempt to start VM ({{ current_vm }})
+  ansible.builtin.command: "lxc start {{ current_vm }}"
+  register: start_result
+  failed_when: start_result.rc != 0 and not start_result.stderr is search("already running")
+  changed_when: start_result.rc == 0
+  when: >
+    should_continue | bool and 
+    ((add_device_pci is defined and add_device_pci.rc is defined) or
+     (add_device_std is defined and add_device_std.rc is defined))
+  async: 120  # 2 minutes timeout for VM start
+  poll: 10    # Check every 10 seconds
+
+# Wait for VM to restart and GPU to initialize
+- name: Wait for VM to restart ({{ current_vm }})
+  ansible.builtin.pause:
+    seconds: 30  # Increased wait time for GPU initialization
+  when: should_continue | bool
+
+# Verify VM is up and running
+- name: Verify VM is running ({{ current_vm }})
+  ansible.builtin.command: "lxc info {{ current_vm }}"
+  register: vm_running_check
+  changed_when: false
+  failed_when: vm_running_check.rc != 0 or not vm_running_check.stdout is search("RUNNING")
+  ignore_errors: true  # Continue even if the VM isn't running
+  when: should_continue | bool
+
+# Verify VM GPU visibility
+- name: Verify VM can see the GPU ({{ current_vm }})
+  ansible.builtin.command: "lxc exec {{ current_vm }} -- lspci"
+  register: lspci_output
+  changed_when: false
+  failed_when: false
+  async: 60
+  poll: 5
+  when: should_continue | bool
+  
+- name: Check for NVIDIA GPU in lspci output
+  ansible.builtin.set_fact:
+    gpu_visibility: 
+      rc: "{{ 0 if 'NVIDIA' in lspci_output.stdout else 1 }}"
+      stdout: "{{ lspci_output.stdout if 'NVIDIA' in lspci_output.stdout else 'GPU not detected' }}"
+  when: should_continue | bool and lspci_output is defined
+
+# Install NVIDIA utilities in VM
+- name: Update package repositories ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- apt-get update"
+  register: update_result
+  failed_when: update_result.rc != 0
+  changed_when: update_result.rc == 0
+  # Add async to prevent timeout
+  async: 180
+  poll: 5
+  when: should_continue | bool
+
+# Install prerequisites
+- name: Install prerequisite packages ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- apt-get install -y build-essential gnupg software-properties-common"
+  register: prereq_install
+  failed_when: prereq_install.rc != 0
+  changed_when: prereq_install.rc == 0
+  async: 300  # 5 minutes timeout for prerequisites installation
+  poll: 10    # Check every 10 seconds
+  when: should_continue | bool
+
+# Add NVIDIA PPA in VM
+- name: Add graphics drivers PPA in VM ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- add-apt-repository -y ppa:graphics-drivers/ppa"
+  register: ppa_result
+  failed_when: ppa_result.rc != 0
+  changed_when: ppa_result.rc == 0
+  # Add async to prevent timeout
+  async: 180
+  poll: 5
+  when: should_continue | bool
+
+# Update after adding PPA
+- name: Update VM after adding PPA ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- apt-get update"
+  register: update_after_ppa
+  failed_when: update_after_ppa.rc != 0
+  changed_when: update_after_ppa.rc == 0
+  # Add async to prevent timeout
+  async: 180
+  poll: 5
+  when: should_continue | bool
+
+# Install kernel headers and NVIDIA packages in VM (noninteractively)
+- name: Install kernel headers in VM ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y linux-headers-$(uname -r) build-essential dkms'"
+  register: install_headers
+  failed_when: install_headers.rc != 0
+  changed_when: install_headers.rc == 0
+  async: 300  # 5 minutes timeout
+  poll: 15    # Check every 15 seconds
+  when: should_continue | bool
+
+# Install NVIDIA packages in VM (noninteractively)
+- name: Install NVIDIA packages in VM ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-driver-{{ nvidia_driver_version }} nvidia-utils-{{ nvidia_driver_version }} nvidia-cuda-toolkit'"
+  register: install_packages
+  failed_when: install_packages.rc != 0
+  changed_when: install_packages.rc == 0
+  async: 1200  # 20 minutes timeout for CUDA toolkit installation
+  poll: 30     # Check every 30 seconds
+  when: should_continue | bool
+  
+# Force NVIDIA driver build with dkms
+- name: Build NVIDIA driver with DKMS if needed ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- bash -c 'dkms build -m nvidia -v {{ nvidia_driver_version }} && dkms install -m nvidia -v {{ nvidia_driver_version }}'"
+  register: dkms_build
+  failed_when: false  # Don't fail if DKMS build isn't successful
+  changed_when: dkms_build.rc == 0
+  async: 600  # 10 minutes timeout for driver build
+  poll: 20    # Check every 20 seconds
+  when: should_continue | bool
+  
+# Load NVIDIA kernel module
+- name: Load NVIDIA kernel module if needed ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- bash -c 'modprobe nvidia || true'"
+  register: modprobe_nvidia
+  failed_when: false  # Don't fail if modprobe doesn't work
+  changed_when: modprobe_nvidia.rc == 0
+  when: should_continue | bool
+  
+# Check module loading status
+- name: Check NVIDIA kernel module status ({{ current_vm }})
+  ansible.builtin.shell: "lxc exec {{ current_vm }} -- bash -c 'lsmod | grep -i nvidia || echo \"nvidia module not loaded\"'"
+  register: module_status
+  failed_when: false
+  changed_when: false
+  when: should_continue | bool
+  
+- name: Display module status ({{ current_vm }})
+  ansible.builtin.debug:
+    msg: "NVIDIA module status in VM ({{ current_vm }}): {{ module_status.stdout_lines | join('\n') }}"
+  when: should_continue | bool and module_status is defined
+
+# Test nvidia-smi in VM
+- name: Test nvidia-smi in VM ({{ current_vm }})
+  ansible.builtin.command: lxc exec {{ current_vm }} -- nvidia-smi
+  register: nvidia_smi_check
+  failed_when: false  # Don't fail if nvidia-smi doesn't work yet
+  changed_when: false
+  # Add async to prevent timeout
+  async: 120
+  poll: 5
+  when: should_continue | bool
+
+# Display GPU status
+- name: Display GPU passthrough status ({{ current_vm }})
+  ansible.builtin.debug:
+    msg: |
+      GPU Passthrough Status for {{ current_vm }}:
+      
+      GPU Detection: {{ "✓ GPU DETECTED" if gpu_visibility.rc | default(1) == 0 else "✗ GPU NOT DETECTED" }}
+      NVIDIA Driver: {{ "✓ FUNCTIONAL" if nvidia_smi_check.rc | default(1) == 0 else "✗ NOT FUNCTIONAL" }}
+      
+      {% if nvidia_smi_check is defined and nvidia_smi_check.rc == 0 %}
+      GPU Information:
+      {{ nvidia_smi_check.stdout }}
+      {% endif %}
+  when: should_continue | bool

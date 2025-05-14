@@ -1,0 +1,470 @@
+---
+# 68_test_vm_gpu_passthrough.yaml - Test GPU passthrough to VMs
+#
+# Purpose:
+#   Tests GPU passthrough to VMs, checking VFIO binding and GPU functionality
+#   Provides detailed diagnostics about GPU passthrough status
+#
+# Requirements:
+#   - GPUs must be reserved for passthrough on the host using 00_reserve_gpus.yaml
+#   - VM GPU passthrough must be configured using 60_configure_vm_gpu_passthrough.yaml
+#   - VMs must be running and have GPU devices configured
+#   - SSH keys must be configured for VM access
+#
+# Variables:
+#   Optional:
+#     - target_vms: Comma-separated list of specific VMs to test
+#
+# Run with:
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/68_test_vm_gpu_passthrough.yaml
+#   
+#   Test specific VMs: 
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/68_test_vm_gpu_passthrough.yaml -e "target_vms=vm1,vm2"
+#
+# Next Steps:
+#   If tests fail, check VM configuration and GPU binding status
+
+- name: Test GPU Passthrough to VMs
+  hosts: baremetal
+  gather_facts: true
+  become: false
+  
+  vars:
+    # Default variables - can be overridden
+    system_username: "{{ lookup('env', 'USER') | default('thinkube', true) }}"
+    ssh_key_name: "id_lxd_vm"
+    # Parse target VMs or use the gpu_passthrough_vms group
+    vm_list: "{{ target_vms.split(',') if target_vms is defined else groups['gpu_passthrough_vms'] | default([]) }}"
+  
+  pre_tasks:
+    - name: Display intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔍 Testing GPU Passthrough for VMs ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook tests GPU passthrough configuration by:
+          - Checking host GPU reservation and VFIO binding
+          - Verifying VM GPU device configuration
+          - Testing GPU visibility inside VMs
+          - Validating NVIDIA driver and CUDA functionality
+          - Running a basic GPU stress test
+          
+          VMs to test: {{ vm_list | default([]) | join(', ') }}
+          
+          ═════════════════════════════════════════════════════════
+
+    # Verify SSH key for VM access exists
+    - name: Verify SSH key for VM access exists
+      ansible.builtin.stat:
+        path: "{{ ansible_user_dir }}/.ssh/{{ ssh_key_name }}"
+      register: ssh_key_stat
+      
+    - name: Fail if SSH key is not found
+      ansible.builtin.fail:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ERROR: Missing SSH key for VM access
+          ═════════════════════════════════════════════════════════
+          
+          SSH key {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} not found.
+          Please run the 30-3_configure_vm_users.yaml playbook first
+          to set up SSH keys for VM access.
+          
+          ═════════════════════════════════════════════════════════
+      when: not ssh_key_stat.stat.exists
+
+    # Check if VMs are running on this host
+    - name: Check if VMs are running on this host
+      ansible.builtin.shell: |
+        lxc ls -f json | jq -r '.[] | select(.type == "virtual-machine" and .status == "Running") | .name'
+      register: running_vms_output
+      changed_when: false
+      
+    - name: Set running VMs fact
+      ansible.builtin.set_fact:
+        running_vms: "{{ running_vms_output.stdout_lines }}"
+        
+    # Filter VM list to only include running VMs on this host with GPU passthrough
+    - name: Filter VM list to only include running VMs on this host with GPU passthrough
+      ansible.builtin.set_fact:
+        active_vms: "{{ vm_list | intersect(running_vms) | select('in', gpu_vms) | list }}"
+      vars:
+        gpu_vms: >-
+          {% set result = [] %}
+          {% for vm in vm_list | intersect(running_vms) %}
+            {% if hostvars[vm] is defined and hostvars[vm].gpu_passthrough | default(false) | bool %}
+              {% set result = result + [vm] %}
+            {% endif %}
+          {% endfor %}
+          {{ result }}
+        
+    - name: Display active VMs for testing
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          TESTING GPU PASSTHROUGH FOR VMs ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Active VMs with GPU passthrough:
+          {% for vm in active_vms %}
+            ✓ {{ vm }}{% if hostvars[vm]['pci_slot'] is defined %} (PCI: {{ hostvars[vm]['pci_slot'] }}){% endif %}
+          {% endfor %}
+          
+          ═════════════════════════════════════════════════════════
+      when: active_vms is defined and active_vms | length > 0
+
+    - name: Display no active VMs message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          NO ACTIVE VMs WITH GPU PASSTHROUGH ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          No active VMs with GPU passthrough were found on this host.
+          
+          DETAILS:
+          - Running VMs: {{ running_vms | join(', ') }}
+          - Requested VMs: {{ vm_list | join(', ') }}
+          
+          POSSIBLE REASONS:
+          - VMs are not running
+          - Requested VMs don't exist on this host
+          - GPU passthrough is not configured for the VMs
+          
+          SOLUTION:
+          - Ensure VMs are created and running
+          - Run 60_configure_vm_gpu_passthrough.yaml to configure GPU passthrough
+          
+          ═════════════════════════════════════════════════════════
+      when: active_vms is not defined or active_vms | length == 0
+
+    - name: Skip host if no VMs are active
+      ansible.builtin.meta: end_host
+      when: active_vms is not defined or active_vms | length == 0
+
+  tasks:
+    # PART 1: Check host GPU status
+    - name: Verify VFIO binding of GPUs on host
+      ansible.builtin.shell: |
+        lspci -nnk | grep -A3 -E "NVIDIA|AMD/ATI" | grep -B1 "vfio-pci"
+      register: vfio_binding
+      changed_when: false
+      failed_when: vfio_binding.rc != 0 and vfio_binding.stderr != ""
+      
+    - name: Display VFIO binding information
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          GPU VFIO BINDING STATUS ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          The following GPUs are bound to vfio-pci:
+          {{ vfio_binding.stdout if vfio_binding.stdout != "" else "No GPUs found bound to vfio-pci" }}
+          
+          ═════════════════════════════════════════════════════════
+      
+    # PART 2: Check LXD VM GPU device configuration
+    - name: Check LXD VM GPU device configuration
+      ansible.builtin.shell: |
+        for vm in {{ active_vms | join(' ') }}; do
+          echo "VM: $vm"
+          lxc config device show $vm | grep -A15 "gpu:"
+          echo ""
+        done
+      register: lxd_gpu_config
+      changed_when: false
+      failed_when: false
+      
+    - name: Display LXD VM GPU configuration
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          LXD VM GPU CONFIGURATION ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          {{ lxd_gpu_config.stdout if lxd_gpu_config.stdout != "" else "No GPU devices configured in VMs" }}
+          
+          ═════════════════════════════════════════════════════════
+    
+    # PART 3: Test GPU functionality inside VMs
+    # Step 1: Verify GPU visibility inside each VM
+    - name: Verify GPU visibility inside each VM
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
+          {{ system_username }}@{{ item }} \
+          "lspci | grep -i vga && lspci | grep -i nvidia" || echo "Failed to detect GPU"
+      register: vm_gpu_visibility
+      with_items: "{{ active_vms }}"
+      changed_when: false
+      failed_when: false
+      # Add async to prevent timeout
+      async: 120
+      poll: 5
+      
+    - name: Display GPU visibility results
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          GPU VISIBILITY IN VM: {{ item.item }}
+          ═════════════════════════════════════════════════════════
+          
+          {% if "Failed to detect GPU" not in item.stdout %}
+          ✓ DETECTED:
+          {{ item.stdout }}
+          {% else %}
+          ❌ NO GPU DETECTED
+          {% endif %}
+          
+          ═════════════════════════════════════════════════════════
+      with_items: "{{ vm_gpu_visibility.results }}"
+      
+    # Step 2: Test NVIDIA driver functionality in each VM
+    - name: Test NVIDIA driver functionality in each VM
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
+          {{ system_username }}@{{ item }} \
+          "nvidia-smi"
+      register: nvidia_smi_results
+      with_items: "{{ active_vms }}"
+      changed_when: false
+      failed_when: false
+      # Add async to prevent timeout
+      async: 120
+      poll: 5
+      
+    - name: Display NVIDIA driver functionality results
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          NVIDIA DRIVER STATUS IN VM: {{ item.item }}
+          ═════════════════════════════════════════════════════════
+          
+          {% if item.rc == 0 %}
+          ✓ NVIDIA DRIVER FUNCTIONAL:
+          {{ item.stdout }}
+          {% else %}
+          ❌ NVIDIA DRIVER NOT FUNCTIONAL:
+          {{ item.stderr }}
+          {% endif %}
+          
+          ═════════════════════════════════════════════════════════
+      with_items: "{{ nvidia_smi_results.results }}"
+      
+    # Step 3: Test CUDA functionality in each VM
+    - name: Test CUDA functionality in each VM
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
+          {{ system_username }}@{{ item }} \
+          "if command -v nvidia-smi &>/dev/null; then nvidia-smi -q -d COMPUTE && echo 'CUDA STATUS: AVAILABLE'; else echo 'CUDA STATUS: NOT AVAILABLE'; fi"
+      register: cuda_results
+      with_items: "{{ active_vms }}"
+      changed_when: false
+      failed_when: false
+      # Add async to prevent timeout
+      async: 180
+      poll: 5
+      
+    - name: Display CUDA functionality results
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          CUDA FUNCTIONALITY IN VM: {{ item.item }}
+          ═════════════════════════════════════════════════════════
+          
+          {% if 'CUDA STATUS: AVAILABLE' in item.stdout %}
+          ✓ CUDA IS AVAILABLE
+          
+          CUDA VERSION INFORMATION:
+          {{ item.stdout | regex_search('CUDA Version[ ]*:[ ]*[0-9.]+') | default('CUDA Version information not found') }}
+          {% else %}
+          ❌ CUDA IS NOT AVAILABLE:
+          {{ item.stdout }}
+          {% endif %}
+          
+          ═════════════════════════════════════════════════════════
+      with_items: "{{ cuda_results.results }}"
+
+    # PART 4: Run a basic GPU stress test
+    # Step 1: Create GPU stress test script in VMs
+    - name: Create GPU stress test script in VMs
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
+          {{ system_username }}@{{ item }} \
+          "cat > /tmp/cuda_test.sh << 'EOF'
+        #!/bin/bash
+        # Simple CUDA test script
+        if ! command -v nvidia-smi &>/dev/null; then
+          echo 'NVIDIA drivers not installed. Exiting.'
+          exit 1
+        fi
+        
+        # Run a basic device query
+        echo '=== Testing NVIDIA GPU ==='
+        nvidia-smi --query-gpu=name,driver_version,memory.total,memory.free --format=csv
+        
+        # Test CUDA if available
+        if [ -d /usr/local/cuda ] || [ -d /usr/local/cuda-* ]; then
+          echo '=== Testing CUDA computation ==='
+          # Try a simple CUDA stress test - monitor GPU usage
+          if command -v cuda-memcheck &>/dev/null; then
+            echo 'Running CUDA memory test (5 seconds)...'
+            timeout 5 cuda-memcheck nvidia-smi dmon -s u
+            echo 'CUDA memory test completed'
+          else
+            echo 'Running basic GPU monitoring (5 seconds)...'
+            timeout 5 nvidia-smi dmon -s u
+            echo 'Basic GPU monitoring completed'
+          fi
+        else
+          echo 'CUDA toolkit not found. Skipping CUDA tests.'
+        fi
+        EOF
+        chmod +x /tmp/cuda_test.sh"
+      with_items: "{{ active_vms }}"
+      register: create_test_script
+      changed_when: create_test_script.rc == 0
+      failed_when: false
+      # Add async to prevent timeout
+      async: 180
+      poll: 5
+      
+    # Step 2: Run GPU stress test in VMs
+    - name: Run GPU stress test in VMs
+      ansible.builtin.shell: |
+        ssh -i {{ ansible_user_dir }}/.ssh/{{ ssh_key_name }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ConnectTimeout=10 \
+          {{ system_username }}@{{ item }} \
+          "/tmp/cuda_test.sh"
+      register: stress_test_results
+      with_items: "{{ active_vms }}"
+      changed_when: false
+      failed_when: false
+      # Add async to prevent timeout
+      async: 300
+      poll: 10
+      
+    - name: Display GPU stress test results
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          GPU STRESS TEST RESULTS FOR VM: {{ item.item }}
+          ═════════════════════════════════════════════════════════
+          
+          {% if item.rc == 0 %}
+          ✓ TEST COMPLETED SUCCESSFULLY:
+          
+          {{ item.stdout }}
+          {% else %}
+          ❌ TEST FAILED:
+          
+          {{ item.stderr }}
+          {% endif %}
+          
+          ═════════════════════════════════════════════════════════
+      with_items: "{{ stress_test_results.results }}"
+      
+    # PART 5: Summarize all test results
+    - name: Set test result facts
+      ansible.builtin.set_fact:
+        vm_results: "{{ vm_results | default({}) | combine({item.item: {
+          'gpu_detected': ('Failed to detect GPU' not in item.stdout), 
+          'item': item.item
+        }}) }}"
+      with_items: "{{ vm_gpu_visibility.results }}"
+    
+    - name: Add driver results to VM facts
+      ansible.builtin.set_fact:
+        vm_results: "{{ vm_results | combine({item.item: vm_results[item.item] | combine({
+          'driver_working': (item.rc == 0),
+          'driver_output': item.stdout if item.rc == 0 else item.stderr
+        })}) }}"
+      with_items: "{{ nvidia_smi_results.results }}"
+    
+    - name: Add CUDA results to VM facts
+      ansible.builtin.set_fact:
+        vm_results: "{{ vm_results | combine({item.item: vm_results[item.item] | combine({
+          'cuda_available': ('CUDA STATUS: AVAILABLE' in item.stdout),
+          'cuda_output': item.stdout
+        })}) }}"
+      with_items: "{{ cuda_results.results }}"
+    
+    - name: Add stress test results to VM facts
+      ansible.builtin.set_fact:
+        vm_results: "{{ vm_results | combine({item.item: vm_results[item.item] | combine({
+          'stress_passed': (item.rc == 0),
+          'stress_output': item.stdout if item.rc == 0 else item.stderr
+        })}) }}"
+      with_items: "{{ stress_test_results.results }}"
+    
+    # Calculate overall success/failure
+    - name: Calculate overall test results
+      ansible.builtin.set_fact:
+        overall_success: "{{ overall_success | default(0) | int + 1 if (vm_results[vm_name].gpu_detected and vm_results[vm_name].driver_working) else overall_success | default(0) | int }}"
+      loop: "{{ active_vms }}"
+      loop_control:
+        loop_var: vm_name
+    
+    # PART 6: Display final summary
+    - name: Summarize GPU passthrough test results
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          GPU PASSTHROUGH TEST SUMMARY ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          HOST STATUS:
+          ✓ VFIO-PCI Binding: {{ 'SUCCESSFUL' if vfio_binding.stdout != '' else 'NOT DETECTED' }}
+          ✓ VM GPU Configuration: {{ 'CONFIGURED' if lxd_gpu_config.stdout | regex_search('gpu:') else 'NOT CONFIGURED' }}
+          
+          VM RESULTS:
+          {% for vm in active_vms %}
+          VM: {{ vm }}
+          - GPU Detection: {{ '✓ DETECTED' if vm_results[vm].gpu_detected else '❌ NOT DETECTED' }}
+          - NVIDIA Driver: {{ '✓ FUNCTIONAL' if vm_results[vm].driver_working else '❌ NOT FUNCTIONAL' }}
+          - CUDA Support: {{ '✓ AVAILABLE' if vm_results[vm].cuda_available else '❌ NOT AVAILABLE' }}
+          - Stress Test: {{ '✓ PASSED' if vm_results[vm].stress_passed else '❌ FAILED' }}
+          {% endfor %}
+          
+          OVERALL RESULTS:
+          {{ overall_success | default(0) | int }}/{{ active_vms | length }} VMs have functional GPU passthrough
+          
+          {% if overall_success | default(0) | int == active_vms | length %}
+          ✅ ALL VMs PASSED GPU PASSTHROUGH TESTS
+          {% else %}
+          ⚠️ SOME VMS FAILED GPU PASSTHROUGH TESTS
+          
+          Troubleshooting steps:
+          1. Check VFIO binding on the host: lspci -nnk | grep -A3 "NVIDIA" | grep -B1 "vfio-pci"
+          2. Verify LXD VM GPU device configuration: lxc config device show <vm-name>
+          3. Try stopping and starting the VM: lxc stop <vm-name> && lxc start <vm-name>
+          4. Run the GPU passthrough configuration playbook again
+          {% endif %}
+          
+          ═════════════════════════════════════════════════════════

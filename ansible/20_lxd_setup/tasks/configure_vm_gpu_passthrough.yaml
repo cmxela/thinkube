@@ -1,0 +1,318 @@
+---
+# configure_vm_gpu_passthrough.yaml
+# Task file to configure GPU passthrough for a single VM
+# This file is included by 60_configure_vm_gpu_passthrough.yaml
+
+# Display VM information
+- name: Display VM information ({{ current_vm }})
+  ansible.builtin.debug:
+    msg: "Configuring GPU passthrough for VM: {{ current_vm }}"
+
+# Verify VM exists
+- name: Check if VM exists ({{ current_vm }})
+  ansible.builtin.command: lxc info {{ current_vm }}
+  register: vm_check
+  failed_when: vm_check.rc != 0
+  changed_when: false
+  
+# Verify VM GPU passthrough requirement
+- name: Verify VM GPU passthrough configuration ({{ current_vm }})
+  ansible.builtin.set_fact:
+    gpu_passthrough_enabled: "{{ hostvars[current_vm]['gpu_passthrough'] | default(false) | bool }}"
+    pci_slot_assigned: "{{ hostvars[current_vm]['pci_slot'] is defined and hostvars[current_vm]['pci_slot']|string|trim != '' }}"
+    gpu_type: "{{ hostvars[current_vm]['gpu_type'] | default('nvidia') }}"
+
+- name: Display VM GPU configuration ({{ current_vm }})
+  ansible.builtin.debug:
+    msg: |
+      VM: {{ current_vm }}
+      GPU Passthrough: {{ gpu_passthrough_enabled }}
+      GPU Type: {{ gpu_type }}
+      PCI Slot Assigned: {{ pci_slot_assigned }}
+      {% if pci_slot_assigned %}
+      PCI Slot: {{ hostvars[current_vm]['pci_slot'] }}
+      {% endif %}
+
+# Skip if not needed
+- name: Skip VM if GPU passthrough is not enabled
+  ansible.builtin.debug:
+    msg: "⚠️ Skipping GPU passthrough for {{ current_vm }} (gpu_passthrough not enabled)"
+  when: not gpu_passthrough_enabled | bool
+
+# Set flag to control remaining tasks execution
+- name: Set task execution flag
+  ansible.builtin.set_fact:
+    should_continue: "{{ gpu_passthrough_enabled | bool }}"
+
+# Stop VM
+- name: Stop VM before GPU configuration ({{ current_vm }})
+  ansible.builtin.command: lxc stop {{ current_vm }} --force
+  register: stop_result
+  failed_when: stop_result.rc != 0 and "The instance is already stopped" not in stop_result.stderr
+  changed_when: stop_result.rc == 0
+  when: should_continue | bool
+
+# Wait for VM to stop
+- name: Wait for VM to fully stop ({{ current_vm }})
+  ansible.builtin.pause:
+    seconds: 5
+  when: should_continue | bool
+
+# Remove existing GPU devices first
+- name: Remove existing GPU devices ({{ current_vm }})
+  ansible.builtin.command: lxc config device remove {{ current_vm }} gpu
+  failed_when: false  # Allow this to fail if device doesn't exist
+  changed_when: true
+  when: should_continue | bool
+
+# Check IOMMU group for PCI slot if assigned
+- name: Get IOMMU group info for diagnostics ({{ current_vm }})
+  ansible.builtin.shell: >
+    pci_slot="{{ hostvars[current_vm]['pci_slot'] }}";
+    iommu_path=$(find /sys/kernel/iommu_groups/*/devices/0000:$pci_slot -type l 2>/dev/null | head -1);
+    if [ -n "$iommu_path" ]; then
+      iommu_group=$(echo $iommu_path | awk -F'/' '{print $5}');
+      echo "Found in IOMMU Group: $iommu_group";
+      device_count=$(find /sys/kernel/iommu_groups/$iommu_group/devices/ -type l | wc -l);
+      echo "Devices in this IOMMU group: $device_count";
+      echo "Devices list:";
+      find /sys/kernel/iommu_groups/$iommu_group/devices/ -type l | xargs basename | sed 's/^0000://';
+    else
+      echo "PCI slot not found in any IOMMU group. Check if the PCI ID is correct.";
+    fi
+  register: iommu_info
+  changed_when: false
+  when: should_continue | bool and pci_slot_assigned | bool
+  
+- name: Display IOMMU group info
+  ansible.builtin.debug:
+    msg: "{{ iommu_info.stdout_lines }}"
+  when: should_continue | bool and pci_slot_assigned | bool and iommu_info is defined
+
+# For specifically assigned PCI slot, add the GPU device directly as a PCI device
+- name: Add GPU device by assigned PCI slot ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} gpu pci address={{ hostvars[current_vm]['pci_slot'] }}"
+  register: add_gpu_pci_assigned
+  failed_when: add_gpu_pci_assigned.rc != 0
+  changed_when: add_gpu_pci_assigned.rc == 0
+  when: should_continue | bool and pci_slot_assigned | bool
+
+# Add the audio component as a PCI passthrough device, not as a GPU device
+- name: Determine audio PCI slot for GPU ({{ current_vm }})
+  ansible.builtin.set_fact:
+    audio_pci_slot: "{{ hostvars[current_vm]['pci_slot'] | regex_replace('\\.0$', '.1') }}"
+  when: should_continue | bool and pci_slot_assigned | bool and hostvars[current_vm]['pci_slot'] is defined and hostvars[current_vm]['pci_slot'] is search('\\.0$')
+
+- name: Check if audio component exists
+  ansible.builtin.shell: "lspci -s {{ audio_pci_slot }} 2>/dev/null || echo 'Not found'"
+  register: audio_device_check
+  changed_when: false
+  failed_when: false
+  when: should_continue | bool and pci_slot_assigned | bool and audio_pci_slot is defined
+
+- name: Add audio component as PCI device
+  ansible.builtin.command: "lxc config device add {{ current_vm }} gpu-audio pci address={{ audio_pci_slot }}"
+  register: add_audio_device
+  failed_when: add_audio_device.rc != 0
+  changed_when: add_audio_device.rc == 0
+  when: >
+    should_continue | bool and 
+    pci_slot_assigned | bool and 
+    audio_pci_slot is defined and 
+    audio_device_check.stdout is defined and 
+    audio_device_check.stdout != 'Not found'
+
+# Find all devices in the same IOMMU group when using assigned PCI slot
+- name: Find devices in the same IOMMU group ({{ current_vm }})
+  ansible.builtin.shell: >
+    gpu_slot="{{ hostvars[current_vm]['pci_slot'] }}";
+    if [ -n "$gpu_slot" ]; then
+      if [[ "$gpu_slot" =~ ^[0-9a-f]+:[0-9a-f]+\.[0-9a-f]$ ]]; then
+        for group_dir in /sys/kernel/iommu_groups/*/devices/0000:$gpu_slot; do
+          if [ -e "$group_dir" ]; then
+            group=$(echo $group_dir | cut -d/ -f5);
+            for dev in /sys/kernel/iommu_groups/$group/devices/*; do
+              dev_addr=$(basename $dev | sed 's/^0000://');
+              if [ "$dev_addr" != "$gpu_slot" ]; then
+                echo "$dev_addr";
+              fi;
+            done;
+          fi;
+        done;
+      fi;
+    fi
+  register: iommu_group_devices
+  changed_when: false
+  when: should_continue | bool and pci_slot_assigned | bool
+
+# Add all associated devices in the same IOMMU group by PCI slot
+- name: Add IOMMU group devices ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} iommu-device-{{ device_idx }} pci address={{ device }}"
+  register: add_iommu_devices
+  failed_when: >
+    add_iommu_devices.rc != 0 and 
+    "No such file or directory" not in add_iommu_devices.stderr and 
+    "cannot use PCI device that is in use by the host" not in add_iommu_devices.stderr and 
+    "already exists" not in add_iommu_devices.stderr
+  changed_when: add_iommu_devices.rc == 0
+  loop: "{{ range(99) | list }}"
+  loop_control:
+    loop_var: device_idx
+    index_var: device_idx
+    label: "{{ iommu_group_devices.stdout_lines[device_idx] | default('none') }}"
+  vars:
+    device: "{{ iommu_group_devices.stdout_lines[device_idx] | default('') }}"
+  when: 
+    - should_continue | bool
+    - pci_slot_assigned | bool
+    - iommu_group_devices is defined
+    - iommu_group_devices.stdout_lines is defined
+    - iommu_group_devices.stdout_lines | length > device_idx
+    - iommu_group_devices.stdout_lines[device_idx] | default('') | trim != ''
+
+# If no PCI slot is assigned, use the standard approach
+- name: Add GPU device using standard method ({{ current_vm }})
+  ansible.builtin.command: lxc config device add {{ current_vm }} gpu gpu
+  register: add_gpu_standard
+  failed_when: add_gpu_standard.rc != 0
+  changed_when: add_gpu_standard.rc == 0
+  when: should_continue | bool and not pci_slot_assigned | bool
+
+# First attempt to start VM
+- name: Start VM attempt 1 ({{ current_vm }})
+  ansible.builtin.command: "lxc start {{ current_vm }}"
+  register: start_attempt_1
+  failed_when: false
+  changed_when: start_attempt_1.rc == 0
+  when: should_continue | bool
+
+# Check VM status
+- name: Check VM status after first attempt ({{ current_vm }})
+  ansible.builtin.command: "lxc info {{ current_vm }}"
+  register: check_vm_1
+  changed_when: false
+  failed_when: false
+  when: should_continue | bool
+
+# Check for IOMMU errors
+- name: Check for IOMMU driver errors ({{ current_vm }})
+  ansible.builtin.command: "lxc info --show-log {{ current_vm }}"
+  register: check_vm_log
+  changed_when: false
+  failed_when: false
+  when: should_continue | bool and check_vm_1 is defined and check_vm_1.stdout is defined and "RUNNING" not in check_vm_1.stdout
+
+# Handle IOMMU errors - remove devices
+- name: Remove GPU device if IOMMU errors occurred ({{ current_vm }})
+  ansible.builtin.command: "lxc config device remove {{ current_vm }} gpu"
+  register: remove_device
+  failed_when: false
+  changed_when: remove_device.rc == 0
+  when: >
+    should_continue | bool and 
+    check_vm_1 is defined and 
+    check_vm_1.stdout is defined and 
+    "RUNNING" not in check_vm_1.stdout and
+    check_vm_log is defined and 
+    check_vm_log.stdout is defined and 
+    (check_vm_log.stdout is search("Failed to override IOMMU group driver") or 
+     check_vm_log.stdout is search("Failed to run: Failed") or
+     check_vm_log.stdout is search("Failed to start device"))
+
+# Also remove audio device if it exists
+- name: Remove audio device if IOMMU errors occurred ({{ current_vm }})
+  ansible.builtin.command: "lxc config device remove {{ current_vm }} gpu-audio"
+  register: remove_audio_device
+  failed_when: false
+  changed_when: remove_audio_device.rc == 0
+  when: >
+    should_continue | bool and 
+    pci_slot_assigned | bool and
+    audio_pci_slot is defined and
+    check_vm_1 is defined and 
+    check_vm_1.stdout is defined and 
+    "RUNNING" not in check_vm_1.stdout
+
+# Add back device after IOMMU error with PCI slot
+- name: Re-add GPU device with PCI slot after IOMMU error ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} gpu pci address={{ hostvars[current_vm]['pci_slot'] }}"
+  register: readd_gpu_pci
+  failed_when: false
+  changed_when: readd_gpu_pci.rc == 0
+  when: >
+    should_continue | bool and 
+    remove_device is defined and 
+    remove_device.stdout is defined and
+    pci_slot_assigned | bool
+
+# Re-add the audio device as well after IOMMU error
+- name: Re-add audio device after IOMMU error ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} gpu-audio pci address={{ audio_pci_slot }}"
+  register: readd_audio_device
+  failed_when: false
+  changed_when: readd_audio_device.rc == 0
+  when: >
+    should_continue | bool and 
+    pci_slot_assigned | bool and
+    audio_pci_slot is defined and
+    remove_audio_device is defined and 
+    remove_audio_device.changed
+
+# Add back device after IOMMU error without PCI slot
+- name: Re-add GPU device standard after IOMMU error ({{ current_vm }})
+  ansible.builtin.command: "lxc config device add {{ current_vm }} gpu gpu"
+  register: readd_gpu_std
+  failed_when: false
+  changed_when: readd_gpu_std.rc == 0
+  when: >
+    should_continue | bool and 
+    remove_device is defined and 
+    remove_device.stdout is defined and
+    not pci_slot_assigned | bool
+
+# Final attempt to start VM
+- name: Final attempt to start VM ({{ current_vm }})
+  ansible.builtin.command: "lxc start {{ current_vm }}"
+  register: start_result
+  failed_when: start_result.rc != 0 and start_result.stderr is defined and "already running" not in start_result.stderr
+  changed_when: start_result.rc == 0
+  when: >
+    should_continue | bool and 
+    check_vm_1 is defined and 
+    check_vm_1.stdout is defined and
+    "RUNNING" not in check_vm_1.stdout
+  async: 120  # 2 minutes timeout for VM start
+  poll: 10    # Check every 10 seconds
+
+# Wait for VM to restart and GPU to initialize
+- name: Wait for VM to restart ({{ current_vm }})
+  ansible.builtin.pause:
+    seconds: 30  # Increased wait time for GPU initialization
+  when: should_continue | bool
+
+# Verify VM is running now
+- name: Verify VM is running ({{ current_vm }})
+  ansible.builtin.command: "lxc info {{ current_vm }}"
+  register: vm_running_check
+  changed_when: false
+  failed_when: false
+  when: should_continue | bool
+
+# Display final VM status
+- name: Display VM status after configuration ({{ current_vm }})
+  ansible.builtin.debug:
+    msg: >-
+      
+      ═════════════════════════════════════════════════════════
+      GPU PASSTHROUGH STATUS FOR {{ current_vm }}
+      ═════════════════════════════════════════════════════════
+      
+      Status: {{ "✓ SUCCESS" if vm_running_check.stdout is defined and "RUNNING" in vm_running_check.stdout else "✗ FAILED" }}
+      
+      DETAILS:
+      - GPU Type: {{ gpu_type }}
+      - PCI Slot: {{ hostvars[current_vm]['pci_slot'] | default('Auto-assigned') }}
+      - VM Status: {{ vm_running_check.stdout | default('Unknown') | regex_search('Status: [A-Z]+') | default('Status unknown') }}
+      
+      ═════════════════════════════════════════════════════════
+  when: should_continue | bool

@@ -1,0 +1,301 @@
+---
+# 60_configure_vm_gpu_passthrough.yaml - Configure GPU passthrough for LXD VMs
+# 
+# Purpose:
+#   Configures GPU passthrough from baremetal hosts to LXD VMs
+#   Ensures consistent GPU driver versions and prepares VMs for GPU usage
+#
+# Requirements:
+#   - GPUs must be properly reserved with ansible/00_initial_setup/30_reserve_gpus.yaml
+#   - System should have been rebooted after GPU reservation
+#   - VMs must be created with ansible/20_lxd_setup/30-1_create_base_vms.yaml
+#   - Networking must be configured by 30-2_configure_vm_networking.yaml
+#   - Users must be configured by 30-3_configure_vm_users.yaml
+#   - Packages must be installed by 30-4_install_vm_packages.yaml
+#
+# Variables:
+#   Required (from inventory):
+#     - VM has gpu_passthrough: true set in inventory
+#   Optional:
+#     - pci_slot: VM-specific PCI slot for direct passthrough
+#     - gpu_type: Type of GPU (nvidia, amd, intel)
+#
+# Run with: 
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/60_configure_vm_gpu_passthrough.yaml
+#
+# Next Steps:
+#   Run 65_configure_vm_gpu_drivers.yaml to install drivers in VMs
+#   Run 68_test_vm_gpu_passthrough.yaml to verify GPU passthrough configuration
+
+- name: Configure GPU Passthrough for LXD VMs
+  hosts: baremetal
+  become: true
+  gather_facts: true
+  
+  vars:
+    # Technical default that can be overridden in inventory
+    nvidia_driver_version: "570-server"
+    # We don't define any installation-specific variables here - they come from inventory
+  
+  tasks:
+    # PART 1: Display setup intro and check for NVIDIA GPUs
+    - name: Display setup intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🔧 Configuring GPU Passthrough for LXD VMs ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook configures GPU passthrough from baremetal hosts
+          to LXD VMs and ensures consistent GPU driver versions.
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Check for NVIDIA GPU hardware
+    - name: Check for NVIDIA GPU hardware
+      ansible.builtin.shell: lspci | grep -i nvidia
+      register: nvidia_hardware
+      changed_when: false
+      failed_when: false
+      
+    # Set GPU availability facts
+    - name: Set GPU availability facts
+      ansible.builtin.set_fact:
+        has_nvidia_gpu: "{{ nvidia_hardware.rc == 0 }}"
+        
+    # Display detected GPUs
+    - name: Display detected GPUs
+      ansible.builtin.debug:
+        msg: "{{ 'NVIDIA GPUs detected on ' + inventory_hostname if has_nvidia_gpu else 'No NVIDIA GPUs detected on ' + inventory_hostname }}"
+      
+    # Skip host if no NVIDIA GPU detected
+    - name: Skip host if no NVIDIA GPU detected
+      ansible.builtin.meta: end_play
+      when: not has_nvidia_gpu
+    
+    # PART 2: Determine which VMs should have GPU passthrough on this host
+    - name: Get VMs requiring GPU passthrough on this host
+      ansible.builtin.set_fact:
+        host_gpu_vms: []
+        
+    - name: Add VMs requiring GPU passthrough on this host
+      ansible.builtin.set_fact:
+        host_gpu_vms: "{{ host_gpu_vms + [item] }}"
+      loop: "{{ groups['gpu_passthrough_vms'] | default([]) }}"
+      when: 
+        - hostvars[item] is defined
+        - hostvars[item].parent_host is defined
+        - hostvars[item].parent_host == inventory_hostname
+        - hostvars[item].gpu_passthrough | default(false) | bool
+        
+    # Display VMs list
+    - name: Display VMs with GPU passthrough on this host
+      ansible.builtin.debug:
+        msg: |
+          VMs configured for GPU passthrough on {{ inventory_hostname }}:
+          {{ host_gpu_vms | length }} VMs found: {{ host_gpu_vms | join(', ') }}
+    
+    # PART 3: Check if GPUs are properly reserved for passthrough
+    - name: Check if GPUs are properly reserved for passthrough
+      ansible.builtin.shell: |
+        # Check if VFIO modules are loaded
+        lsmod | grep -q vfio
+      register: vfio_check
+      changed_when: false
+      failed_when: false
+    
+    - name: Display VFIO status
+      ansible.builtin.debug:
+        msg: "VFIO Status: {{ vfio_check.rc == 0 | ternary('✓ VFIO modules loaded', '✗ VFIO modules not loaded - GPUs may not be reserved properly') }}"
+    
+    - name: Verify VFIO-PCI binding for GPUs
+      ansible.builtin.shell: |
+        # Check if any NVIDIA GPU is bound to vfio-pci
+        lspci -nnk | grep -A3 "NVIDIA" | grep -q "Kernel driver in use: vfio-pci"
+      register: vfio_binding_check
+      changed_when: false
+      failed_when: false
+      when: vfio_check.rc == 0
+    
+    - name: Display VFIO binding status
+      ansible.builtin.debug:
+        msg: "VFIO GPU Binding: {{ vfio_binding_check.rc == 0 | ternary('✓ GPUs properly bound to VFIO-PCI', '✗ No GPUs bound to VFIO-PCI - reservation may not be complete') }}"
+      when: vfio_check.rc == 0
+    
+    - name: Confirm GPU reservation
+      ansible.builtin.assert:
+        that:
+          - vfio_check.rc == 0
+          - vfio_binding_check.rc == 0
+        fail_msg: |
+          ERROR: GPUs are not properly reserved for passthrough!
+          
+          Please run the GPU reservation playbook first:
+            ./scripts/run_ansible.sh ansible/00_initial_setup/30_reserve_gpus.yaml
+            
+          And then reboot your system before retrying this playbook.
+        success_msg: "✓ GPUs are properly reserved and bound to VFIO-PCI driver"
+      when: host_gpu_vms | length > 0
+    
+    # PART 4: Install NVIDIA Drivers on the host
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - ubuntu-drivers-common
+          - "nvidia-driver-{{ nvidia_driver_version }}"
+          - "nvidia-utils-{{ nvidia_driver_version }}"
+        state: present
+        update_cache: yes
+      async: 600  # Give it 10 minutes to complete
+      poll: 10    # Check every 10 seconds
+      when: host_gpu_vms | length > 0
+      
+    # Pin the NVIDIA driver packages to prevent auto-updates
+    - name: Create apt preferences file to pin NVIDIA packages
+      ansible.builtin.copy:
+        dest: /etc/apt/preferences.d/nvidia-pin
+        content: |
+          # Pin NVIDIA packages to prevent automatic updates
+          Package: nvidia-*
+          Pin: version {{ nvidia_driver_version }}*
+          Pin-Priority: 1001
+          
+          Package: libnvidia-*
+          Pin: version {{ nvidia_driver_version }}*
+          Pin-Priority: 1001
+          
+          Package: libcuda*
+          Pin: version {{ nvidia_driver_version }}*
+          Pin-Priority: 1001
+        mode: '0644'
+      when: host_gpu_vms | length > 0
+    
+    # PART 5: Configure GPU passthrough for VMs
+    - name: Stop LXD service
+      ansible.builtin.systemd:
+        name: snap.lxd.daemon
+        state: stopped
+      when: host_gpu_vms | length > 0
+    
+    # Start LXD service
+    - name: Start LXD service
+      ansible.builtin.systemd:
+        name: snap.lxd.daemon
+        state: started
+      when: host_gpu_vms | length > 0
+    
+    # Verify LXD is running
+    - name: Verify LXD service is running
+      ansible.builtin.command: systemctl is-active snap.lxd.daemon
+      register: lxd_status
+      changed_when: false
+      failed_when: lxd_status.stdout != "active"
+      when: host_gpu_vms | length > 0
+    
+    # Wait for LXD to start
+    - name: Wait for LXD to start
+      ansible.builtin.pause:
+        seconds: 10
+      when: host_gpu_vms | length > 0
+    
+    # PART 6: Configure GPU passthrough for each VM sequentially
+    # Process each VM sequentially
+    - name: Process each VM for GPU passthrough
+      include_tasks: tasks/configure_vm_gpu_passthrough.yaml
+      vars:
+        current_vm: "{{ item }}"
+      loop: "{{ host_gpu_vms }}"
+      loop_control:
+        label: "{{ item }}"
+        pause: 2  # Small pause between VMs
+      when: host_gpu_vms | length > 0
+    
+    # PART 7: Create validation script for future use
+    - name: Create validation script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/validate-gpu-vms.sh
+        content: |
+          #!/bin/bash
+          # Validation script for GPU passthrough to VMs
+          # Generated by Ansible on {{ ansible_date_time.date }}
+          
+          RED='\033[0;31m'
+          GREEN='\033[0;32m'
+          YELLOW='\033[0;33m'
+          NC='\033[0m' # No Color
+          
+          echo -e "${YELLOW}====== GPU Passthrough Validation for {{ inventory_hostname }} ======${NC}"
+          echo "Checking GPU passthrough for {{ host_gpu_vms | length }} VMs:"
+          
+          # Check VFIO modules
+          echo -e "\n${YELLOW}Checking VFIO modules:${NC}"
+          if lsmod | grep -q vfio; then
+            echo -e "${GREEN}✓ VFIO modules are loaded${NC}"
+          else
+            echo -e "${RED}✗ VFIO modules are not loaded${NC}"
+            exit 1
+          fi
+          
+          # Check GPU binding
+          echo -e "\n${YELLOW}Checking GPU binding:${NC}"
+          if lspci -nnk | grep -A3 "NVIDIA" | grep -q "Kernel driver in use: vfio-pci"; then
+            echo -e "${GREEN}✓ GPUs are bound to VFIO-PCI${NC}"
+          else
+            echo -e "${RED}✗ No GPUs bound to VFIO-PCI${NC}"
+            exit 1
+          fi
+          
+          # Check each VM
+          {% for vm in host_gpu_vms %}
+          echo -e "\n${YELLOW}Checking VM {{ vm }}:${NC}"
+          if lxc exec {{ vm }} -- nvidia-smi --query-gpu=gpu_name,driver_version --format=csv,noheader 2>/dev/null; then
+            echo -e "${GREEN}✓ GPU is working in {{ vm }}${NC}"
+          else
+            echo -e "${RED}✗ GPU is not working in {{ vm }}${NC}"
+          fi
+          {% endfor %}
+          
+          echo -e "\n${YELLOW}==== Validation Complete ====${NC}"
+        mode: '0755'
+      when: host_gpu_vms | length > 0
+    
+    # PART 8: Calculate success/failure and display final message
+    - name: Gather GPU passthrough status for all VMs
+      ansible.builtin.set_fact:
+        gpu_passthrough_success: "{{ gpu_passthrough_success | default(0) | int + 1 }}"
+      loop: "{{ host_gpu_vms }}"
+      loop_control:
+        loop_var: vm_name
+      when: 
+        - hostvars[vm_name] is defined
+        - hostvars[vm_name].gpu_passthrough_status is defined
+        - hostvars[vm_name].gpu_passthrough_status.nvidia_smi_check.rc is defined
+        - hostvars[vm_name].gpu_passthrough_status.nvidia_smi_check.rc == 0
+    
+    - name: Set default GPU passthrough success count if not set
+      ansible.builtin.set_fact:
+        gpu_passthrough_success: 0
+      when: gpu_passthrough_success is not defined
+    
+    # PART 9: Final summary message
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          ✅ GPU Passthrough Configuration Complete ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          GPU passthrough has been successfully configured for {{ host_gpu_vms | length }} VMs on {{ inventory_hostname }}.
+          
+          VMs with GPU passthrough:
+          {% for vm in host_gpu_vms %}
+          - {{ vm }}{% if hostvars[vm]['pci_slot'] is defined %} (PCI: {{ hostvars[vm]['pci_slot'] }}){% endif %}
+          {% endfor %}
+          
+          NEXT STEPS:
+          1. Install GPU drivers in VMs: 65_configure_vm_gpu_drivers.yaml
+          2. Validate GPU passthrough: 68_test_vm_gpu_passthrough.yaml
+          
+          ═════════════════════════════════════════════════════════

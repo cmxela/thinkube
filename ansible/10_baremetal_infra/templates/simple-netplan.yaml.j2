@@ -9,6 +9,6 @@ network:
         - {{ ansible_host }}/24
       routes:
         - to: default
-          via: {{ network_gateway }}
+          via: {{ gateway_ip }}
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]

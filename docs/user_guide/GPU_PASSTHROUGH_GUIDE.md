@@ -156,10 +156,12 @@ tkw1:
 
 ## Verification
 
-After configuration and host reboot, verify GPU passthrough with:
+Verify GPU passthrough in two phases:
+
+### 1. Host GPU Binding Verification
 
 ```bash
-# Run the test playbook
+# Run the host test playbook
 ./scripts/run_ansible.sh ansible/00_initial_setup/38_test_gpu_reservation.yaml
 
 # Check specific host
@@ -170,13 +172,101 @@ After configuration and host reboot, verify GPU passthrough with:
 ./scripts/run_ssh_command.sh bcn1 "systemctl status vfio-bind*"
 ```
 
-The test playbook will:
+The host test playbook will:
 1. Verify IOMMU is enabled
 2. Check if the correct GPUs are bound to vfio-pci
 3. Verify GPU configuration matches inventory settings
 4. Report detailed status for troubleshooting
 
+### 2. VM GPU Functionality Verification
+
+```bash
+# Run the VM test playbook 
+./scripts/run_ansible.sh ansible/20_lxd_setup/68_test_vm_gpu_passthrough.yaml
+
+# Manual verification
+./scripts/run_ssh_command.sh tkw1 "nvidia-smi"  # Check GPU status
+./scripts/run_ssh_command.sh tkw1 "nvcc --version" # Check CUDA compiler
+```
+
+The VM test playbook will:
+1. Check that GPUs are visible in the VM
+2. Verify NVIDIA drivers are loaded and functioning
+3. Test CUDA functionality
+4. Run a basic GPU test
+
+Note that the GPU must be properly bound to vfio-pci on the host AND have working drivers in the VM to function correctly.
+
 ## Troubleshooting
+
+### VM Does Not See GPU After Configuration
+
+If the GPU is properly bound to vfio-pci on the host but not visible in the VM:
+
+1. **Check the LXD device configuration**:
+   ```bash
+   lxc config device show vm-name
+   ```
+   Look for devices with type "pci" that match your GPU and its audio component.
+
+2. **Verify the correct PCI address format**:
+   ```yaml
+   # INCORRECT (old format):
+   lxc config device add vm-name gpu gpu pci=01:00.0
+   
+   # CORRECT (new format):
+   lxc config device add vm-name gpu pci address=01:00.0
+   ```
+   The syntax changed in newer LXD versions.
+
+3. **Audio device missing**:
+   ```bash
+   # Check if both GPU and audio devices are bound to vfio-pci
+   lspci -nnk | grep -A3 "NVIDIA"
+   ```
+   Ensure both the GPU (e.g., 01:00.0) and its audio component (e.g., 01:00.1) show "Kernel driver in use: vfio-pci".
+   
+4. **Restart the VM**:
+   ```bash
+   lxc stop vm-name --force
+   lxc start vm-name
+   ```
+   Sometimes a clean restart is needed after configuration changes.
+
+### NVIDIA Drivers Not Working in VM
+
+If the GPU is visible in the VM but nvidia-smi fails:
+
+1. **Clean existing packages**:
+   ```bash
+   # Inside the VM
+   apt purge -y 'nvidia*' 'libnvidia*'
+   apt autoremove -y
+   apt update
+   ```
+
+2. **Install the correct driver version**:
+   ```bash
+   # Use the exact same version as the host
+   apt install -y nvidia-driver-570-server nvidia-utils-570-server
+   ```
+
+3. **Check for module loading**:
+   ```bash
+   lsmod | grep nvidia
+   ```
+   If no modules are loaded, try `modprobe nvidia`.
+
+4. **Ubuntu 24.04 (Noble) PPA issues**:
+   For Ubuntu 24.04 VMs, the graphics-drivers PPA may have configuration conflicts. Try:
+   ```bash
+   # Remove any conflicting PPA files
+   rm -f /etc/apt/sources.list.d/*graphics-drivers*
+   
+   # Use the standard repositories
+   apt update
+   apt install -y nvidia-driver-570-server
+   ```
 
 ### IOMMU Group Issues
 
@@ -267,6 +357,25 @@ For systems with multiple identical GPUs where one needs to be passed through wh
    ```
 
 2. This creates a systemd service that binds only the specified PCI slot to vfio-pci
+
+### GPU and Audio Device Handling
+
+For NVIDIA GPUs, both the primary GPU device and its audio component must be properly passed through:
+
+1. The audio component of a GPU (for example, PCI 01:00.1) is critical for passthrough
+2. Both the GPU and its audio component must be bound to vfio-pci
+3. Thinkube uses two approaches for handling this:
+   - **Primary GPU Binding**: Using vfio-bind.sh to bind the main GPU device
+   - **Audio Device Binding**: Using vfio-bind-audio.sh and udev rules to handle audio components
+
+4. Example of proper PCI device attachment in a VM:
+   ```bash
+   # Add the GPU device
+   lxc config device add vm-name gpu pci address=01:00.0  # Main GPU
+   
+   # Add the associated audio device from the same IOMMU group
+   lxc config device add vm-name gpu-audio pci address=01:00.1  # GPU audio component
+   ```
 
 ### Creating Custom vfio-bind Scripts
 

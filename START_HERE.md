@@ -145,42 +145,66 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Review any LXD-specific documentation
 
 - [x] **Test Playbook Development (x8)**
-  - [x] Create `ansible/20_lxd_setup/18_test_lxd_profiles.yaml`
+  - [x] Create `ansible/20_lxd_setup/18_test_lxd_cluster.yaml`
+    - [x] Test for LXD cluster initialization
+    - [x] Test for cluster joining
+    - [x] Test for cluster functionality
+  - [x] Create `ansible/20_lxd_setup/28_test_lxd_profiles.yaml`
     - [x] Test for profile creation
     - [x] Test for profile configuration
-    - [x] Test for VM creation with profiles
-  - [x] Create `ansible/20_lxd_setup/28_test_vm_creation.yaml`
+  - [x] Create `ansible/20_lxd_setup/38-1_test_base_vms.yaml` and related test playbooks
     - [x] Test for VM existence
     - [x] Test for VM resource allocation
     - [x] Test for VM network configuration
     - [x] Test for VM accessibility
+  - [x] Create `ansible/20_lxd_setup/68_test_vm_gpu_passthrough.yaml`
+    - [x] Test for GPU passthrough to VMs
+    - [x] Test for NVIDIA driver functionality
+    - [x] Test for CUDA support
 
-- [ ] **Implementation Playbooks**
-  - [ ] Develop `ansible/20_lxd_setup/10_setup_lxd_profiles.yaml`
-    - [ ] Implement profile creation
-    - [ ] Configure network profiles
-    - [ ] Configure resource profiles
-    - [ ] Configure GPU profiles if applicable
-    - [ ] Verify tests pass for each section
-  - [ ] Develop `ansible/20_lxd_setup/20_create_vms.yaml`
-    - [ ] Implement VM creation
-    - [ ] Configure VM resources
-    - [ ] Configure VM networks
-    - [ ] Ensure VMs are accessible
-    - [ ] Verify tests pass for each section
+- [x] **Implementation Playbooks**
+  - [x] Develop `ansible/20_lxd_setup/10_setup_lxd_cluster.yaml`
+    - [x] Implement LXD cluster initialization
+    - [x] Configure cluster membership
+    - [x] Set up storage backends
+    - [x] Verify tests pass for each section
+  - [x] Develop `ansible/20_lxd_setup/20_setup_lxd_profiles.yaml`
+    - [x] Implement profile creation
+    - [x] Configure network profiles
+    - [x] Configure resource profiles
+    - [x] Configure GPU profiles
+    - [x] Verify tests pass for each section
+  - [x] Develop VM creation and configuration playbooks
+    - [x] Implement `ansible/20_lxd_setup/30-1_create_base_vms.yaml` for VM creation
+    - [x] Implement `ansible/20_lxd_setup/30-2_configure_vm_networking.yaml` for networking
+    - [x] Implement `ansible/20_lxd_setup/30-3_configure_vm_users.yaml` for user setup
+    - [x] Implement `ansible/20_lxd_setup/30-4_install_vm_packages.yaml` for packages
+    - [x] Verify tests pass for each section
+  - [x] Implement GPU passthrough for VMs
+    - [x] Create `ansible/00_initial_setup/30_reserve_gpus.yaml` for host GPU binding
+    - [x] Create `ansible/00_initial_setup/38_test_gpu_reservation.yaml` for host testing
+    - [x] Develop `ansible/20_lxd_setup/60_configure_vm_gpu_passthrough.yaml` for VM passthrough
+    - [x] Develop `ansible/20_lxd_setup/65_configure_vm_gpu_drivers.yaml` for driver installation
+    - [x] Implement audio device handling for NVIDIA GPUs
+    - [x] Verify GPU functionality in VMs
 
-- [ ] **Rollback Playbook (x9)**
-  - [ ] Create `ansible/20_lxd_setup/19_rollback_lxd_profiles.yaml`
-  - [ ] Create `ansible/20_lxd_setup/29_rollback_vm_creation.yaml`
+- [x] **Rollback Playbook (x9)**
+  - [x] Create `ansible/20_lxd_setup/19_rollback_lxd_cluster.yaml`
+  - [x] Create `ansible/20_lxd_setup/29_rollback_lxd_profiles.yaml`
+  - [x] Create `ansible/20_lxd_setup/39_rollback_vm_creation.yaml`
+  - [x] Create `ansible/20_lxd_setup/69_rollback_vm_gpu_passthrough.yaml`
+  - [x] Create `ansible/00_initial_setup/39_rollback_gpu_reservation.yaml`
 
-- [ ] **Integration Verification**
-  - [ ] Run complete phase deployment
-  - [ ] Verify with test playbooks
-  - [ ] Document any issues encountered
+- [x] **Integration Verification**
+  - [x] Run complete phase deployment
+  - [x] Verify with test playbooks
+  - [x] Document issues encountered with GPU passthrough
+  - [x] Successfully configure GPU passthrough on all target VMs
 
-- [ ] **Phase Completion**
-  - [ ] Create lessons learned document
-  - [ ] Update architecture documentation if needed
+- [x] **Phase Completion**
+  - [x] Create lessons learned document for GPU passthrough in `docs/architecture/20_lxd_setup/GPU_PASSTHROUGH_LESSONS.md`
+  - [x] Update user guide in `docs/user_guide/GPU_PASSTHROUGH_GUIDE.md`
+  - [x] Update architecture documentation in `CLAUDE.md`
   - [ ] Create pull request to main branch
   - [ ] Add PR link: [PR #X](#)
 

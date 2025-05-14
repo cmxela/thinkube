@@ -178,6 +178,10 @@ Playbooks are designed to:
   - **38_test_gpu_reservation.yaml**: Verifies GPU passthrough configuration after reboot
   - **39_rollback_gpu_reservation.yaml**: Removes GPU passthrough configuration
   - **39_rollback_gpu_reservation_08.yaml**: Rollback for older (08_reserve_gpus.yaml) configuration
+  - **60_configure_vm_gpu_passthrough.yaml**: Configures LXD VMs for GPU passthrough
+  - **65_configure_vm_gpu_drivers.yaml**: Installs NVIDIA drivers inside VMs
+  - **68_test_vm_gpu_passthrough.yaml**: Tests GPU passthrough functionality in VMs
+  - **69_rollback_vm_gpu_passthrough.yaml**: Removes GPU passthrough configuration from VMs
 
 - Configured systems:
   - **bcn1**: Desktop system with 2× NVIDIA RTX 3090s with mixed configuration:
@@ -187,6 +191,12 @@ Playbooks are designed to:
     - **Status: Working correctly** - GPU at 01:00.0 bound to vfio-pci, AMD GPU used for display
   - **bcn2**: Headless server with NVIDIA GTX 1080Ti 
     - **Status: Working correctly** - GTX 1080Ti bound to vfio-pci
+
+- Configured VMs:
+  - **tkw1**: VM on bcn1 with RTX 3090 passthrough
+    - **Status: Working correctly** - NVIDIA drivers installed, GPU accessible
+  - **tkc**: VM on bcn2 with GTX 1080Ti passthrough
+    - **Status: Working correctly** - NVIDIA drivers installed, GPU accessible
 
 ### Implementation Details
 - For systems with identical GPUs (like bcn1 with two RTX 3090s), we use:
@@ -206,6 +216,27 @@ For bcn1's mixed GPU configuration:
    - Also binds the associated audio device (01:00.1) to vfio-pci
 3. This allows selective binding of one RTX 3090 while leaving the other available to the host
 
+### Audio Device Handling
+For proper GPU passthrough, both the GPU and its associated audio device must be properly bound to vfio-pci:
+1. The vfio-bind.sh script handles binding main GPU devices
+2. A new vfio-bind-audio.sh script is used to specifically handle audio components
+3. A udev rule (vfio-pci-audio.rules) is created to:
+   - Detect when GPU audio devices are added to the system
+   - Trigger the audio binding script automatically
+   - Prevent the snd_hda_intel driver from claiming GPU audio devices
+4. This ensures complete IOMMU group passthrough which is required for NVIDIA GPUs
+
+### VM GPU Configuration
+When configuring VMs for GPU passthrough:
+1. Use the LXD device config format: `lxc config device add <vm> gpu pci address=XX:XX.X`
+2. For NVIDIA GPUs, both the primary device and audio device must be passed through
+3. The 65_configure_vm_gpu_drivers.yaml playbook handles:
+   - Installing appropriate NVIDIA drivers inside the VM
+   - Setting up CUDA development tools
+   - Properly loading kernel modules
+   - Pinning package versions to prevent unwanted updates
+4. For Ubuntu 24.04 (Noble) VMs, PPA management requires special handling
+
 ### Improved Test Playbook
 The test playbook (38_test_gpu_reservation.yaml) has been enhanced to:
 1. Support mixed GPU setups like bcn1 with special handling for IOMMU group binding
@@ -217,14 +248,22 @@ The test playbook (38_test_gpu_reservation.yaml) has been enhanced to:
 3. Explicitly convert numeric values to integers for reliable comparison
 4. Provide detailed diagnostics for troubleshooting
 
-### Verification After Reboot
-After rebooting the systems, verify GPU passthrough with:
+### Verification After Configuration
+Verify GPU passthrough with:
 ```bash
-# Run verification playbook for all systems
+# Check host GPU binding
 ./scripts/run_ansible.sh ansible/00_initial_setup/38_test_gpu_reservation.yaml
 
 # Check VFIO binding manually if needed
 ./scripts/run_ssh_command.sh bcn1 "lspci -nnk | grep -A3 NVIDIA"
 ./scripts/run_ssh_command.sh bcn1 "systemctl status vfio-bind*"
 ./scripts/run_ssh_command.sh bcn2 "lspci -nnk | grep -A3 NVIDIA"
+
+# Check VM GPU availability 
+./scripts/run_ssh_command.sh tkw1 "nvidia-smi"
+./scripts/run_ssh_command.sh tkc "nvidia-smi"
+
+# Check CUDA functionality
+./scripts/run_ssh_command.sh tkw1 "nvcc --version"
+./scripts/run_ssh_command.sh tkc "nvcc --version"
 ```

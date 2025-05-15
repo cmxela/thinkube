@@ -1,0 +1,191 @@
+---
+# 35_configure_vm_python.yaml - Configure Python virtual environments in LXD VMs
+#
+# Purpose:
+#   Sets up Python virtual environments in LXD VMs
+#   Creates the Python interpreter path expected in inventory
+#   Installs required Python packages for Ansible automation
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#   - Packages must be installed by 30-4_install_vm_packages.yaml
+#
+# Variables:
+#   Required (from inventory):
+#     - ansible_python_interpreter: Path to Python interpreter (defined in inventory)
+#
+# Run with: 
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/35_configure_vm_python.yaml
+
+- name: Configure Python Virtual Environments in LXD VMs
+  hosts: management
+  gather_facts: true
+  vars:
+    # Collect LXD VM hostnames for configuration
+    vms_to_configure: "{{ groups['lxd_containers'] | default([]) }}"
+  
+  tasks:
+    - name: Display configuration intro message
+      ansible.builtin.debug:
+        msg: |
+          
+          ═════════════════════════════════════════════════════════
+          🐍 Configuring Python in VMs ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          Setting up Python virtual environments in VMs:
+          - Installing python3-venv package
+          - Creating virtual environment at /home/thinkube/.venv/ansible
+          - Installing required Python packages
+          
+          VMs to configure: {{ vms_to_configure | join(', ') }}
+          
+          Python interpreter path from inventory:
+          {{ hostvars[groups['lxd_containers'][0]]['ansible_python_interpreter'] }}
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Verify we have VMs to configure
+    - name: Check if we have VMs to configure
+      ansible.builtin.assert:
+        that:
+          - vms_to_configure | length > 0
+        fail_msg: |
+          ERROR: No VMs found to configure Python environments
+          
+          DETAILS:
+          - No VMs were found in the inventory group 'lxd_containers'
+          
+          REQUIRED ACTION:
+          - Make sure VMs are created first using 30-1_create_base_vms.yaml
+          - Ensure VMs are in the 'lxd_containers' inventory group
+        success_msg: "✓ Found {{ vms_to_configure | length }} VMs to configure: {{ vms_to_configure | join(', ') }}"
+
+    # Verify interpreter path is defined in inventory
+    - name: Check if ansible_python_interpreter is defined in inventory
+      ansible.builtin.set_fact:
+        interpreter_path: "{{ hostvars[groups['lxd_containers'][0]]['ansible_python_interpreter'] }}"
+      register: interpreter_check
+      failed_when: false
+
+    - name: Verify ansible_python_interpreter is properly defined
+      ansible.builtin.assert:
+        that:
+          - hostvars[groups['lxd_containers'][0]]['ansible_python_interpreter'] is defined
+          - hostvars[groups['lxd_containers'][0]]['ansible_python_interpreter'] | length > 0
+        fail_msg: |
+          ERROR: ansible_python_interpreter not defined in inventory
+          
+          DETAILS:
+          - This variable should be defined in the inventory for the lxd_containers group
+          
+          REQUIRED ACTION:
+          - Add ansible_python_interpreter to inventory for lxd_containers
+        success_msg: "✓ ansible_python_interpreter is defined as: {{ hostvars[groups['lxd_containers'][0]]['ansible_python_interpreter'] }}"
+
+    # Configure each VM
+    - name: Install python3-venv package
+      ansible.builtin.command: >
+        lxc exec {{ current_vm }} -- apt-get install -y python3-venv
+      register: venv_install
+      changed_when: true
+      failed_when: venv_install.rc != 0
+      retries: 2
+      delay: 5
+      until: venv_install.rc == 0
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+    
+    # Create the directory structure for venv
+    - name: Create directory for virtual environment
+      ansible.builtin.command: >
+        lxc exec {{ current_vm }} --
+        bash -c 'mkdir -p /home/thinkube/.venv'
+      register: dir_create
+      changed_when: true
+      failed_when: dir_create.rc != 0
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+    
+    # Set ownership
+    - name: Set proper ownership of venv directory
+      ansible.builtin.command: >
+        lxc exec {{ current_vm }} --
+        chown -R thinkube:thinkube /home/thinkube/.venv
+      register: ownership_set
+      changed_when: true
+      failed_when: ownership_set.rc != 0
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+    
+    # Create virtual environment
+    - name: Create Python virtual environment
+      ansible.builtin.command: >
+        lxc exec {{ current_vm }} --
+        sudo -u thinkube python3 -m venv /home/thinkube/.venv/ansible
+      register: venv_create
+      changed_when: true
+      failed_when: venv_create.rc != 0
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+    
+    # Install required Python packages in the venv
+    - name: Install Python packages in virtual environment
+      ansible.builtin.command: >
+        lxc exec {{ current_vm }} --
+        sudo -u thinkube /home/thinkube/.venv/ansible/bin/pip install --upgrade pip ansible-core
+      register: pip_install
+      changed_when: true
+      failed_when: pip_install.rc != 0
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+    
+    # Verify the Python interpreter exists
+    - name: Verify Python interpreter exists
+      ansible.builtin.command: >
+        lxc exec {{ current_vm }} --
+        test -f {{ hostvars[current_vm]['ansible_python_interpreter'] }}
+      register: interpreter_verify
+      changed_when: false
+      failed_when: interpreter_verify.rc != 0
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+    
+    # Display success message
+    - name: Display Python setup success
+      ansible.builtin.debug:
+        msg: "✅ Python environment configured successfully on {{ current_vm }}"
+      loop: "{{ vms_to_configure }}"
+      loop_control:
+        loop_var: current_vm
+    
+    # Final completion message
+    - name: Display Python configuration completion message
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════════════════════
+          ✅ Python Virtual Environments Configured Successfully
+          ════════════════════════════════════════════════════════════════════════
+          
+          DETAILS:
+            ✓ Python virtual environments created on all VMs
+            ✓ Required Python packages installed
+            ✓ Python interpreter path verified
+          
+          Configured VMs:
+          {% for vm in vms_to_configure %}
+          - {{ vm }}: {{ hostvars[vm]['ansible_python_interpreter'] }}
+          {% endfor %}
+          
+          NEXT STEPS:
+            Now you can proceed with the 30_networking playbooks:
+            $ ./scripts/run_ansible.sh ansible/30_networking/10_setup_zerotier.yaml
+          
+          ════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,175 @@
+---
+# 29_reset_dns.yaml - Reset DNS server configuration if needed
+#
+# Purpose:
+#   Removes DNS server configuration
+#   Resets bind9 to default state
+#   Cleans up zone files and configuration
+#
+# Requirements:
+#   - DNS server previously configured with 20_setup_dns.yaml
+#
+# Run with:
+#   ./scripts/run_ansible.sh ansible/30_networking/29_reset_dns.yaml
+
+- name: Reset DNS Server Configuration
+  hosts: dns
+  gather_facts: true
+  
+  tasks:
+    # Phase 1: Confirm reset operation
+    - name: Display warning message
+      ansible.builtin.debug:
+        msg: |
+          
+          ═══════════════════════════════════════════════════════════════════
+          ⚠️  WARNING: DNS Server Reset ({{ inventory_hostname }})
+          ═══════════════════════════════════════════════════════════════════
+          
+          This playbook will COMPLETELY REMOVE your DNS configuration:
+          - All zone files in /etc/bind/zones/
+          - All bind9 configuration changes
+          - All DNS records for {{ domain_name }}
+          
+          This is destructive and will affect service discovery.
+          To cancel, press Ctrl+C now.
+          
+          ═══════════════════════════════════════════════════════════════════
+      
+    - name: Pause for 10 seconds to allow cancellation
+      ansible.builtin.pause:
+        seconds: 10
+        prompt: "Proceeding with DNS reset in 10 seconds... Press Ctrl+C to abort"
+    
+    # Phase 2: Stop and disable bind9 service
+    - name: Stop and disable bind9 service
+      ansible.builtin.systemd:
+        name: bind9
+        state: stopped
+        enabled: no
+      become: true
+      
+    # Phase 3: Remove zone files
+    - name: Remove zone files
+      ansible.builtin.file:
+        path: "/etc/bind/zones"
+        state: absent
+      become: true
+      
+    # Phase 4: Reset named.conf files to defaults
+    - name: Reset named.conf.local
+      ansible.builtin.copy:
+        content: |
+          //
+          // Default named.conf.local file
+          // Do local configurations here
+          //
+        dest: /etc/bind/named.conf.local
+        owner: bind
+        group: bind
+        mode: '0644'
+      become: true
+      
+    - name: Reset named.conf.options
+      ansible.builtin.shell: |
+        if [ -f /etc/bind/named.conf.options.original ]; then
+          cp /etc/bind/named.conf.options.original /etc/bind/named.conf.options
+        else
+          cat > /etc/bind/named.conf.options << EOF
+          options {
+              directory "/var/cache/bind";
+              recursion yes;
+              allow-recursion { 127.0.0.1; };
+              listen-on { 127.0.0.1; };
+              forwarders {
+                  8.8.8.8;
+                  8.8.4.4;
+              };
+              dnssec-validation auto;
+          };
+          EOF
+        fi
+      become: true
+      
+    # Phase 5: Reset systemd-resolved configuration
+    - name: Reset systemd-resolved configuration
+      ansible.builtin.copy:
+        content: |
+          #
+          # Default systemd-resolved configuration
+          #
+          [Resolve]
+          DNS=8.8.8.8 8.8.4.4
+          #FallbackDNS=
+          #Domains=
+          #LLMNR=yes
+          #MulticastDNS=yes
+          #DNSSEC=no
+          Cache=yes
+          DNSStubListener=yes
+        dest: /etc/systemd/resolved.conf
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      
+    - name: Restart systemd-resolved
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+      become: true
+      
+    # Phase 6: Purge and reinstall bind9 if requested
+    - name: Purge and reinstall bind9
+      block:
+        - name: Purge bind9 packages
+          ansible.builtin.apt:
+            name:
+              - bind9
+              - bind9utils
+              - bind9-doc
+            state: absent
+            purge: yes
+          become: true
+          
+        - name: Remove bind data directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          with_items:
+            - /var/cache/bind
+            - /var/lib/bind
+            - /var/log/named
+          become: true
+          
+        - name: Reinstall bind9 packages
+          ansible.builtin.apt:
+            name:
+              - bind9
+              - bind9utils
+              - bind9-doc
+            state: present
+            update_cache: yes
+          become: true
+      when: false  # Set to true if full purge and reinstall is needed
+      
+    # Phase 7: Display completion message
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          ✅ DNS Server Reset Completed ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════
+          
+          The DNS server configuration has been reset to default.
+          
+          IMPORTANT:
+          - All zone files have been removed
+          - Bind9 configuration has been reset
+          - Resolver configuration has been reset
+          
+          You can now reconfigure DNS with:
+          ./scripts/run_ansible.sh ansible/30_networking/20_setup_dns.yaml
+          
+          ════════════════════════════════════════════════════════

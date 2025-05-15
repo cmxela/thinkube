@@ -1,0 +1,240 @@
+---
+# 20_setup_dns.yaml - Configure DNS server for service discovery
+#
+# Purpose:
+#   Sets up a DNS server (bind9) for service discovery and domain resolution
+#   Creates zone files for the primary domain and knative subdomain
+#   Configures wildcard records for service access
+#
+# Requirements:
+#   - ZeroTier network configured
+#   - DNS server VM (dns1) created and accessible
+#   - Domain name defined in inventory
+#
+# Variables:
+#   - domain_name: Primary domain name from inventory
+#   - dns_forwarders: External DNS servers for forwarding
+#   - dns_interfaces: Network interfaces for the DNS server to listen on
+#
+# Run with:
+#   ./scripts/run_ansible.sh ansible/30_networking/20_setup_dns.yaml
+
+- name: Configure DNS Server for Service Discovery
+  hosts: dns
+  gather_facts: true
+  
+  vars:
+    dns_forwarders: "{{ dns_servers }}"
+    dns_interfaces: ["127.0.0.1", "{{ hostvars[inventory_hostname]['zerotier_ip'] }}", 
+                     "{{ hostvars[inventory_hostname]['lan_ip'] }}", 
+                     "{{ hostvars[inventory_hostname]['internal_ip'] }}"]
+    ingress_ip: "192.168.191.200"  # Main ingress IP for services
+    knative_ingress_ip: "192.168.191.201"  # Knative ingress IP
+  
+  tasks:
+    # Phase 1: Verify prerequisites
+    - name: Verify domain_name is defined
+      ansible.builtin.fail:
+        msg: "domain_name is not defined. Please set it in inventory."
+      when: domain_name is not defined or domain_name == ""
+    
+    - name: Display DNS configuration information
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          DNS Configuration Setup ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════
+          
+          Domain: {{ domain_name }}
+          DNS Server IP: {{ hostvars[inventory_hostname]['zerotier_ip'] }}
+          DNS Interfaces: {{ dns_interfaces | join(', ') }}
+          DNS Forwarders: {{ dns_forwarders | join(', ') }}
+          
+          Main Ingress IP: {{ ingress_ip }}
+          Knative Ingress IP: {{ knative_ingress_ip }}
+          
+          ════════════════════════════════════════════════════════
+    
+    # Phase 2: Install DNS server software
+    - name: Install bind9 and related packages
+      ansible.builtin.apt:
+        name:
+          - bind9
+          - bind9utils
+          - bind9-doc
+        state: present
+        update_cache: yes
+      register: bind9_install
+      become: true
+    
+    # Phase 3: Create directories for DNS configuration
+    - name: Create zones directory
+      ansible.builtin.file:
+        path: /etc/bind/zones
+        state: directory
+        owner: bind
+        group: bind
+        mode: '0755'
+      become: true
+    
+    - name: Create logs directory
+      ansible.builtin.file:
+        path: /var/log/named
+        state: directory
+        owner: bind
+        group: bind
+        mode: '0755'
+      become: true
+    
+    # Phase 4: Configure named.conf.options and named.conf.local
+    - name: Configure named.conf.options
+      ansible.builtin.template:
+        src: templates/named.conf.options.j2
+        dest: /etc/bind/named.conf.options
+        owner: bind
+        group: bind
+        mode: '0644'
+      notify: Restart bind9
+      become: true
+    
+    - name: Configure named.conf.local
+      ansible.builtin.template:
+        src: templates/named.conf.local.j2
+        dest: /etc/bind/named.conf.local
+        owner: bind
+        group: bind
+        mode: '0644'
+      notify: Restart bind9
+      become: true
+    
+    # Phase 5: Create zone files
+    - name: Create main domain zone file
+      ansible.builtin.template:
+        src: templates/db.domain.j2
+        dest: /etc/bind/zones/db.{{ domain_name }}
+        owner: bind
+        group: bind
+        mode: '0644'
+      notify: Restart bind9
+      become: true
+    
+    - name: Create knative domain zone file
+      ansible.builtin.template:
+        src: templates/db.knative.j2
+        dest: /etc/bind/zones/db.kn.{{ domain_name }}
+        owner: bind
+        group: bind
+        mode: '0644'
+      notify: Restart bind9
+      become: true
+    
+    # Phase 6: Enable and start bind9 service
+    - name: Enable and start bind9 service
+      ansible.builtin.systemd:
+        name: bind9
+        state: started
+        enabled: yes
+      register: bind9_service
+      become: true
+    
+    # Phase 7: Configure systemd-resolved to use our DNS server
+    - name: Create resolved.conf template
+      ansible.builtin.template:
+        src: templates/resolved.conf.j2
+        dest: /etc/systemd/resolved.conf
+        owner: root
+        group: root
+        mode: '0644'
+      register: resolved_config
+      become: true
+    
+    - name: Restart systemd-resolved if config changed
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+      when: resolved_config is changed
+      become: true
+    
+    # Phase 8: Verify DNS configuration
+    - name: Check bind9 configuration
+      ansible.builtin.command: named-checkconf
+      register: bind_check
+      changed_when: false
+      failed_when: bind_check.rc != 0
+      become: true
+    
+    - name: Check domain zone file
+      ansible.builtin.command: named-checkzone {{ domain_name }} /etc/bind/zones/db.{{ domain_name }}
+      register: domain_zone_check
+      changed_when: false
+      failed_when: domain_zone_check.rc != 0
+      become: true
+    
+    - name: Check knative zone file
+      ansible.builtin.command: named-checkzone kn.{{ domain_name }} /etc/bind/zones/db.kn.{{ domain_name }}
+      register: knative_zone_check
+      changed_when: false
+      failed_when: knative_zone_check.rc != 0
+      become: true
+    
+    # Phase 9: Test DNS resolution
+    - name: Test DNS resolution for main domain
+      ansible.builtin.command: dig @127.0.0.1 {{ domain_name }} +short
+      register: main_domain_test
+      changed_when: false
+      failed_when: main_domain_test.stdout == ""
+      become: true
+    
+    - name: Test DNS resolution for wildcard domain
+      ansible.builtin.command: dig @127.0.0.1 test.{{ domain_name }} +short
+      register: wildcard_test
+      changed_when: false
+      failed_when: wildcard_test.stdout != ingress_ip
+      become: true
+    
+    - name: Test DNS resolution for knative wildcard
+      ansible.builtin.command: dig @127.0.0.1 test.kn.{{ domain_name }} +short
+      register: knative_wildcard_test
+      changed_when: false
+      failed_when: knative_wildcard_test.stdout != knative_ingress_ip
+      become: true
+    
+    # Phase 10: Display successful completion message
+    - name: Display DNS setup completion message
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          ✅ DNS Server Configuration Completed ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════
+          
+          DNS server has been successfully configured for:
+          - Domain: {{ domain_name }}
+          - Knative Domain: kn.{{ domain_name }}
+          
+          Main DNS Server IP: {{ hostvars[inventory_hostname]['zerotier_ip'] }}
+          
+          DNS records created:
+          - Wildcard *.{{ domain_name }} → {{ ingress_ip }}
+          - Wildcard *.kn.{{ domain_name }} → {{ knative_ingress_ip }}
+          - {{ domain_name }} → {{ hostvars[groups['microk8s_control_plane'][0]]['zerotier_ip'] }}
+          - dns.{{ domain_name }} → {{ hostvars[groups['dns'][0]]['zerotier_ip'] }}
+          
+          Verification tests:
+          - Main domain: {{ main_domain_test.stdout }}
+          - Wildcard domain: {{ wildcard_test.stdout }}
+          - Knative wildcard: {{ knative_wildcard_test.stdout }}
+          
+          NEXT STEPS:
+          1. Configure other hosts to use this DNS server ({{ hostvars[inventory_hostname]['zerotier_ip'] }})
+          2. Continue with MicroK8s deployment
+          
+          ════════════════════════════════════════════════════════
+
+  handlers:
+    - name: Restart bind9
+      ansible.builtin.systemd:
+        name: bind9
+        state: restarted
+      become: true

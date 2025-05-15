@@ -50,3 +50,6 @@ id_*
 *.generated.yaml
 *.generated.yml
 **/.claude/settings.local.json
+
+# Nested repositories
+thinkube-core/

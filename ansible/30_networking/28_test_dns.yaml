@@ -1,0 +1,157 @@
+---
+# 28_test_dns.yaml - Test DNS resolution for Thinkube services
+#
+# Purpose:
+#   Verifies DNS server configuration is working correctly
+#   Tests resolution of domain names and wildcard records
+#   Checks that all hosts can use the DNS server
+#
+# Requirements:
+#   - DNS server configured (20_setup_dns.yaml)
+#   - ZeroTier networking operational
+#
+# Variables:
+#   - domain_name: Primary domain name from inventory
+#
+# Run with:
+#   ./scripts/run_ansible.sh ansible/30_networking/28_test_dns.yaml
+
+- name: Test DNS Resolution for Services
+  hosts: all
+  gather_facts: true
+  
+  vars:
+    dns_server_ip: "{{ hostvars['dns1']['zerotier_ip'] }}"
+    test_domains:
+      - "{{ domain_name }}"
+      - "dns.{{ domain_name }}"
+      - "test.{{ domain_name }}"
+      - "test.kn.{{ domain_name }}"
+  
+  tasks:
+    # Phase 1: Verify DNS server is reachable
+    - name: Check connectivity to DNS server
+      ansible.builtin.command: ping -c 1 {{ dns_server_ip }}
+      register: dns_ping
+      changed_when: false
+      failed_when: false
+      
+    - name: Display DNS server connectivity status
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          DNS Server Connectivity Test ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════
+          
+          DNS Server IP: {{ dns_server_ip }}
+          Ping Result: {% if dns_ping.rc == 0 %}✅ Success{% else %}❌ Failed{% endif %}
+          
+          ════════════════════════════════════════════════════════
+    
+    # Phase 2: Test DNS resolution for various domains
+    - name: Test DNS resolution for each domain
+      ansible.builtin.command: dig @{{ dns_server_ip }} {{ item }} +short +timeout=2 +tries=1
+      register: dig_results
+      changed_when: false
+      failed_when: false  # Don't fail on timeout
+      with_items: "{{ test_domains }}"
+      # Try to use DNS even if ping failed - ZeroTier might block ICMP but allow DNS traffic
+      when: true
+      
+    - name: Process dig results
+      ansible.builtin.set_fact:
+        dns_test_results: "{{ dns_test_results | default({}) | combine({item.item: item.stdout}) }}"
+      with_items: "{{ dig_results.results | default([]) }}"
+      when: item.stdout is defined
+      
+    - name: Display DNS resolution test results
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          DNS Resolution Test Results ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════
+          
+          {% for domain, result in dns_test_results.items() %}
+          {{ domain }}: {% if result %}✅ {{ result }}{% else %}❌ No resolution{% endif %}
+          {% else %}
+          No DNS tests performed - DNS server might not be reachable
+          {% endfor %}
+          
+          ════════════════════════════════════════════════════════
+      when: dns_test_results is defined
+    
+    # Phase 3: Test reverse DNS lookup
+    - name: Test reverse DNS lookup for ZeroTier IP
+      ansible.builtin.command: dig @{{ dns_server_ip }} -x {{ ansible_host }} +short +timeout=2 +tries=1
+      register: reverse_lookup
+      changed_when: false
+      failed_when: false
+      # Try even if ping failed
+      when: true
+      
+    - name: Display reverse DNS lookup results
+      ansible.builtin.debug:
+        msg: |
+          Reverse DNS lookup for {{ ansible_host }}: 
+          {% if reverse_lookup.stdout %}✅ {{ reverse_lookup.stdout }}{% else %}⚠️ No reverse record{% endif %}
+      when: reverse_lookup is defined
+    
+    # Phase 4: Summarize test results
+    - name: Collect all test results
+      ansible.builtin.set_fact:
+        all_tests:
+          connectivity: "{{ dns_ping.rc == 0 }}"
+          forward_dns: "{{ dns_test_results.values() | select() | list | length > 0 if dns_test_results is defined else false }}"
+          reverse_dns: "{{ reverse_lookup.stdout | default('') | length > 0 if reverse_lookup is defined else false }}"
+      
+    - name: Calculate overall test status
+      ansible.builtin.set_fact:
+        test_status: "{{ all_tests.connectivity and all_tests.forward_dns }}"
+      
+    - name: Display overall DNS test summary
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          DNS Testing Summary for {{ inventory_hostname }}
+          ════════════════════════════════════════════════════════
+          
+          DNS Server: {{ dns_server_ip }}
+          
+          Test Results:
+          - Connectivity: {% if all_tests.connectivity %}✅ Success{% else %}❌ Failed{% endif %}
+          - Forward DNS: {% if all_tests.forward_dns %}✅ Success{% else %}{% if all_tests.connectivity %}❌ Failed{% else %}⚠️ Skipped{% endif %}{% endif %}
+          - Reverse DNS: {% if all_tests.reverse_dns %}✅ Success{% else %}⚠️ Not configured{% endif %}
+          
+          Overall Status: {% if test_status %}✅ PASSED{% else %}❌ FAILED{% endif %}
+          
+          ════════════════════════════════════════════════════════
+
+- name: Summarize DNS Testing Across All Hosts
+  hosts: localhost
+  gather_facts: false
+  
+  tasks:
+    - name: Summarize DNS testing results
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          DNS Testing Across All Hosts
+          ════════════════════════════════════════════════════════
+          
+          DNS Server: {{ hostvars['dns1']['zerotier_ip'] }}
+          Domain: {{ hostvars['dns1']['domain_name'] }}
+          
+          Summary:
+          {% for host in groups['all'] %}
+          - {{ host }}: {% if hostvars[host].test_status is defined %}{% if hostvars[host].test_status %}✅ PASSED{% else %}❌ FAILED{% endif %}{% else %}⚠️ No data{% endif %}
+          {% endfor %}
+          
+          NEXT STEPS:
+          - If all tests passed, proceed with MicroK8s deployment
+          - If any tests failed, troubleshoot DNS configuration
+          
+          ════════════════════════════════════════════════════════

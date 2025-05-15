@@ -1,0 +1,58 @@
+---
+# Fish Plugins Setup - Fisher plugin manager and useful extensions
+
+# Install Fisher (Fisher plugin manager) with simplified approach
+- name: Create fish functions directory 
+  file:
+    path: "{{ fish_config_dir }}/functions"
+    state: directory
+    mode: '0755'
+
+# We know fish exists on all systems - directly set its path
+- name: Set fish binary path
+  set_fact:
+    fish_binary: "/usr/bin/fish"
+  tags: [fish, plugins]
+
+- name: Debug fish binary path
+  debug:
+    msg: "Fish binary: {{ fish_binary }}"
+    verbosity: 0
+
+- name: Download Fisher plugin manager file
+  get_url:
+    url: https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish
+    dest: "{{ fish_config_dir }}/functions/fisher.fish"
+    mode: '0644'
+  register: fisher_download
+  tags: [fish, plugins]
+
+# Install Fish plugins - simplified approach
+- name: List installed plugins
+  command: "{{ fish_binary }} -c 'source {{ fish_config_dir }}/functions/fisher.fish && fisher list || echo \"Fisher not available\"'"
+  register: plugin_list
+  changed_when: false
+  tags: [fish, plugins]
+
+- name: Display current plugins
+  debug:
+    var: plugin_list.stdout_lines
+  tags: [fish, plugins]
+
+- name: Install Fish plugins directly
+  command: "{{ fish_binary }} -c 'source {{ fish_config_dir }}/functions/fisher.fish && fisher install {{ item }}'"
+  register: plugin_install
+  loop: "{{ fisher_plugins }}"
+  changed_when: plugin_install.rc == 0
+  tags: [fish, plugins]
+  
+- name: Final plugin list after installation
+  command: "{{ fish_binary }} -c 'source {{ fish_config_dir }}/functions/fisher.fish && fisher list'"
+  register: final_plugin_list
+  changed_when: false
+  tags: [fish, plugins]
+  
+- name: Display installed plugins
+  debug:
+    var: final_plugin_list.stdout_lines
+  tags: [fish, plugins]

@@ -1,0 +1,10 @@
+#
+# Systemd-resolved configuration for Thinkube 
+# {{ ansible_managed }}
+#
+
+[Resolve]
+DNS={{ hostvars[inventory_hostname]['zerotier_ip'] }}
+Domains=~{{ domain_name }}
+DNSStubListener=yes
+Cache=yes

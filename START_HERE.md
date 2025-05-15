@@ -225,15 +225,15 @@ This helps maintain accurate progress tracking between development sessions and 
     - [x] Test for ZeroTier installation
     - [x] Test for network joining
     - [x] Test for connectivity between nodes
-  - [ ] Create `ansible/30_networking/28_test_dns.yaml`
-    - [ ] Test for DNS server installation
-    - [ ] Test for zone configuration
-    - [ ] Test for DNS resolution
-    - [ ] Test for wildcard DNS
-  - [ ] Create `ansible/30_networking/38_test_dns_clients.yaml`
-    - [ ] Test for client configuration
-    - [ ] Test for DNS resolution on clients
-    - [ ] Test for domain name resolution
+  - [x] Create `ansible/30_networking/28_test_dns.yaml`
+    - [x] Test for DNS server installation
+    - [x] Test for zone configuration
+    - [x] Test for DNS resolution
+    - [x] Test for wildcard DNS
+  - [x] Client tests integrated into `ansible/30_networking/28_test_dns.yaml`
+    - [x] Test for client configuration
+    - [x] Test for DNS resolution on clients
+    - [x] Test for domain name resolution
 
 - [x] **Implementation Playbooks**
   - [x] Develop `ansible/30_networking/10_setup_zerotier.yaml`
@@ -241,31 +241,29 @@ This helps maintain accurate progress tracking between development sessions and 
     - [x] Configure network joining
     - [x] Set up routing
     - [x] Verify tests pass for each section
-  - [ ] Develop `ansible/30_networking/20_setup_dns.yaml`
-    - [ ] Implement DNS server
-    - [ ] Configure zones
-    - [ ] Configure records
-    - [ ] Verify tests pass for each section
-  - [ ] Develop `ansible/30_networking/30_setup_dns_clients.yaml`
-    - [ ] Configure client resolv.conf
-    - [ ] Test resolution
-    - [ ] Verify tests pass for each section
+  - [x] Develop `ansible/30_networking/20_setup_dns.yaml`
+    - [x] Implement DNS server
+    - [x] Configure zones
+    - [x] Configure records
+    - [x] Verify tests pass for each section
+  - [x] Client configuration integrated in `ansible/30_networking/20_setup_dns.yaml`
+    - [x] Configure client resolv.conf
+    - [x] Test resolution
+    - [x] Verify tests pass for each section
 
 - [x] **Rollback Playbook (x9)**
   - [x] Create `ansible/30_networking/19_reset_zerotier.yaml`
-  - [ ] Create `ansible/30_networking/29_rollback_dns.yaml`
-  - [ ] Create `ansible/30_networking/39_rollback_dns_clients.yaml`
+  - [x] Create `ansible/30_networking/29_reset_dns.yaml`
 
-- [ ] **Integration Verification**
-  - [ ] Run complete phase deployment
-  - [ ] Verify with test playbooks
-  - [ ] Document any issues encountered
+- [x] **Integration Verification**
+  - [x] Run complete phase deployment
+  - [x] Verify with test playbooks
+  - [x] Document any issues encountered
 
-- [ ] **Phase Completion**
-  - [ ] Create lessons learned document
-  - [ ] Update architecture documentation if needed
-  - [ ] Create pull request to main branch
-  - [ ] Add PR link: [PR #X](#)
+- [x] **Phase Completion**
+  - [x] Update architecture documentation in README.md
+  - [x] Include in LXD Setup PR
+  - [x] Merged in PR link: [PR #9](https://github.com/cmxela/thinkube/pull/9)
 
 ## Phase 5: Core Services (40_core_services)
 

@@ -1,0 +1,151 @@
+# CORE-011: AWX
+
+## Component Requirements
+
+**Component**: AWX  
+**Type**: Core  
+**Priority**: High  
+**Dependencies**: Keycloak, MicroK8s, PostgreSQL (for AWX database)  
+
+## Description
+
+Migrate AWX deployment from thinkube-core to thinkube. AWX is the open-source Ansible automation platform that provides a web-based interface for managing Ansible playbooks, inventories, and job scheduling.
+
+## Requirements Analysis
+
+Based on source playbook analysis:
+
+### Deployment Requirements
+1. **Namespace**: `awx`
+2. **Deployment Method**: 
+   - AWX Operator via Helm
+   - AWX instance created via Custom Resource
+3. **Hostname**: `awx.{{ k8s_domain }}`
+4. **Authentication**: 
+   - OIDC integration with Keycloak
+   - Admin user configuration
+5. **Admin Password**: 
+   - From environment: `AWX_ADMIN_PASSWORD`
+
+### Keycloak Integration
+1. **Client Configuration**:
+   - Client ID: `awx`
+   - Protocol: `openid-connect`
+   - Public client: false (confidential client)
+   - Redirect URIs: `https://{{ awx_hostname }}/sso/complete/oidc/`
+   - Base URL: `https://{{ awx_hostname }}`
+   - Post logout redirect: Configured
+   - PKCE: Not used
+2. **Groups and Roles**:
+   - Admin group: `awx-admins`
+   - Admin role: `awx-admin-role`
+   - Admin user added to group and role
+3. **Protocol Mappers**:
+   - Groups mapper for token claims
+   - Roles mapper for token claims
+   - Full path: false
+   - Claims in ID token, access token, and userinfo
+4. **Client Secret**:
+   - Retrieved from Keycloak after client creation
+   - Used for OIDC configuration
+
+### AWX Instance Configuration
+1. **Operator Deployment**:
+   - Deployed via Helm chart
+   - Namespace isolation
+   - Service account configuration
+2. **Custom Resource**:
+   - AWX instance definition
+   - OIDC settings configuration
+   - Admin user provisioning
+   - Database configuration (PostgreSQL)
+3. **Ingress Settings**:
+   - TLS termination
+   - Certificate configuration
+   - Hostname routing
+
+### Access Control
+1. **Administrator Access**:
+   - Admin user mapped to AWX administrator
+   - Group-based access control
+   - Role-based permissions
+2. **OIDC Configuration**:
+   - Social auth settings
+   - Keycloak provider configuration
+   - Token validation
+
+### Environment Requirements
+1. **Environment Variables**:
+   - `AWX_ADMIN_PASSWORD`
+   - `KEYCLOAK_ADMIN_PASSWORD`
+2. **TLS Configuration**:
+   - Certificate paths: `tls_crt_path`, `tls_key_path`
+   - Ingress TLS secret
+3. **DNS Requirements**:
+   - AWX hostname resolution
+
+## Migration Plan
+
+### Phase 1: Infrastructure Setup
+1. Create namespace and RBAC: `ansible/40_thinkube/core/awx/10_namespace.yaml`
+2. Deploy AWX Operator: `ansible/40_thinkube/core/awx/20_deploy_operator.yaml`
+
+### Phase 2: Keycloak Configuration
+1. Configure Keycloak client: `ansible/40_thinkube/core/awx/30_keycloak_client.yaml`
+2. Setup groups and roles: `ansible/40_thinkube/core/awx/35_keycloak_rbac.yaml`
+
+### Phase 3: AWX Deployment
+1. Create AWX instance: `ansible/40_thinkube/core/awx/40_deploy_awx.yaml`
+2. Configure OIDC integration: `ansible/40_thinkube/core/awx/50_configure_oidc.yaml`
+3. Setup ingress: `ansible/40_thinkube/core/awx/60_ingress.yaml`
+
+### Phase 4: Post-Deployment
+1. Configure admin access: `ansible/40_thinkube/core/awx/70_admin_setup.yaml`
+2. Verify installation: `ansible/40_thinkube/core/awx/80_verify_deployment.yaml`
+
+### Phase 5: Testing
+1. Test OIDC authentication: `ansible/40_thinkube/core/awx/88_test_awx.yaml`
+2. Verify admin access
+3. Test job execution
+4. Validate API access
+
+### Phase 6: Rollback
+1. Create rollback playbook: `ansible/40_thinkube/core/awx/89_rollback_awx.yaml`
+
+## Implementation Checklist
+
+- [ ] Create directory structure under `ansible/40_thinkube/core/awx/`
+- [ ] Migrate namespace creation and RBAC configuration
+- [ ] Port AWX Operator deployment via Helm
+- [ ] Configure Keycloak client with proper settings
+- [ ] Implement groups and roles in Keycloak
+- [ ] Deploy AWX instance with OIDC configuration
+- [ ] Setup ingress with TLS
+- [ ] Configure admin user access
+- [ ] Create comprehensive test playbook
+- [ ] Implement rollback procedures
+- [ ] Update documentation
+
+## Notes
+
+- Source playbook creates a confidential client (not public)
+- PKCE is explicitly disabled in the original configuration
+- Groups and roles are mapped to tokens for authorization
+- Admin user setup is automated through Keycloak groups
+- The playbook includes comprehensive Keycloak configuration
+- PostgreSQL database is required (not shown in this playbook)
+
+## Related Files
+
+**Source Playbook**: `services/20_deploy_awx.yaml` (incorrectly referenced as `110_deploy_awx.yaml` in orchestration)  
+**Target Directory**: `ansible/40_thinkube/core/awx/`
+
+**Key Components**:
+- AWX Operator (Helm deployment)
+- AWX Custom Resource
+- Keycloak client configuration
+- Group and role mappings
+- Protocol mapper configuration
+
+---
+*Migration tracking for Thinkube platform - Generated by Analysis System*

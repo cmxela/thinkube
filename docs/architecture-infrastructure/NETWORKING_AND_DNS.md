@@ -248,7 +248,7 @@ Configure CoreDNS in MicroK8s to forward requests for domain to the dns1 server:
 2. Apply the ConfigMap and restart CoreDNS (handled by playbooks):
    ```bash
    # This is handled by the playbook
-   ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/30_setup_coredns.yaml
+   ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/30_setup_coredns.yaml
    ```
 
 ## Service Exposure Strategy

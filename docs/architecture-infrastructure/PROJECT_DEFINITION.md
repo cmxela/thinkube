@@ -77,11 +77,11 @@ The repository should maintain a clean, logical structure that reflects the depl
 /ansible
 ├── 00_initial_setup      # Host configuration and SSH setup
 ├── 10_baremetal_infra    # Physical server configuration
-├── 20_lxd_containers     # LXD container/VM creation and setup
+├── 20_lxd_setup          # LXD cluster/VM creation and setup
 ├── 30_networking         # Network configuration (ZeroTier, DNS)
-├── 40_core_services      # Kubernetes, Core services
-├── 50_applications       # Platform applications (Keycloak, JupyterHub, etc.)
-└── 60_final_config       # Dashboard, validation, documentation
+└── 40_thinkube           # All Kubernetes and platform services
+    ├── core/             # Essential services (Keycloak, PostgreSQL, etc.)
+    └── optional/         # AWX-deployed services (JupyterHub, Prometheus, etc.)
 ```
 
 Within each directory, playbooks should be numbered to indicate execution order, with increments of 10 to allow for future additions.
@@ -104,9 +104,9 @@ The complete deployment follows this general flow:
 3. Creation of LXD VMs for Kubernetes nodes
 4. Network configuration (ZeroTier overlay, DNS)
 5. Kubernetes (MicroK8s) installation and configuration
-6. Core services deployment (cert-manager, ingress, etc.)
-7. Application deployment (Keycloak, JupyterHub, etc.)
-8. Final configuration and validation
+6. Core infrastructure deployment (cert-manager, ingress, etc.)
+7. Core services deployment (Keycloak, PostgreSQL, Harbor, etc.)
+8. Optional services deployment via AWX (JupyterHub, Prometheus, etc.)
 
 Each step is implemented as one or more Ansible playbooks, with clear documentation and error handling.
 

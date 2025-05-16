@@ -1,8 +1,8 @@
-# 40 Core Services
+# 40 Thinkube
 
 ## Overview
 
-The Core Services component deploys and configures MicroK8s Kubernetes cluster and essential services like CoreDNS, Ingress controllers, MetalLB, and cert-manager. This forms the foundation of the Thinkube platform on which all applications will run.
+The Thinkube component deploys and configures MicroK8s Kubernetes cluster and essential services like CoreDNS, Ingress controllers, MetalLB, and cert-manager. This forms the foundation of the Thinkube platform on which all applications will run.
 
 ## Playbooks
 
@@ -25,7 +25,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Kubernetes configuration available
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/10_setup_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/10_setup_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 11_configure_microk8s_addons.yaml
@@ -42,7 +42,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Addon settings customized
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/11_configure_microk8s_addons.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/11_configure_microk8s_addons.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 20_join_workers.yaml
@@ -62,7 +62,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Cluster status updated
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/20_join_workers.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/20_join_workers.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 21_configure_worker_roles.yaml
@@ -80,7 +80,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Labels applied for workload targeting
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/21_configure_worker_roles.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/21_configure_worker_roles.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 30_setup_coredns.yaml
@@ -100,7 +100,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Internal service discovery working
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/30_setup_coredns.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/30_setup_coredns.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 40_setup_ingress.yaml
@@ -122,7 +122,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Ingress classes defined
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/40_setup_ingress.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/40_setup_ingress.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 50_setup_metallb.yaml
@@ -141,7 +141,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - BGP configuration (if applicable)
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/50_setup_metallb.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/50_setup_metallb.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 60_setup_cert_manager.yaml
@@ -162,7 +162,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Default certificate challenges set up
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/60_setup_cert_manager.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/60_setup_cert_manager.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 18_test_microk8s.yaml
@@ -179,7 +179,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Node status
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/18_test_microk8s.yaml
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/18_test_microk8s.yaml
   ```
 
 ### 19_reset_microk8s.yaml
@@ -196,7 +196,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Addon settings
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/19_reset_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/19_reset_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
   ```
 
 ### 28_test_workers.yaml
@@ -213,7 +213,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Node labels and taints
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/28_test_workers.yaml
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/28_test_workers.yaml
   ```
 
 ### 38_test_coredns.yaml
@@ -229,7 +229,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Custom domain forwarding
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/38_test_coredns.yaml
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/38_test_coredns.yaml
   ```
 
 ### 48_test_ingress.yaml
@@ -246,7 +246,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - TLS termination
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/48_test_ingress.yaml
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/48_test_ingress.yaml
   ```
 
 ### 68_test_certificates.yaml
@@ -263,7 +263,7 @@ The Core Services component deploys and configures MicroK8s Kubernetes cluster a
   - Certificate validity
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/68_test_certificates.yaml
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/68_test_certificates.yaml
   ```
 
 ## Dependencies

@@ -49,7 +49,9 @@ id_*
 # Generated files
 *.generated.yaml
 *.generated.yml
-**/.claude/settings.local.json
 
 # Nested repositories
 thinkube-core/
+
+# Temporary files for review
+thinkube-core-review-temp.md

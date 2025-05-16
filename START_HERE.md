@@ -31,107 +31,230 @@ This helps maintain accurate progress tracking between development sessions and 
 
 ## Previous Milestones
 
-- [x] **Milestone 1 (v0.0.1):** Infrastructure & Virtualization Layer
-  - [x] Phase 0: Initial Repository Setup
-  - [x] Phase 1: Initial Setup (00_initial_setup)
-  - [x] Phase 2: Baremetal Infrastructure (10_baremetal_infra)
-  - [x] Phase 3: LXD Setup (20_lxd_setup)
-  - [x] Phase 4: Networking (30_networking)
+- [x] **Milestone 1 (v0.0.1):** Infrastructure & Virtualization Layer - Completed
+  - Initial repository setup, baremetal infrastructure, LXD virtualization, and networking
+  - See [CLAUDE_MILESTONE1.md](/CLAUDE_MILESTONE1.md) for details
 
-## Phase 5: Core Services (40_core_services)
+## Phase 5: Core Services (40_thinkube) - Milestone 2
 
-> Note: Existing files in 40_core_services/ were migrated from the old structure and need thorough review and alignment with our new standards.
+> Note: Phase 5 focuses on migrating thinkube-core functionality and establishing the core platform services.
+> 
+> **Issue Tracking**: Each component requirement has a corresponding GitHub issue. Tasks are linked to issues using [CORE-XXX] or [OPT-XXX] format.
+> 
+> All functional/implementation tasks are tracked in the GitHub issues. This document only tracks development process tasks.
 
-- [ ] **Branch Creation**
-  - [ ] Create feature branch: `git checkout -b feature/core-services`
-  - [ ] Push branch: `git push -u origin feature/core-services`
+### Preparation
 
-- [ ] **Documentation Review**
-  - [ ] Review DEPLOYMENT_STRUCTURE.md sections for 40_core_services
-  - [ ] Review MICROK8S_MIGRATION.md for VM deployment approach
+- [x] **Create GitHub Issues for All Components**
+  - [x] ✓ Use `.github/ISSUE_TEMPLATE/component-requirement.md`
+  - [x] ✓ Create issues for infrastructure components (CORE-001 to CORE-003)
+  - [x] ✓ Create issues for core services (CORE-004 to CORE-013)
+  - [x] ✓ Create issues for optional services (OPT-001 to OPT-011)
 
-- [ ] **Test Playbook Development (x8)**
-  - [ ] Create `ansible/40_core_services/18_test_microk8s_control.yaml`
-    - [ ] Test for MicroK8s installation
-    - [ ] Test for addon activation
-    - [ ] Test for control plane status
-  - [ ] Create `ansible/40_core_services/28_test_microk8s_workers.yaml`
-    - [ ] Test for worker node joining
-    - [ ] Test for node status
-    - [ ] Test for cluster functionality
-  - [ ] Create `ansible/40_core_services/38_test_coredns.yaml`
-    - [ ] Test for CoreDNS configuration
-    - [ ] Test for DNS resolution in cluster
-    - [ ] Test for service discovery
+- [ ] **Documentation Foundation**
+  - [x] ✓ Create docs/architecture-k8s/COMPONENT_ARCHITECTURE.md
+  - [x] ✓ Create docs/architecture-k8s/PLAYBOOK_STRUCTURE.md
+  - [x] ✓ Create docs/architecture-k8s/BRANCHING_STRATEGY.md
+  - [ ] Update docs/architecture-k8s/40_thinkube/README.md
 
-- [ ] **Implementation Playbooks**
-  - [ ] Develop `ansible/40_core_services/10_setup_microk8s_control.yaml`
-    - [ ] Implement MicroK8s installation
-    - [ ] Configure addons
-    - [ ] Set up permissions
-    - [ ] Verify tests pass for each section
-  - [ ] Develop `ansible/40_core_services/20_join_workers.yaml`
-    - [ ] Generate join tokens
-    - [ ] Join worker nodes
-    - [ ] Verify node status
-    - [ ] Verify tests pass for each section
-  - [ ] Develop `ansible/40_core_services/30_setup_coredns.yaml`
-    - [ ] Configure CoreDNS integration
-    - [ ] Set up forwarders
-    - [ ] Test resolution
-    - [ ] Verify tests pass for each section
+### Infrastructure Components [Branch: feature/k8s-infrastructure]
 
-- [ ] **Rollback Playbook (x9)**
-  - [ ] Create `ansible/40_core_services/19_rollback_microk8s_control.yaml`
-  - [ ] Create `ansible/40_core_services/29_rollback_workers.yaml`
-  - [ ] Create `ansible/40_core_services/39_rollback_coredns.yaml`
+- [ ] **[CORE-001] MicroK8s Control Node** ([Issue #13](https://github.com/cmxela/thinkube/issues/13))
+  - [ ] Create/switch to branch: `git checkout -b feature/k8s-infrastructure`
+  - [ ] Implement requirement from GitHub issue #13
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Request review/update PR
 
-- [ ] **Integration Verification**
-  - [ ] Run complete phase deployment
-  - [ ] Verify with test playbooks
-  - [ ] Document any issues encountered
+- [ ] **[CORE-002] MicroK8s Worker Nodes** ([Issue #14](https://github.com/cmxela/thinkube/issues/14))
+  - [ ] Continue on branch: `feature/k8s-infrastructure`
+  - [ ] Implement requirement from GitHub issue #14
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Update PR
 
-- [ ] **Phase Completion**
-  - [ ] Create lessons learned document
-  - [ ] Update architecture documentation if needed
-  - [ ] Create pull request to main branch
-  - [ ] Add PR link: [PR #X](#)
+- [ ] **[CORE-003] Cert-Manager** ([Issue #15](https://github.com/cmxela/thinkube/issues/15))
+  - [ ] Continue on branch: `feature/k8s-infrastructure`
+  - [ ] Implement requirement from GitHub issue #15
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Update PR
 
-## Phase 6: Extended Services
+### Core Platform Services [Individual Component Branches]
 
-- [ ] **Branch Creation**
-  - [ ] Create feature branch: `git checkout -b feature/extended-services`
-  - [ ] Push branch: `git push -u origin feature/extended-services`
+- [ ] **[CORE-004] Keycloak** ([Issue #16](https://github.com/cmxela/thinkube/issues/16))
+  - [ ] Create/switch to branch: `git checkout -b feature/keycloak`
+  - [ ] Implement requirement from GitHub issue #16
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
 
-- [ ] **Documentation Review**
-  - [ ] Review documentation for extended services
+- [ ] **[CORE-005] PostgreSQL** ([Issue #17](https://github.com/cmxela/thinkube/issues/17))
+  - [ ] Create/switch to branch: `git checkout -b feature/postgresql`
+  - [ ] Implement requirement from GitHub issue #17
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
 
-- [ ] **Test Playbook Development (x8)**
-  - [ ] Create test playbooks for each service
-    - [ ] Cert-manager tests
-    - [ ] Ingress tests
-    - [ ] GPU operator tests
+- [ ] **[CORE-006] MinIO** ([Issue #18](https://github.com/cmxela/thinkube/issues/18))
+  - [ ] Create/switch to branch: `git checkout -b feature/minio`
+  - [ ] Implement requirement from GitHub issue #18
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
 
-- [ ] **Implementation Playbooks**
-  - [ ] Develop service playbooks
-    - [ ] Setup cert-manager
-    - [ ] Configure ingress
-    - [ ] Setup GPU operator
-    - [ ] Verify tests pass for each section
+- [ ] **[CORE-007] Harbor** ([Issue #19](https://github.com/cmxela/thinkube/issues/19))
+  - [ ] Create/switch to branch: `git checkout -b feature/harbor`
+  - [ ] Implement requirement from GitHub issue #19
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
 
-- [ ] **Rollback Playbook (x9)**
-  - [ ] Create rollback playbooks for each service
+- [ ] **[CORE-008] Argo Workflows** ([Issue #20](https://github.com/cmxela/thinkube/issues/20))
+  - [ ] Create/switch to branch: `git checkout -b feature/argo-workflows`
+  - [ ] Implement requirement from GitHub issue #20
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
 
-- [ ] **Integration Verification**
-  - [ ] Run complete phase deployment
-  - [ ] Verify with test playbooks
-  - [ ] Document any issues encountered
+- [ ] **[CORE-009] ArgoCD** ([Issue #21](https://github.com/cmxela/thinkube/issues/21))
+  - [ ] Create/switch to branch: `git checkout -b feature/argocd`
+  - [ ] Implement requirement from GitHub issue #21
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
 
-- [ ] **Phase Completion**
-  - [ ] Create lessons learned document
-  - [ ] Update architecture documentation if needed
-  - [ ] Create pull request to main branch
-  - [ ] Add PR link: [PR #X](#)
+- [ ] **[CORE-010] DevPi** ([Issue #22](https://github.com/cmxela/thinkube/issues/22))
+  - [ ] Create/switch to branch: `git checkout -b feature/devpi`
+  - [ ] Implement requirement from GitHub issue #22
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[CORE-011] AWX** ([Issue #23](https://github.com/cmxela/thinkube/issues/23))
+  - [ ] Create/switch to branch: `git checkout -b feature/awx`
+  - [ ] Implement requirement from GitHub issue #23
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[CORE-012] MkDocs** ([Issue #24](https://github.com/cmxela/thinkube/issues/24))
+  - [ ] Create/switch to branch: `git checkout -b feature/mkdocs`
+  - [ ] Implement requirement from GitHub issue #24
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[CORE-013] Thinkube Dashboard** ([Issue #25](https://github.com/cmxela/thinkube/issues/25))
+  - [ ] Create/switch to branch: `git checkout -b feature/thinkube-dashboard`
+  - [ ] Implement requirement from GitHub issue #25
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+### Integration Verification
+
+- [ ] **Core Platform Verification**
+  - [ ] Run integration tests for core services
+  - [ ] Verify all PRs have been merged
+  - [ ] Test SSO across all services
+  - [ ] Document any integration issues found
+
+### Optional Components (AWX-Deployed) - Milestone 2 Completion
+
+> Note: Optional components are deployed via AWX after the core platform is complete.
+> Each component follows the same development process workflow.
+
+- [ ] **[OPT-001] Prometheus** ([Issue #26](https://github.com/cmxela/thinkube/issues/26))
+  - [ ] Create/switch to branch: `git checkout -b feature/prometheus`
+  - [ ] Implement requirement from GitHub issue #26
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-002] Grafana** ([Issue #27](https://github.com/cmxela/thinkube/issues/27))
+  - [ ] Create/switch to branch: `git checkout -b feature/grafana`
+  - [ ] Implement requirement from GitHub issue #27
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-003] OpenSearch** ([Issue #28](https://github.com/cmxela/thinkube/issues/28))
+  - [ ] Create/switch to branch: `git checkout -b feature/opensearch`
+  - [ ] Implement requirement from GitHub issue #28
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-004] JupyterHub** ([Issue #29](https://github.com/cmxela/thinkube/issues/29))
+  - [ ] Create/switch to branch: `git checkout -b feature/jupyterhub`
+  - [ ] Implement requirement from GitHub issue #29
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-005] Code Server** ([Issue #30](https://github.com/cmxela/thinkube/issues/30))
+  - [ ] Create/switch to branch: `git checkout -b feature/code-server`
+  - [ ] Implement requirement from GitHub issue #30
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-006] MLflow** ([Issue #31](https://github.com/cmxela/thinkube/issues/31))
+  - [ ] Create/switch to branch: `git checkout -b feature/mlflow`
+  - [ ] Implement requirement from GitHub issue #31
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-007] Knative** ([Issue #32](https://github.com/cmxela/thinkube/issues/32))
+  - [ ] Create/switch to branch: `git checkout -b feature/knative`
+  - [ ] Implement requirement from GitHub issue #32
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-008] Qdrant** ([Issue #33](https://github.com/cmxela/thinkube/issues/33))
+  - [ ] Create/switch to branch: `git checkout -b feature/qdrant`
+  - [ ] Implement requirement from GitHub issue #33
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-009] PgAdmin** ([Issue #34](https://github.com/cmxela/thinkube/issues/34))
+  - [ ] Create/switch to branch: `git checkout -b feature/pgadmin`
+  - [ ] Implement requirement from GitHub issue #34
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-010] Penpot** ([Issue #35](https://github.com/cmxela/thinkube/issues/35))
+  - [ ] Create/switch to branch: `git checkout -b feature/penpot`
+  - [ ] Implement requirement from GitHub issue #35
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+- [ ] **[OPT-011] Valkey** ([Issue #36](https://github.com/cmxela/thinkube/issues/36))
+  - [ ] Create/switch to branch: `git checkout -b feature/valkey`
+  - [ ] Implement requirement from GitHub issue #36
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Create PR to main branch
+
+### Milestone 2 Completion
+
+- [ ] **Final Verification**
+  - [ ] All core components deployed and tested
+  - [ ] All optional components deployed via AWX
+  - [ ] All SSO integrations working
+  - [ ] All inter-service dependencies verified
+
+- [ ] **Documentation and Release**
+  - [ ] Create migration guide from thinkube-core
+  - [ ] Update all architecture documentation
+  - [ ] Create Milestone 2 release tag
+  - [ ] Document lessons learned
 
 ## Lessons Learned Documentation
 

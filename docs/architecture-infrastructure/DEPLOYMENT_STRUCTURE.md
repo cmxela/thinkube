@@ -77,37 +77,35 @@ This convention provides a clear structure where:
 │   ├── 28_test_dns.yaml            # Test DNS resolution
 │   ├── 29_reset_dns.yaml           # Reset DNS if needed
 │
-├── 40_core_services/               # MicroK8s deployment and services
-│   ├── 10_setup_microk8s.yaml      # Base MicroK8s installation
-│   ├── 11_configure_microk8s_addons.yaml # Configure addons
-│   ├── 18_test_microk8s.yaml       # Test MicroK8s functionality
-│   ├── 19_reset_microk8s.yaml      # Reset MicroK8s if needed
-│   │
-│   ├── 20_join_workers.yaml        # Base worker node joining
-│   ├── 21_configure_worker_roles.yaml # Configure worker roles
-│   ├── 28_test_workers.yaml        # Test worker functionality
-│   ├── 29_reset_workers.yaml       # Reset worker nodes if needed
-│   │
-│   ├── 30_setup_coredns.yaml       # Base CoreDNS configuration
-│   ├── 31_configure_dns_forwarding.yaml # Configure DNS forwarding
-│   ├── 38_test_coredns.yaml        # Test CoreDNS functionality
-│   ├── 39_reset_coredns.yaml       # Reset CoreDNS if needed
-│   │
-│   ├── 40_setup_ingress.yaml       # Base Ingress controller installation
-│   ├── 41_configure_primary_ingress.yaml # Configure main ingress
-│   ├── 42_configure_knative_ingress.yaml # Configure Knative ingress
-│   ├── 48_test_ingress.yaml        # Test ingress functionality
-│   ├── 49_reset_ingress.yaml       # Reset ingress controllers
-│   │
-│   ├── 50_setup_metallb.yaml       # Base MetalLB installation
-│   ├── 51_configure_ip_pools.yaml  # Configure IP address pools
-│   ├── 58_test_metallb.yaml        # Test load balancer functionality
-│   ├── 59_reset_metallb.yaml       # Reset MetalLB if needed
-│   │
-│   ├── 60_setup_cert_manager.yaml  # Base cert-manager installation
-│   ├── 61_configure_issuers.yaml   # Configure certificate issuers
-│   ├── 68_test_certificates.yaml   # Test certificate issuance
-│   ├── 69_reset_cert_manager.yaml  # Reset cert-manager if needed
+├── 40_thinkube/                    # Component-based deployment
+│   ├── core/                       # Essential platform components
+│   │   ├── infrastructure/         # Basic Kubernetes infrastructure
+│   │   │   ├── microk8s/
+│   │   │   ├── ingress/
+│   │   │   ├── cert-manager/
+│   │   │   └── coredns/
+│   │   ├── keycloak/              # SSO and authentication
+│   │   ├── postgresql/            # Database services
+│   │   ├── minio/                 # Object storage
+│   │   ├── harbor/                # Container registry
+│   │   ├── argo-workflows/        # Workflow automation
+│   │   ├── argocd/                # GitOps deployment
+│   │   ├── devpi/                 # Python package repository
+│   │   ├── awx/                   # Ansible automation
+│   │   ├── mkdocs/                # Documentation
+│   │   └── thinkube-dashboard/    # Main dashboard
+│   └── optional/                  # AWX-deployed components
+│       ├── prometheus/            # Metrics collection
+│       ├── grafana/               # Metrics visualization
+│       ├── opensearch/            # Log aggregation
+│       ├── jupyterhub/            # Data science notebooks
+│       ├── code-server/           # VS Code in browser
+│       ├── mlflow/                # ML experiment tracking
+│       ├── knative/               # Serverless platform
+│       ├── qdrant/                # Vector database
+│       ├── pgadmin/               # PostgreSQL admin
+│       ├── penpot/                # Design platform
+│       └── valkey/                # Cache service
 ```
 
 ## Deployment Workflow
@@ -138,14 +136,14 @@ The deployment follows a sequential process through each directory, with each di
 - Test network connectivity
 - Ensure proper routing between components
 
-### Phase 4: Core Services
-- Install MicroK8s on control plane
-- Join worker nodes to the cluster
-- Configure CoreDNS for service discovery
-- Set up ingress controllers
-- Configure load balancing with MetalLB
-- Set up certificate management
-- Test core functionality
+### Phase 4: Thinkube Platform
+- Deploy core infrastructure (MicroK8s, ingress, cert-manager)
+- Deploy core services (Keycloak, PostgreSQL, Harbor, etc.)
+- Deploy CI/CD stack (Argo Workflows, ArgoCD, DevPi)
+- Deploy AWX for optional component management
+- Deploy optional services via AWX (Prometheus, JupyterHub, etc.)
+- Configure and test all integrations
+- Validate complete platform functionality
 
 ## Testing Strategy
 

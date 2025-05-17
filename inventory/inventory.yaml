@@ -44,6 +44,7 @@ all:
           hosts:
             bcn2:  # AMD 16 cores, 64GB RAM, 1TB disk, GTX 1080Ti
               ansible_host: 192.168.1.102
+              lan_ip: 192.168.1.102
               zerotier_ip: 192.168.191.102
               server_type: headless
               arch: x86_64
@@ -55,6 +56,7 @@ all:
           hosts:
             bcn1:  # AMD 32 cores, 128GB RAM, 2TB disk, 2× RTX 3090
               ansible_host: 192.168.1.101
+              lan_ip: 192.168.1.101
               zerotier_ip: 192.168.191.101
               ansible_connection: local  # This is the Ansible controller
               server_type: desktop

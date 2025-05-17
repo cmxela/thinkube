@@ -1,0 +1,136 @@
+---
+# Rollback cert-manager installation
+#
+# This playbook removes cert-manager and all associated resources,
+# reverting to manual certificate management if needed.
+#
+# WARNING: This will delete all certificates managed by cert-manager!
+# Make sure to have backups or alternative certificate management before running.
+#
+# Prerequisites:
+#   - Cert-manager currently installed
+#   - Alternative certificate management ready (if needed)
+#
+# Usage:
+#   ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/core/infrastructure/cert-manager/19_rollback.yaml
+
+- name: Rollback cert-manager installation
+  hosts: microk8s_control_plane
+  gather_facts: true
+
+  vars:
+    cert_manager_namespace: "cert-manager"
+    confirmation: false  # Set to true to confirm deletion
+
+  tasks:
+    - name: Confirm rollback operation
+      ansible.builtin.fail:
+        msg: "Set confirmation variable to true to proceed with rollback"
+      when: not confirmation
+
+    - name: Check if cert-manager is installed
+      ansible.builtin.command: microk8s status --addon cert-manager
+      register: addon_status
+      changed_when: false
+      become: true
+      failed_when: false
+
+    - name: List all certificates
+      kubernetes.core.k8s_info:
+        api_version: cert-manager.io/v1
+        kind: Certificate
+        namespace: all
+      register: all_certificates
+      when: "'enabled' in addon_status.stdout"
+
+    - name: Display certificates that will be deleted
+      ansible.builtin.debug:
+        msg:
+          - "Namespace: {{ item.metadata.namespace }}"
+          - "Certificate: {{ item.metadata.name }}"
+          - "Domains: {{ item.spec.dnsNames }}"
+      loop: "{{ all_certificates.resources }}"
+      loop_control:
+        label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+      when: all_certificates.resources is defined
+
+    - name: Delete all certificates
+      kubernetes.core.k8s:
+        state: absent
+        api_version: cert-manager.io/v1
+        kind: Certificate
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ item.metadata.namespace }}"
+      loop: "{{ all_certificates.resources }}"
+      loop_control:
+        label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+      when: 
+        - all_certificates.resources is defined
+        - all_certificates.resources | length > 0
+
+    - name: Delete ClusterIssuers
+      kubernetes.core.k8s:
+        state: absent
+        api_version: cert-manager.io/v1
+        kind: ClusterIssuer
+        name: "{{ item }}"
+      loop:
+        - letsencrypt-prod
+        - letsencrypt-staging
+      failed_when: false
+
+    - name: Delete Cloudflare API token secret
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: cloudflare-api-token
+        namespace: "{{ cert_manager_namespace }}"
+      failed_when: false
+
+    - name: Disable cert-manager addon
+      ansible.builtin.command: microk8s disable cert-manager
+      become: true
+      when: "'enabled' in addon_status.stdout"
+      register: disable_result
+
+    - name: Wait for namespace deletion
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: "{{ cert_manager_namespace }}"
+      register: namespace_check
+      until: namespace_check.resources | length == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Force delete namespace if stuck
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: "{{ cert_manager_namespace }}"
+        wait: true
+        wait_timeout: 60
+      when: namespace_check.resources | length > 0
+      failed_when: false
+
+    - name: Clean up any remaining certificate secrets
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: "{{ domain_name.replace('.', '-') }}-tls"
+        namespace: default
+      failed_when: false
+
+    - name: Display rollback summary
+      ansible.builtin.debug:
+        msg:
+          - "Cert-manager rollback completed"
+          - "Certificates deleted: {{ all_certificates.resources | length | default(0) }}"
+          - "Addon disabled: {{ 'SUCCESS' if disable_result.changed | default(false) else 'Already disabled' }}"
+          - ""
+          - "WARNING: SSL certificates are no longer managed automatically"
+          - "You may need to implement alternative certificate management"

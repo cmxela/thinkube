@@ -1,0 +1,31 @@
+---
+- name: Test kubernetes.core module with debug
+  hosts: microk8s_control_plane
+  vars:
+    ansible_python_interpreter: /home/thinkube/.venv/bin/python3
+  
+  tasks:
+    - name: Debug Python environment
+      ansible.builtin.debug:
+        msg:
+          - "Python interpreter: {{ ansible_python_interpreter }}"
+          - "Playbook Python: {{ ansible_playbook_python }}"
+      
+    - name: Test Python import directly
+      ansible.builtin.command: "{{ ansible_python_interpreter }} -c 'import kubernetes; print(kubernetes.__version__)'"
+      register: test_import
+      
+    - name: Show import result
+      ansible.builtin.debug:
+        var: test_import.stdout
+        
+    - name: Try k8s_info with explicit config
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        kubeconfig: /var/snap/microk8s/current/credentials/client.config
+      register: namespaces
+      
+    - name: Display namespaces
+      ansible.builtin.debug:
+        var: namespaces.resources | map(attribute='metadata.name') | list

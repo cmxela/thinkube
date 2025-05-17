@@ -5,7 +5,7 @@ all:
     domain_name: thinkube.com
     admin_username: admin
     system_username: thinkube
-    ansible_python_interpreter: /usr/bin/python3
+    ansible_python_interpreter: /home/thinkube/.venv/bin/python3
     ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
     home: "{{ lookup('env', 'HOME') }}"
     
@@ -90,7 +90,7 @@ all:
     lxd_containers:
       vars:
         lxd_image: "ubuntu:24.04"  # Using Ubuntu 24.04 Noble
-        ansible_python_interpreter: "/home/thinkube/.venv/ansible/bin/python"
+        ansible_python_interpreter: "/home/thinkube/.venv/bin/python3"
       children:
         dns_containers:
           hosts:

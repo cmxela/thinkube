@@ -73,6 +73,13 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Push changes to branch
   - [x] Update PR
 
+- [ ] **[CORE-003a] Ingress Controllers** ([Issue #38](https://github.com/cmxela/thinkube/issues/38))
+  - [ ] Continue on branch: `feature/k8s-infrastructure`
+  - [ ] Implement requirement from GitHub issue #38
+  - [ ] Verify all checklist items in the issue
+  - [ ] Push changes to branch
+  - [ ] Update PR
+
 - [ ] **[CORE-003] Cert-Manager** ([Issue #15](https://github.com/cmxela/thinkube/issues/15))
   - [ ] Continue on branch: `feature/k8s-infrastructure`
   - [ ] Implement requirement from GitHub issue #15

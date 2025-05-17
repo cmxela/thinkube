@@ -35,7 +35,7 @@
           
           Setting up Python virtual environments in VMs:
           - Installing python3-venv package
-          - Creating virtual environment at /home/thinkube/.venv/ansible
+          - Creating virtual environment at /home/thinkube/.venv
           - Installing required Python packages
           
           VMs to configure: {{ vms_to_configure | join(', ') }}
@@ -125,7 +125,7 @@
     - name: Create Python virtual environment
       ansible.builtin.command: >
         lxc exec {{ current_vm }} --
-        sudo -u thinkube python3 -m venv /home/thinkube/.venv/ansible
+        sudo -u thinkube python3 -m venv /home/thinkube/.venv
       register: venv_create
       changed_when: true
       failed_when: venv_create.rc != 0
@@ -137,7 +137,7 @@
     - name: Install Python packages in virtual environment
       ansible.builtin.command: >
         lxc exec {{ current_vm }} --
-        sudo -u thinkube /home/thinkube/.venv/ansible/bin/pip install --upgrade pip ansible-core
+        sudo -u thinkube /home/thinkube/.venv/bin/pip install --upgrade pip ansible-core
       register: pip_install
       changed_when: true
       failed_when: pip_install.rc != 0

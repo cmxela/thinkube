@@ -73,9 +73,10 @@ git checkout -b feature/keycloak
 ```
 
 ### 3. Component Development
-- Work within component directory: `ansible/40_core_services/[component]/`
+- Work within component directory: `ansible/40_thinkube/[category]/[component]/`
 - Follow established patterns
 - Implement test-driven development
+- Categories: `core/infrastructure/`, `core/`, `optional/`
 
 ### 4. Testing
 - Run component test playbook
@@ -84,7 +85,7 @@ git checkout -b feature/keycloak
 
 ### 5. Create Pull Request
 ```markdown
-## PR Title: [CORE-XXX] Deploy [Component Name]
+## PR Title: Implement CORE-XXX: Component Name
 
 ### Changes
 - Deployed [component] to [namespace]
@@ -139,12 +140,12 @@ git pull origin main
 git checkout -b feature/postgresql
 
 # After development
-git add ansible/40_core_services/postgresql/
-git commit -m "[CORE-005] Deploy PostgreSQL shared instance"
+git add ansible/40_thinkube/core/postgresql/
+git commit -m "Implement CORE-005: PostgreSQL shared instance deployment"
 git push origin feature/postgresql
 
 # Create PR via GitHub UI or CLI
-gh pr create --title "[CORE-005] Deploy PostgreSQL" \
+gh pr create --title "Implement CORE-005: PostgreSQL shared instance deployment" \
   --body "Deploys PostgreSQL shared instance. Closes #5" \
   --base main
 ```

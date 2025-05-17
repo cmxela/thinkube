@@ -59,24 +59,38 @@ This helps maintain accurate progress tracking between development sessions and 
 
 ### Infrastructure Components [Branch: feature/k8s-infrastructure]
 
-- [ ] **[CORE-001] MicroK8s Control Node** ([Issue #13](https://github.com/cmxela/thinkube/issues/13))
-  - [ ] Create/switch to branch: `git checkout -b feature/k8s-infrastructure`
-  - [ ] Implement requirement from GitHub issue #13
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Request review/update PR
+- [x] **[CORE-001] MicroK8s Control Node** ([Issue #13](https://github.com/cmxela/thinkube/issues/13)) ([PR #37](https://github.com/cmxela/thinkube/pull/37))
+  - [x] Create/switch to branch: `git checkout -b feature/k8s-infrastructure`
+  - [x] Implement requirement from GitHub issue #13
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Request review/update PR
 
-- [ ] **[CORE-002] MicroK8s Worker Nodes** ([Issue #14](https://github.com/cmxela/thinkube/issues/14))
-  - [ ] Continue on branch: `feature/k8s-infrastructure`
-  - [ ] Implement requirement from GitHub issue #14
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Update PR
+- [x] **[CORE-002] MicroK8s Worker Nodes** ([Issue #14](https://github.com/cmxela/thinkube/issues/14)) ([PR #37](https://github.com/cmxela/thinkube/pull/37))
+  - [x] Continue on branch: `feature/k8s-infrastructure`
+  - [x] Implement requirement from GitHub issue #14
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Update PR
 
-- [ ] **[CORE-003] Cert-Manager** ([Issue #15](https://github.com/cmxela/thinkube/issues/15))
-  - [ ] Continue on branch: `feature/k8s-infrastructure`
-  - [ ] Implement requirement from GitHub issue #15
-  - [ ] Verify all checklist items in the issue
+- [x] **[CORE-003a] Ingress Controllers** ([Issue #38](https://github.com/cmxela/thinkube/issues/38)) ([PR #37](https://github.com/cmxela/thinkube/pull/37))
+  - [x] Continue on branch: `feature/k8s-infrastructure`
+  - [x] Implement requirement from GitHub issue #38
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Update PR
+
+- [x] **[CORE-003] Cert-Manager** ([Issue #15](https://github.com/cmxela/thinkube/issues/15))
+  - [x] Continue on branch: `feature/k8s-infrastructure`
+  - [x] Implement requirement from GitHub issue #15
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Update PR
+
+- [x] **[CORE-003b] CoreDNS Configuration** ([Issue #39](https://github.com/cmxela/thinkube/issues/39))
+  - [x] Continue on branch: `feature/k8s-infrastructure`
+  - [x] Implement requirement from GitHub issue #39
+  - [x] Verify all checklist items in the issue
   - [ ] Push changes to branch
   - [ ] Update PR
 

@@ -138,7 +138,66 @@ Before considering a migration complete:
 ### AI-Generated Content
 
 Mark all AI-generated or AI-assisted content:
-- Use 🤖 emoji in comments
-- Add `[AI-assisted]` to commit messages
-- Track in AI_CONTRIBUTIONS.md
+- Use 🤖 emoji in comments and code
+- Add footer to commit messages (see Commit Message Format below)
+- Track major contributions in AI_CONTRIBUTIONS.md
 - Clearly separate AI analysis from human decisions
+
+## Commit Message Format
+
+Follow this format for all commits:
+
+```
+Type CORE-XXX: Short description
+
+- Bullet point explaining change
+- Another bullet point
+- Continue as needed
+
+[Optional: Fixes #XXX or Closes #XXX]
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+Where Type is one of:
+- `Implement` - New feature or component
+- `Fix` - Bug fix
+- `Update` - Enhancement or modification
+- `docs` - Documentation only changes
+- `refactor` - Code refactoring
+
+## Playbook Header Guidelines
+
+All playbooks MUST include a standardized header:
+
+```yaml
+---
+# ansible/path/to/playbook.yaml
+# Description:
+#   Brief description of what this playbook does
+#   Additional details about its purpose
+#
+# Requirements:
+#   - List prerequisites (e.g., MicroK8s must be installed)
+#   - Required variables from inventory
+#   - Environment variables needed
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/path/to/playbook.yaml
+#
+# Variables from inventory:
+#   - variable_name: Description of variable
+#   - another_var: What this variable controls
+#
+# Dependencies:
+#   - Component dependencies (e.g., CORE-001 must be complete)
+#   - External services required
+#
+# [Optional for AI-generated playbooks]
+# 🤖 [AI-assisted]
+```
+
+Test and rollback playbooks can use a simplified header focusing on their specific purpose.

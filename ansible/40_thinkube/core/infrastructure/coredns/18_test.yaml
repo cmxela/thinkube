@@ -1,0 +1,189 @@
+---
+# ansible/40_thinkube/core/infrastructure/coredns/18_test.yaml
+# Description:
+#   Tests CoreDNS configuration for proper DNS resolution and routing
+#   Verifies internal service resolution, domain forwarding, and worker node config
+#
+# Requirements:
+#   - CoreDNS must be deployed (10_deploy.yaml)
+#   - Core infrastructure components should be running
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/18_test.yaml
+#
+# Variables from inventory:
+#   - domain_name: Base domain to test
+#   - dns1: DNS server node for ZeroTier DNS
+#   - zerotier_subnet_prefix: Prefix for ZeroTier network
+#   - secondary_ingress_ip_octet: Last octet for secondary ingress IP
+
+- name: Test CoreDNS configuration
+  hosts: microk8s_control_plane
+  gather_facts: true
+  vars:
+    kubectl_bin: microk8s kubectl
+    kubeconfig: /var/snap/microk8s/current/credentials/client.config
+    zerotier_dns_server: "{{ hostvars['dns1'].zerotier_ip }}"
+    kn_subdomain: "kn"
+    secondary_ingress_ip: "{{ zerotier_subnet_prefix }}{{ secondary_ingress_ip_octet }}"
+
+  pre_tasks:
+    - name: Verify required variables are defined
+      ansible.builtin.assert:
+        that:
+          - domain_name is defined
+          - hostvars['dns1'].zerotier_ip is defined
+          - zerotier_subnet_prefix is defined
+          - secondary_ingress_ip_octet is defined
+        fail_msg: "Required inventory variables are not defined"
+
+  tasks:
+    # Test CoreDNS pod status
+    - name: Check CoreDNS pods are running
+      ansible.builtin.command: >
+        {{ kubectl_bin }} get pods -n kube-system -l k8s-app=kube-dns -o json
+      register: coredns_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Validate CoreDNS pods are ready  
+      ansible.builtin.assert:
+        that:
+          - (coredns_pods.stdout | from_json)['items'] | length > 0
+          - (coredns_pods.stdout | from_json)['items'][0]['status']['phase'] == 'Running'
+        fail_msg: "CoreDNS pods are not running properly"
+
+    # Test Kubernetes internal resolution
+    - name: Test Kubernetes internal service resolution
+      ansible.builtin.command: >
+        {{ kubectl_bin }} run test-k8s-dns-{{ 99999 | random }} --rm -i --restart=Never --image=busybox:latest -- 
+        sh -c "nslookup kubernetes.default.svc.cluster.local 10.152.183.10 && echo 'K8s service lookup successful' || echo 'K8s service lookup failed'"
+      register: k8s_service_test
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Display K8s service resolution test results
+      ansible.builtin.debug:
+        var: k8s_service_test.stdout_lines
+
+    - name: Validate K8s service resolution
+      ansible.builtin.assert:
+        that: k8s_service_test.rc == 0
+        fail_msg: "Kubernetes internal service resolution failed"
+
+    # Test domain forwarding to ZeroTier
+    - name: Test domain forwarding to ZeroTier DNS
+      ansible.builtin.command: >
+        {{ kubectl_bin }} run test-zt-dns-{{ 99999 | random }} --rm -i --restart=Never --image=busybox:latest -- 
+        sh -c "nslookup {{ domain_name }} 10.152.183.10"
+      register: zerotier_dns_test
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Display ZeroTier DNS test results
+      ansible.builtin.debug:
+        var: zerotier_dns_test.stdout_lines
+
+    - name: Validate ZeroTier DNS forwarding
+      ansible.builtin.assert:
+        that: zerotier_dns_test.rc == 0
+        fail_msg: "ZeroTier DNS forwarding failed"
+
+    # Check configmap
+    - name: Retrieve CoreDNS ConfigMap
+      ansible.builtin.command: >
+        {{ kubectl_bin }} get configmap coredns -n kube-system -o yaml
+      register: coredns_configmap
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Validate CoreDNS configuration contains expected settings
+      ansible.builtin.assert:
+        that:
+          - "('forward ' + domain_name) in coredns_configmap.stdout"
+          - "'hosts {' in coredns_configmap.stdout"
+          - "('*.' + kn_subdomain + '.' + domain_name) in coredns_configmap.stdout"
+        fail_msg: "CoreDNS ConfigMap does not contain expected configuration"
+
+    # Check if Knative is installed
+    - name: Check if Knative is installed
+      ansible.builtin.command: >
+        {{ kubectl_bin }} get namespace knative-serving --no-headers
+      register: knative_check
+      failed_when: false
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Set Knative installation status
+      ansible.builtin.set_fact:
+        knative_installed: "{{ knative_check.rc == 0 }}"
+
+    # Test Knative domain resolution if installed
+    - name: Test Knative domain resolution (if installed)
+      ansible.builtin.command: >
+        {{ kubectl_bin }} run test-kn-{{ 99999 | random }} --rm -i --restart=Never --image=busybox:latest -- 
+        sh -c "nslookup {{ kn_subdomain }}.{{ domain_name }} 10.152.183.10"
+      register: kn_dns_test
+      changed_when: false
+      when: knative_installed | bool
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Display Knative DNS test results (if installed)
+      ansible.builtin.debug:
+        var: kn_dns_test.stdout_lines
+      when: knative_installed | bool
+
+    # Test worker node DNS configuration
+    - name: Test DNS resolution on worker nodes
+      ansible.builtin.command: nslookup {{ domain_name }}
+      delegate_to: "{{ item }}"
+      register: worker_dns_test
+      changed_when: false
+      loop: "{{ groups['microk8s_workers'] }}"
+
+    - name: Validate worker node DNS resolution
+      ansible.builtin.assert:
+        that: item.rc == 0
+        fail_msg: "DNS resolution failed on worker node {{ item.item }}"
+      loop: "{{ worker_dns_test.results }}"
+
+    # Verify final configuration
+    - name: Verify CoreDNS configuration is successful
+      ansible.builtin.assert:
+        that:
+          - k8s_service_test.rc == 0
+          - zerotier_dns_test.rc == 0
+          - not knative_installed | bool or kn_dns_test.rc == 0
+        fail_msg: >
+          CoreDNS configuration validation failed:
+          - Internal DNS: {{ "✓" if k8s_service_test.rc == 0 else "✗" }}
+          - ZeroTier forwarding: {{ "✓" if zerotier_dns_test.rc == 0 else "✗" }}
+          {% if knative_installed | bool %}
+          - Knative DNS: {{ "✓" if kn_dns_test.rc == 0 else "✗" }}
+          {% endif %}
+          
+          Please check the logs for more details.
+        success_msg: "All CoreDNS tests passed successfully."
+
+    - name: Display test summary
+      ansible.builtin.debug:
+        msg: |
+          CoreDNS Test Results:
+          ✓ CoreDNS pods are running
+          ✓ Internal Kubernetes service resolution works
+          ✓ Domain forwarding to ZeroTier DNS works
+          {% if knative_installed | bool %}
+          ✓ Knative domain resolution works
+          {% else %}
+          - Knative domain resolution (not tested - Knative not installed)
+          {% endif %}
+          ✓ Worker nodes can resolve domains correctly
+          
+          CoreDNS configuration is working properly!

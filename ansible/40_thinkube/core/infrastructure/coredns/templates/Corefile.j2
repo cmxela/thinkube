@@ -1,0 +1,58 @@
+.:53 {
+    errors
+    health {
+        lameduck 5s
+    }
+    ready
+    
+    hosts {
+        {{ secondary_ingress_ip }} *.{{ kn_subdomain }}.{{ domain_name }}
+        
+        {% if knative_enabled | default(false) %}
+        # Knative Autoscaler entries
+        {% if autoscaler_internal_ip | default("") != "" %}
+        {{ autoscaler_internal_ip }} autoscaler.knative-serving.svc.cluster.local
+        {{ autoscaler_internal_ip }} autoscaler-websocket.knative-serving.svc.cluster.local
+        {% endif %}
+        
+        # Knative Kourier entries
+        {% if kourier_ip | default("") != "" %}
+        {{ kourier_ip }} kourier.kourier-system.svc.cluster.local
+        {% endif %}
+        {% if kourier_internal_ip | default("") != "" %}
+        {{ kourier_internal_ip }} kourier-internal.kourier-system.svc.cluster.local
+        {% endif %}
+        {% endif %}
+        
+        fallthrough
+    }
+
+    # CRITICAL: Forward ALL {{ domain_name }} queries to ZeroTier BEFORE kubernetes plugin
+    forward {{ domain_name }} {{ zerotier_dns_server }} {
+        policy sequential
+        health_check 5s
+    }
+    
+    kubernetes cluster.local in-addr.arpa ip6.arpa {
+        pods insecure
+        fallthrough in-addr.arpa ip6.arpa
+        ttl 30
+    }
+    
+    # Direct mapping from external to internal domains 
+    rewrite name regex (.+)\.{{ kn_subdomain }}\.{{ domain_name }}$ {1}.{{ kn_subdomain }}.svc.cluster.local answer auto
+    rewrite name regex activator\.knative-serving(.*)$ activator.knative-serving.svc.cluster.local answer auto
+    rewrite name regex webhook\.knative-serving(.*)$ webhook.knative-serving.svc.cluster.local answer auto
+    
+    prometheus :9153
+    
+    # Forward everything else to upstream DNS
+    forward . /etc/resolv.conf {
+        max_concurrent 1000
+    }
+    
+    cache 30
+    loop
+    reload
+    loadbalance
+}

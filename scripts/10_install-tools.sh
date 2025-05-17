@@ -46,7 +46,7 @@ fi
 # Install Ansible in the virtual environment
 echo "Installing Ansible in the virtual environment..."
 pip install --upgrade pip
-pip install ansible
+pip install ansible ansible-lint
 
 # Create a unique marker that includes the venv path to check for existing configuration
 VENV_MARKER="# Ansible venv auto-activation for: ${VENV_DIR}"

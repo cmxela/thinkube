@@ -17,8 +17,33 @@ ingress_kn_namespace: "ingress-kn"
 primary_ingress_class: "nginx"
 primary_ingress_ip_octet: 200
 primary_ingress_service: "primary-ingress-ingress-nginx-controller"
+primary_ingress_ip: "{{ zerotier_subnet_prefix }}{{ primary_ingress_ip_octet }}"
 
 # Secondary ingress controller configuration
 secondary_ingress_class: "nginx-kn"
 secondary_ingress_ip_octet: 201
 secondary_ingress_service: "secondary-ingress-ingress-nginx-controller"
+
+# Domain configuration is inherited from inventory.yaml (thinkube.com)
+
+# User configuration - inherits from inventory.yaml
+# admin_username: "admin" - defined in inventory.yaml
+admin_first_name: "Admin"  # Application admin's first name
+admin_last_name: "User"  # Application admin's last name
+admin_email: "{{ admin_username }}@{{ domain_name }}"  # Admin email address
+
+# Keycloak configuration
+keycloak_hostname: "auth.{{ domain_name }}"
+keycloak_url: "https://{{ keycloak_hostname }}"
+keycloak_realm: "thinkube"  # Using thinkube realm for consistency
+thinkube_applications_displayname: "Thinkube Applications"
+
+# Certificate paths
+ssl_cert_dir: "/etc/ssl/{{ domain_name.split('.')[0] }}_certificates"
+tls_crt_path: "{{ ssl_cert_dir }}/{{ domain_name }}.fullchain.cer"
+tls_key_path: "{{ ssl_cert_dir }}/{{ domain_name }}.key"
+
+# Kubernetes configuration
+kubeconfig: "/var/snap/microk8s/current/credentials/client.config"
+kubectl_bin: "/snap/bin/microk8s.kubectl"
+helm_bin: "/snap/bin/microk8s.helm3"

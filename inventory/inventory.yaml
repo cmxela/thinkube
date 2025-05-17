@@ -3,8 +3,9 @@
 all:
   vars:
     domain_name: thinkube.com
-    admin_username: admin
-    system_username: thinkube
+    admin_username: tkadmin  # Application admin (including Keycloak)
+    system_username: thinkube  # OS-level user
+    auth_realm_username: thinkube  # Username for user in thinkube realm
     ansible_python_interpreter: /home/thinkube/.venv/bin/python3
     ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
     home: "{{ lookup('env', 'HOME') }}"

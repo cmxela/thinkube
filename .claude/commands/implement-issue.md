@@ -22,21 +22,37 @@ Common variables to check in inventory:
 - `vault_cf_token` (for Cloudflare)
 - `kubectl_bin`, `helm_bin`, `kubeconfig`
 
+**CRITICAL: Username and Password Guidelines**
+- Application admin credentials: Use `admin_username` and `admin_password`
+- SSO/realm users: Use `auth_realm_username` and `auth_realm_password`
+- System users: Use `system_username`
+- NEVER use component-specific variants (e.g., NO `keycloak_admin_username`)
+- Environment variables: Use `ADMIN_PASSWORD` and `AUTH_REALM_PASSWORD`
+- Default values:
+  - `admin_username`: `tkadmin` (application admin)
+  - `auth_realm_username`: `thinkube` (SSO user)
+  - `system_username`: `thinkube` (OS user)
+
 ## Implementation Process Checklist
 
 1. **Issue Analysis**
    - [ ] Read the GitHub issue #$ARGUMENTS completely
-   - [ ] Identify all reference implementation URLs mentioned in the issue
-   - [ ] List the issue requirements explicitly
-   - [ ] Check for missing inventory variables or environment variables
+   - [ ] Extract the exact reference implementation path/URL from the issue
+   - [ ] List all stated requirements (NOT inferred requirements)
+   - [ ] Identify which category this belongs to (core/optional)
 
-2. **Reference Review**
-   - [ ] Check `/home/thinkube/thinkube/docs/architecture-k8s/MIGRATION_MAPPING_CORRECTED.md` for component mapping
-   - [ ] If migration from thinkube-core, check source playbooks in `/home/thinkube/thinkube/thinkube-core/playbooks/`
-   - [ ] Analyze the reference implementation line-by-line
-   - [ ] Document what features ARE in the reference
-   - [ ] Document what features ARE NOT in the reference (to avoid adding them)
-   - [ ] Note any hardcoded values that need to become variables
+2. **Migration Source Analysis** (CRITICAL for migrations)
+   - [ ] Locate the exact source playbook in thinkube-core: `/home/thinkube/thinkube/thinkube-core/`
+   - [ ] Create a checklist of EVERY feature in the original playbook
+   - [ ] Identify all hardcoded values that must become variables:
+     - Domain names (e.g., `cmxela.com` → `{{ domain_name }}`)
+     - IP addresses (e.g., `192.168.191.100` → `{{ primary_ingress_ip }}`)
+     - SSO/realm usernames (e.g., `alexmc` → `{{ auth_realm_username }}`)
+     - Application admin usernames → `{{ admin_username }}`
+     - System usernames → `{{ system_username }}`
+     - Paths and directories
+   - [ ] List all Kubernetes resources being created (Secrets, ConfigMaps, Services, etc.)
+   - [ ] Note any non-standard configurations or workarounds
 
 3. **Environment Preparation**
    - [ ] Create component directory: `/home/thinkube/thinkube/ansible/40_thinkube/[category]/[component]/`
@@ -44,26 +60,53 @@ Common variables to check in inventory:
    - [ ] Note any missing environment variables (like CLOUDFLARE_TOKEN)
    - [ ] Verify dependencies are met (check issue dependencies section)
 
-4. **Implementation**
-   - [ ] Create test playbook first (`18_test_[component].yaml`)
-   - [ ] Create deployment playbook (`10_deploy_[component].yaml`)
-   - [ ] Create rollback playbook (`19_rollback_[component].yaml`)
-   - [ ] Follow numbering convention from `/home/thinkube/thinkube/docs/architecture-k8s/PLAYBOOK_STRUCTURE.md`
-   - [ ] Use FQCN for all modules (ansible.builtin.*, kubernetes.core.*)
-   - [ ] Don't use `become: true` at playbook level
-   - [ ] Follow variable conventions from CLAUDE.md
+4. **Migration Implementation**
+   - [ ] Start with the EXACT structure from thinkube-core
+   - [ ] Make ONLY these required changes:
+     - Replace hardcoded values with inventory variables
+     - Update host groups (`gato-p` → `k8s-control-node`)
+     - Change module names to FQCN
+     - Fix authentication/authorization to use standard variables
+   - [ ] DO NOT change:
+     - Service configurations
+     - Port mappings
+     - Resource names
+     - Logic flow
+   - [ ] Create playbooks in this order:
+     1. `19_rollback_[component].yaml` (cleanup)
+     2. `10_deploy_[component].yaml` (main deployment)
+     3. `15_configure_[component].yaml` (if needed for post-deploy config)
+     4. `18_test_[component].yaml` (validation)
 
 5. **Testing**
    - [ ] Test the implementation as specified
    - [ ] Fix any issues while maintaining reference compliance
    - [ ] Verify all tests pass
    - [ ] Check resource limits are configured
+   - [ ] Follow correct playbook execution order:
+     1. Run `19_rollback_[component].yaml` (if cleaning up)
+     2. Run `10_deploy_[component].yaml` (main deployment)
+     3. Run `15_configure_[component].yaml` (if exists - post-deployment config)
+     4. Run `18_test_[component].yaml` (verify deployment)
 
 6. **Documentation**
    - [ ] Update component README.md
    - [ ] Document any new variables needed
    - [ ] Note if environment variables are required
    - [ ] Update PR #37 if on infrastructure branch
+
+## Certificate and Secret Handling
+
+For TLS certificates:
+- If original uses manual cert copying → Keep the same approach
+- If original creates Certificate resources → Migrate to Cert-Manager
+- Wildcard certs are copied from default namespace as: `thinkube-com-tls`
+- Use the same certificate names/domains as the original
+
+For authentication:
+- Replace component-specific auth with standard variables
+- Keycloak integration uses `auth_realm_username` for SSO users
+- Basic auth uses `admin_username` and `admin_password`
 
 ## IMPORTANT RULES
 - Always explicitly state: "Checking reference from [URL]" or "Checking reference from [FILE]"
@@ -72,5 +115,6 @@ Common variables to check in inventory:
 - If you think something is missing, ask: "Reference doesn't include X, should I add it?"
 - Check both project CLAUDE.md files for conventions
 - Maintain consistency with existing variable naming in inventory
+- PRESERVE all functionality from the original - only change what's required for compliance
 
 Begin by fetching and analyzing issue #$ARGUMENTS.

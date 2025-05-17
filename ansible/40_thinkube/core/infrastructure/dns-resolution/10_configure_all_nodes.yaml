@@ -1,0 +1,111 @@
+---
+- name: Configure DNS resolution on all systems
+  hosts: all
+  become: no  # Set per task as needed
+  gather_facts: true
+
+  vars:
+    # DNS configuration from inventory
+    zerotier_dns_ip: "{{ hostvars[groups['dns'][0]]['zerotier_ip'] }}"
+    k8s_cluster_domain: "cluster.local"
+    coredns_cluster_ip: "10.152.183.10"  # Standard CoreDNS cluster IP
+
+  pre_tasks:
+    - name: Verify required variables
+      ansible.builtin.assert:
+        that:
+          - dns_servers is defined
+          - domain_name is defined
+          - kubeconfig is defined
+          - dns_search_domains is defined
+          - keycloak_hostname is defined
+        fail_msg: "Missing required variables. Please check inventory and group_vars."
+      run_once: true
+
+  tasks:
+    # Configure LXD containers to use appropriate DNS
+    - name: Configure systemd-resolved on LXD containers
+      block:
+        - name: Create systemd-resolved configuration
+          ansible.builtin.template:
+            src: resolved.conf.j2
+            dest: /etc/systemd/resolved.conf
+            owner: root
+            group: root
+            mode: '0644'
+          become: true
+          when: "'lxd_containers' in group_names"
+
+        - name: Restart systemd-resolved
+          ansible.builtin.systemd:
+            name: systemd-resolved
+            state: restarted
+            daemon_reload: true
+          become: true
+          when: "'lxd_containers' in group_names"
+
+    # Configure physical nodes to use correct DNS servers
+    - name: Configure systemd-resolved on physical nodes
+      ansible.builtin.template:
+        src: resolved.conf.j2
+        dest: /etc/systemd/resolved.conf
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      when: "'baremetal' in group_names"
+      notify: restart systemd-resolved
+
+    # Configure MicroK8s DNS pod spec for LXD containers
+    - name: Configure MicroK8s DNS for LXD containers
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: lxd-dns-config
+            namespace: kube-system
+          data:
+            resolve.conf: |
+              nameserver {{ coredns_cluster_ip }}
+              search {{ dns_search_domains | join(' ') }} {{ k8s_cluster_domain }}
+              options ndots:5
+      when: "'k8s-control-node' in group_names"
+      run_once: true
+
+    # Apply DNS settings to LXD containers running in k8s
+    - name: Update DNS configuration for existing LXD containers
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        merge_type: merge
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ item }}"
+            namespace: "{{ item_namespace | default('default') }}"
+          spec:
+            template:
+              spec:
+                dnsPolicy: None
+                dnsConfig:
+                  nameservers:
+                    - "{{ coredns_cluster_ip }}"
+                  searches:
+                    - "{{ dns_search_domains[0] }}"
+                    - "{{ dns_search_domains[1] }}"
+                    - "{{ k8s_cluster_domain }}"
+      loop: "{{ lxd_containers_in_k8s | default([]) }}"  # Technical variable - OK to have default
+      when: "'k8s-control-node' in group_names"
+      run_once: true
+
+  handlers:
+    - name: restart systemd-resolved
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+        daemon_reload: true
+      become: true

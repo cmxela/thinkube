@@ -22,7 +22,7 @@
   gather_facts: true
 
   vars:
-    node_ip: "{{ zerotier_ip }}"
+    node_ip: "{{ lan_ip }}"
     user: "{{ system_username }}"
     kube_config_dir: "{{ user_home }}/.kube"
 
@@ -108,7 +108,7 @@
       tags:
         - config
 
-    - name: Configure node IP
+    - name: Configure node IP for kubelet
       ansible.builtin.lineinfile:
         path: /var/snap/microk8s/current/args/kubelet
         line: "--node-ip={{ node_ip }}"
@@ -116,6 +116,40 @@
         mode: '0644'
       become: true
       notify: Restart kubelite
+      tags:
+        - config
+        
+    - name: Configure API server advertise address
+      ansible.builtin.lineinfile:
+        path: /var/snap/microk8s/current/args/kube-apiserver
+        line: "--advertise-address={{ node_ip }}"
+        create: false
+        mode: '0644'
+      become: true
+      notify: Restart kubelite
+      tags:
+        - config
+        
+    - name: Configure k8s-dqlite to listen on correct IP
+      ansible.builtin.replace:
+        path: /var/snap/microk8s/current/args/k8s-dqlite
+        regexp: '(\$\{DEFAULT_INTERFACE_IP_ADDR\}|\$\{SNAP_DATA\}/var/kubernetes/backend/cluster\.yaml)'
+        replace: '{{ node_ip }}'
+      become: true
+      notify: Restart kubelite
+      when: node_ip is defined
+      tags:
+        - config
+        
+    - name: Configure etcd to use correct IP  
+      ansible.builtin.replace:
+        path: /var/snap/microk8s/current/args/etcd
+        regexp: '\$\{DEFAULT_INTERFACE_IP_ADDR\}'
+        replace: '{{ node_ip }}'
+      become: true
+      notify: Restart kubelite
+      when: node_ip is defined
+      failed_when: false  # File might not exist in newer MicroK8s versions
       tags:
         - config
 

@@ -66,12 +66,12 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Push changes to branch
   - [x] Request review/update PR
 
-- [ ] **[CORE-002] MicroK8s Worker Nodes** ([Issue #14](https://github.com/cmxela/thinkube/issues/14))
-  - [ ] Continue on branch: `feature/k8s-infrastructure`
-  - [ ] Implement requirement from GitHub issue #14
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Update PR
+- [x] **[CORE-002] MicroK8s Worker Nodes** ([Issue #14](https://github.com/cmxela/thinkube/issues/14)) ([PR #37](https://github.com/cmxela/thinkube/pull/37))
+  - [x] Continue on branch: `feature/k8s-infrastructure`
+  - [x] Implement requirement from GitHub issue #14
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Update PR
 
 - [ ] **[CORE-003] Cert-Manager** ([Issue #15](https://github.com/cmxela/thinkube/issues/15))
   - [ ] Continue on branch: `feature/k8s-infrastructure`

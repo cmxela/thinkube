@@ -1,0 +1,19 @@
+# Ansible managed - DNS Resolution for Thinkube
+[Resolve]
+{% if 'lxd_containers' in group_names %}
+# LXD containers use MicroK8s CoreDNS as primary DNS
+DNS={{ coredns_cluster_ip }}
+FallbackDNS={{ dns_servers | join(' ') }}
+{% elif 'baremetal' in group_names %}
+# Physical nodes use ZeroTier DNS for thinkube.com
+DNS={{ zerotier_dns_ip }}
+FallbackDNS={{ dns_servers | join(' ') }}
+{% else %}
+# Default DNS configuration
+DNS={{ dns_servers[0] }}
+FallbackDNS={{ dns_servers[1:] | join(' ') }}
+{% endif %}
+Domains={{ dns_search_domains | join(' ') }} {{ k8s_cluster_domain }}
+DNSSEC=no
+Cache=yes
+CacheFromLocalhost=no

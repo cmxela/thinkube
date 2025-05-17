@@ -43,6 +43,14 @@ This directory contains playbooks for configuring ZeroTier networking and DNS se
   - Configures resolver settings and DNS forwarders
   - Points wildcard domains to appropriate MetalLB ingress IPs
 
+### 25_configure_dns_clients.yaml
+- **Purpose**: Configures DNS resolution on all nodes
+- **What it does**:
+  - Configures all nodes to use the ZeroTier DNS server
+  - Sets up systemd-resolved with proper domain routing
+  - Ensures MicroK8s nodes use CoreDNS for internal resolution
+  - Verifies DNS resolution works on all nodes
+
 ### 28_test_dns.yaml
 - **Purpose**: Tests DNS resolution across all nodes
 - **What it does**:

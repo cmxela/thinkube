@@ -1,0 +1,77 @@
+---
+# Configure MicroK8s nodes to properly use DNS after CoreDNS is deployed
+# This ensures MicroK8s nodes can resolve both internal and external domains
+
+- name: Configure DNS on MicroK8s nodes after CoreDNS deployment
+  hosts: microk8s
+  gather_facts: true
+  become: true
+  
+  vars:
+    zerotier_dns_server: "{{ hostvars['dns1'].zerotier_ip }}"  # 192.168.191.1
+    
+  tasks:
+    - name: Get CoreDNS service IP
+      ansible.builtin.command: |
+        microk8s kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}'
+      register: coredns_ip
+      when: inventory_hostname in groups['microk8s_control_plane']
+      
+    - name: Share CoreDNS IP with all MicroK8s nodes
+      ansible.builtin.set_fact:
+        cluster_dns_ip: "{{ hostvars[groups['microk8s_control_plane'][0]]['coredns_ip']['stdout'] }}"
+      when: groups['microk8s_control_plane'][0] in hostvars
+        
+    - name: Update systemd-resolved configuration for MicroK8s nodes
+      ansible.builtin.copy:
+        content: |
+          # Updated DNS configuration for MicroK8s nodes
+          [Resolve]
+          # Primary DNS: CoreDNS for cluster.local domains
+          DNS={{ cluster_dns_ip | default('10.152.183.10') }}
+          # Secondary DNS: ZeroTier DNS for thinkube domains
+          DNS={{ zerotier_dns_server }}
+          # Configure domain routing
+          Domains=~cluster.local ~thinkube.com ~kn.thinkube.com
+          # Fallback DNS for everything else
+          FallbackDNS=8.8.8.8 8.8.4.4
+          DNSStubListener=yes
+        dest: /etc/systemd/resolved.conf.d/10-thinkube.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart systemd-resolved
+      
+    - name: Ensure DNS resolution order is correct
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/resolved.conf
+        regexp: '^#?DNS='
+        line: 'DNS={{ cluster_dns_ip | default("10.152.183.10") }} {{ zerotier_dns_server }}'
+        backup: yes
+      when: ansible_service_mgr == "systemd"
+      
+  handlers:
+    - name: restart systemd-resolved
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: restarted
+        
+  post_tasks:
+    - name: Test DNS resolution for internal cluster domain
+      ansible.builtin.command: nslookup kubernetes.default.svc.cluster.local
+      register: internal_dns_test
+      changed_when: false
+      failed_when: false
+      
+    - name: Test DNS resolution for external domain
+      ansible.builtin.command: nslookup keycloak.{{ domain_name }}
+      register: external_dns_test  
+      changed_when: false
+      failed_when: false
+      
+    - name: Show DNS test results
+      ansible.builtin.debug:
+        msg: |
+          Node: {{ inventory_hostname }}
+          Internal DNS (cluster.local): {{ 'SUCCESS' if internal_dns_test.rc == 0 else 'FAILED' }}
+          External DNS ({{ domain_name }}): {{ 'SUCCESS' if external_dns_test.rc == 0 else 'FAILED' }}

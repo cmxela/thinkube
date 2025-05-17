@@ -69,3 +69,7 @@ Any performance impacts or optimizations discovered:
 - [Phase 4: Networking](/docs/AI-AD/lessons/phase_4_lessons.md)
 - [Phase 5: Core Services](/docs/AI-AD/lessons/phase_5_lessons.md)
 - [Phase 6: Extended Services](/docs/AI-AD/lessons/phase_6_lessons.md)
+
+## Component-Specific Lessons
+
+- [Keycloak Deployment (CORE-004)](/docs/AI-AD/lessons/keycloak_deployment_lesson.md) - Bootstrap admin mechanism and username management

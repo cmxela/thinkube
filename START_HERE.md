@@ -59,12 +59,12 @@ This helps maintain accurate progress tracking between development sessions and 
 
 ### Infrastructure Components [Branch: feature/k8s-infrastructure]
 
-- [ ] **[CORE-001] MicroK8s Control Node** ([Issue #13](https://github.com/cmxela/thinkube/issues/13))
-  - [ ] Create/switch to branch: `git checkout -b feature/k8s-infrastructure`
-  - [ ] Implement requirement from GitHub issue #13
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Request review/update PR
+- [x] **[CORE-001] MicroK8s Control Node** ([Issue #13](https://github.com/cmxela/thinkube/issues/13)) ([PR #37](https://github.com/cmxela/thinkube/pull/37))
+  - [x] Create/switch to branch: `git checkout -b feature/k8s-infrastructure`
+  - [x] Implement requirement from GitHub issue #13
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Request review/update PR
 
 - [ ] **[CORE-002] MicroK8s Worker Nodes** ([Issue #14](https://github.com/cmxela/thinkube/issues/14))
   - [ ] Continue on branch: `feature/k8s-infrastructure`

@@ -94,6 +94,20 @@ This helps maintain accurate progress tracking between development sessions and 
   - [ ] Push changes to branch
   - [ ] Update PR
 
+- [ ] **[CORE-003c] DNS Resolution Configuration** ([Issue #39](https://github.com/cmxela/thinkube/issues/39))
+  - [x] Continue on branch: `feature/k8s-infrastructure`
+  - [x] Create issue document in .github/issues/CORE-003c-dns-resolution.md
+  - [x] Create component directory structure
+  - [x] Implement 10_configure_all_nodes.yaml
+  - [x] Implement 18_test.yaml
+  - [x] Implement 19_rollback.yaml
+  - [x] Create templates/resolved.conf.j2
+  - [x] Test deployment on all nodes
+  - [x] DNS resolution working correctly on all systems
+  - [ ] Commit changes to branch
+  - [ ] Push changes to branch
+  - [ ] Update PR
+
 ### Core Platform Services [Individual Component Branches]
 
 - [ ] **[CORE-004] Keycloak** ([Issue #16](https://github.com/cmxela/thinkube/issues/16))

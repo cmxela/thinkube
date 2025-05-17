@@ -1,0 +1,95 @@
+---
+- name: Test DNS resolution configuration
+  hosts: all
+  become: no
+  gather_facts: true
+
+# Variables are available from inventory and group_vars, no need to redefine
+
+  tasks:
+    - name: Test DNS resolution on physical nodes
+      ansible.builtin.command: |
+        nslookup keycloak.{{ domain_name }}
+      register: nslookup_result
+      when: "'baremetal' in group_names"
+      changed_when: false
+
+    - name: Show DNS resolution results on physical nodes
+      ansible.builtin.debug:
+        msg: "{{ nslookup_result.stdout_lines }}"
+      when: "'baremetal' in group_names"
+
+    - name: Test DNS from Kubernetes node directly
+      ansible.builtin.command: |
+        dig @{{ coredns_cluster_ip }} keycloak.{{ domain_name }} +short
+      vars:
+        coredns_cluster_ip: "10.152.183.10"
+      register: k8s_dns_test
+      when: "'k8s-control-node' in group_names"
+      run_once: true
+      changed_when: false
+
+    - name: Show Kubernetes DNS test results
+      ansible.builtin.debug:
+        msg: "K8s DNS test result: {{ k8s_dns_test.stdout_lines | default(['No result']) }}"
+      when: "'k8s-control-node' in group_names"
+      run_once: true
+
+    - name: Test DNS on LXD containers
+      ansible.builtin.command: |
+        nslookup keycloak.{{ domain_name }}
+      register: lxd_nslookup_result
+      when: "'lxd_containers' in group_names and inventory_hostname != 'dns1'"
+      changed_when: false
+      
+    - name: Test DNS on DNS server itself
+      ansible.builtin.command: |
+        dig @127.0.0.1 keycloak.{{ domain_name }} +short
+      register: dns_server_test
+      when: "inventory_hostname == 'dns1'"
+      changed_when: false
+
+    - name: Show LXD container DNS resolution results
+      ansible.builtin.debug:
+        msg: "{{ lxd_nslookup_result.stdout_lines }}"
+      when: "'lxd_containers' in group_names and inventory_hostname != 'dns1'"
+      
+    - name: Show DNS server test result
+      ansible.builtin.debug:
+        msg: "DNS server test result: {{ dns_server_test.stdout_lines }}"
+      when: "inventory_hostname == 'dns1'"
+
+    - name: Validate systemd-resolved configuration
+      ansible.builtin.command: |
+        resolvectl status
+      register: resolvectl_result
+      changed_when: false
+
+    - name: Show systemd-resolved status
+      ansible.builtin.debug:
+        msg: "{{ resolvectl_result.stdout_lines }}"
+
+    - name: Check DNS servers in use
+      ansible.builtin.command: |
+        cat /etc/resolv.conf
+      register: resolv_result
+      changed_when: false
+
+    - name: Show resolv.conf contents
+      ansible.builtin.debug:
+        msg: "{{ resolv_result.stdout_lines }}"
+
+    - name: Test Kubernetes internal DNS resolution
+      ansible.builtin.command: |
+        kubectl run dnstest --image=busybox:latest --rm -i --restart=Never -- nslookup kubernetes.default.svc.cluster.local
+      register: k8s_internal_dns
+      when: "'k8s-control-node' in group_names"
+      run_once: true
+      ignore_errors: true
+      changed_when: false
+
+    - name: Show K8s internal DNS results
+      ansible.builtin.debug:
+        msg: "K8s internal DNS test: {{ k8s_internal_dns.stdout_lines | default(['No result']) }}"
+      when: "'k8s-control-node' in group_names"
+      run_once: true

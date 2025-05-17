@@ -42,6 +42,9 @@ Thinkube is a home-based development platform built on Kubernetes, designed spec
   - Installation-specific variables MUST be defined in inventory, NEVER in playbooks
   - Only technical/advanced variables MAY have defaults in playbooks  
   - All playbooks MUST verify required variables exist before proceeding
+  - **Admin Credentials**: Always use `admin_username` and `admin_password` (not component-specific variants like `keycloak_admin_username`)
+  - **Environment Variables**: Use `ADMIN_PASSWORD` for admin credentials (not `KEYCLOAK_ADMIN_PASSWORD`)
+  - Default `admin_username` is `tkadmin` for neutral cross-application use
 - **Module Names**: Use fully qualified names (e.g., `ansible.builtin.command` not `command`)
 - **Tasks**: Always include descriptive name field
 - **Facts**: Default to `gather_facts: true`

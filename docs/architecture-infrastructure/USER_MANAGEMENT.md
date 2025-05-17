@@ -33,9 +33,9 @@ These are application-specific administrator accounts using basic authentication
 These are users managed through Keycloak for Single Sign-On:
 
 - **Default Realm User**: `thinkube` (configurable in inventory)
-- **Scope**: Used across all applications integrated with Keycloak
-- **Purpose**: Unified authentication and authorization within the Thinkube realm
-- **Configuration Point**: Defined in inventory as `keycloak_realm_user`
+- **Scope**: Used across all applications integrated with authentication provider
+- **Purpose**: Unified authentication and authorization within the realm
+- **Configuration Point**: Defined in inventory as `auth_realm_username`
 - **Authentication**: OpenID Connect/OAuth2
 - **Creation**: During Keycloak realm setup
 
@@ -53,9 +53,9 @@ all:
     app_admin_username: "admin"          # Default application admin username
     app_admin_password: "{{ lookup('env', 'APP_ADMIN_PASSWORD') }}"  # From environment
     
-    # Keycloak realm user configuration
-    keycloak_realm_user: "thinkube"      # Username for primary user in Thinkube realm
-    keycloak_realm_user_password: "{{ lookup('env', 'KEYCLOAK_REALM_USER_PASSWORD') }}"
+    # Auth realm user configuration
+    auth_realm_username: "thinkube"      # Username for primary user in authentication realm
+    auth_realm_password: "{{ lookup('env', 'AUTH_REALM_PASSWORD') }}"
 ```
 
 ## Implementation Guidelines
@@ -130,7 +130,7 @@ Example snippet:
 #### Keycloak Realm User
 
 1. After Keycloak is set up, create a Thinkube realm
-2. Create a user in this realm using `keycloak_realm_user` from inventory
+2. Create a user in this realm using `auth_realm_username` from inventory
 3. Assign appropriate realm roles to this user
 4. This user will be used for accessing applications integrated with Keycloak
 
@@ -143,9 +143,9 @@ Example snippet:
     auth_username: "{{ app_admin_username }}"
     auth_password: "{{ app_admin_password }}"
     realm: "thinkube"
-    username: "{{ keycloak_realm_user }}"
-    password: "{{ keycloak_realm_user_password }}"
-    email: "{{ keycloak_realm_user }}@{{ domain_name }}"
+    username: "{{ auth_realm_username }}"
+    password: "{{ auth_realm_password }}"
+    email: "{{ auth_realm_username }}@{{ domain_name }}"
     first_name: Thinkube
     last_name: User
     enabled: true
@@ -163,7 +163,7 @@ Example password handling in environment:
 ```bash
 # Add to ~/.env file (symlinked to project root)
 export APP_ADMIN_PASSWORD='secure_password'
-export KEYCLOAK_REALM_USER_PASSWORD='another_secure_password'
+export AUTH_REALM_PASSWORD='another_secure_password'
 ```
 
 ## Playbook Implementation
@@ -182,10 +182,10 @@ Example validation:
     that:
       - system_username is defined and system_username != ""
       - app_admin_username is defined and app_admin_username != ""
-      - keycloak_realm_user is defined and keycloak_realm_user != ""
+      - auth_realm_username is defined and auth_realm_username != ""
     fail_msg: >
       ERROR: Required user variables not defined in inventory.
-      Please ensure system_username, app_admin_username, and keycloak_realm_user are set.
+      Please ensure system_username, app_admin_username, and auth_realm_username are set.
 ```
 
 ## SSH Configuration
@@ -214,5 +214,5 @@ Example SSH config setup:
 | `system_username` | OS-level user | "thinkube" | Yes |
 | `app_admin_username` | Application admin for all apps including Keycloak | "admin" | Yes |
 | `app_admin_password` | App admin password | From env | Yes |
-| `keycloak_realm_user` | User in Thinkube realm | "thinkube" | Yes |
-| `keycloak_realm_user_password` | Realm user password | From env | Yes |
+| `auth_realm_username` | User in authentication realm | "thinkube" | Yes |
+| `auth_realm_password` | Realm user password | From env | Yes |

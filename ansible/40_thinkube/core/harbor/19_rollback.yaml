@@ -1,0 +1,124 @@
+---
+# ansible/40_thinkube/core/harbor/19_rollback.yaml
+# Description:
+#   Removes Harbor container registry installation and cleans up resources
+#   Deletes namespace, Helm release, and associated secrets
+#
+# Requirements:
+#   - MicroK8s cluster must be accessible
+#   - Helm must be available
+#   - kubectl access to the cluster
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/harbor/19_rollback.yaml
+#
+# Variables from inventory:
+#   - harbor_namespace: Namespace where Harbor is deployed
+#   - harbor_release: Helm release name for Harbor
+#   - kubeconfig: Path to Kubernetes configuration file
+#   - kubectl_bin: Path to kubectl binary
+#   - helm_bin: Path to helm binary
+
+- name: Rollback Harbor Container Registry
+  hosts: microk8s_control_plane
+  gather_facts: true
+  vars:
+    # All values must come from inventory
+    
+  tasks:
+    - name: Check if Harbor namespace exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ harbor_namespace }}"
+      register: namespace_check
+      failed_when: false
+
+    - name: Check if Harbor Helm release exists
+      kubernetes.core.helm_info:
+        binary_path: "{{ helm_bin }}"
+        kubeconfig: "{{ kubeconfig }}"
+        name: "{{ harbor_release }}"
+        release_namespace: "{{ harbor_namespace }}"
+      register: helm_check
+      failed_when: false
+      when: namespace_check.resources | length > 0
+
+    - name: Remove Harbor Helm release if exists
+      kubernetes.core.helm:
+        binary_path: "{{ helm_bin }}"
+        kubeconfig: "{{ kubeconfig }}"
+        name: "{{ harbor_release }}"
+        state: absent
+        release_namespace: "{{ harbor_namespace }}"
+        wait: true
+        wait_timeout: "300s"
+      when: 
+        - namespace_check.resources | length > 0
+        - helm_check.status is defined
+        - helm_check.status.info is defined
+
+    - name: Delete Harbor namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: "{{ harbor_namespace }}"
+        wait: true
+        wait_condition:
+          type: Delete
+        wait_timeout: 300
+      when: namespace_check.resources | length > 0
+
+    - name: Verify cleanup status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ harbor_namespace }}"
+      register: cleanup_check
+      failed_when: cleanup_check.resources | length > 0
+
+    - name: Remove Harbor OIDC secret file if exists
+      ansible.builtin.file:
+        path: /tmp/harbor_oidc_secret
+        state: absent
+      
+    - name: Remove Harbor values file if exists
+      ansible.builtin.file:
+        path: /tmp/harbor-values.yaml
+        state: absent
+        
+    - name: Get remote home directory
+      ansible.builtin.shell: echo $HOME
+      register: user_home
+      changed_when: false
+
+    - name: Remove Harbor robot token from environment
+      ansible.builtin.lineinfile:
+        path: "{{ user_home.stdout }}/.env"
+        regexp: "^HARBOR_ROBOT_TOKEN="
+        state: absent
+      ignore_errors: true
+      
+    - name: Remove Harbor pull secret from default namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: harbor-pull-secret
+        namespace: default
+      ignore_errors: true
+
+    - name: Display cleanup status
+      ansible.builtin.debug:
+        msg:
+          - "Harbor namespace: {{ 'Deleted' if namespace_check.resources | length == 0 else 'Not found' }}"
+          - "Harbor Helm release: {{ 'Deleted' if helm_check.status is defined else 'Not found' }}"
+          - "Harbor robot token: Removed from environment file"
+          - "Harbor pull secret: Removed from default namespace"
+          - "Cleanup completed successfully"

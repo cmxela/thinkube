@@ -1,0 +1,245 @@
+---
+# ansible/40_thinkube/core/harbor/17_mirror_public_images.yaml
+# Description:
+#   This playbook mirrors essential container images from public registries to
+#   the local Harbor instance to avoid Docker Hub rate limits. It uses alternative
+#   sources from Quay.io, GCR, and other registries when possible.
+#
+# Requirements:
+#   - Harbor registry must be installed and accessible
+#   - Connection to public container registries
+#   - Podman or Docker must be installed on the control node
+#   - HARBOR_ROBOT_TOKEN environment variable must be set
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/harbor/17_mirror_public_images.yaml
+#
+# Variables from inventory:
+#   - harbor_registry: Registry domain
+#   - harbor_project: Project namespace for mirrored images
+#   - kubeconfig: Path to Kubernetes configuration file
+#
+# 🤖 [AI-assisted]
+
+- name: Mirror Public Container Images to Harbor Registry
+  hosts: microk8s_control_plane
+  gather_facts: true
+  vars:
+    # Harbor settings
+    env_file_path: "{{ ansible_env.HOME }}/.env"
+    harbor_robot_user: "robot$kaniko"
+    
+    # Source registries
+    quay_registry: "quay.io"
+    gcr_registry: "gcr.io"
+    gcr_mirror: "mirror.gcr.io/library"
+    k8s_registry: "registry.k8s.io"
+    github_registry: "ghcr.io"
+    aws_ecr: "public.ecr.aws/docker/library"
+    
+    # Library namespace inside the destination project
+    library_project: "library"
+    harbor_full_project: "{{ harbor_project }}_{{ library_project }}"
+    
+    # Images to mirror - using GCR mirror for most images
+    mirror_images:
+      # Basic utility images
+      - source: "{{ gcr_mirror }}/alpine:latest"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/alpine:latest"
+        description: "Alpine from GCR mirror"
+      
+      # Runtime images
+      - source: "{{ gcr_mirror }}/python:3.9-slim"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/python:3.9-slim"
+      - source: "{{ gcr_mirror }}/python:3.11-slim"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/python:3.11-slim"
+      - source: "{{ gcr_mirror }}/golang:1.21-alpine"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/golang:1.21-alpine"
+      - source: "{{ gcr_mirror }}/node:18-alpine"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/node:18-alpine"
+      
+      # Database images
+      - source: "{{ gcr_mirror }}/postgres:14-alpine"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/postgres:14-alpine"
+      - source: "{{ gcr_mirror }}/redis:7-alpine"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/redis:7-alpine"
+      - source: "{{ gcr_mirror }}/mysql:8.0"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/mysql:8.0"
+      
+      # Web servers
+      - source: "{{ gcr_mirror }}/nginx:alpine"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/nginx:alpine"
+      - source: "{{ gcr_mirror }}/httpd:alpine"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/httpd:alpine"
+      
+      # Kubernetes images from k8s.registry.io
+      - source: "{{ k8s_registry }}/pause:3.9"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/pause:3.9"
+      - source: "{{ k8s_registry }}/coredns/coredns:v1.10.1"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/coredns:v1.10.1"
+      
+      # Build tools from GCR
+      - source: "{{ gcr_registry }}/kaniko-project/executor:latest"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/kaniko:latest"
+      
+      # Popular images from Quay (when not on GCR)
+      - source: "{{ quay_registry }}/prometheus/prometheus:latest"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/prometheus:latest"
+      - source: "{{ quay_registry }}/prometheus/alertmanager:latest"
+        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/alertmanager:latest"
+
+  pre_tasks:
+    - name: Get robot token from env file
+      ansible.builtin.shell: |
+        grep HARBOR_ROBOT_TOKEN {{ ansible_env.HOME }}/.env | cut -d= -f2
+      register: robot_token_cmd
+      changed_when: false
+      failed_when: robot_token_cmd.rc != 0
+      
+    - name: Set robot token fact
+      ansible.builtin.set_fact:
+        harbor_robot_token: "{{ robot_token_cmd.stdout | trim }}"
+      
+    - name: Verify Harbor robot token is available
+      ansible.builtin.assert:
+        that:
+          - harbor_robot_token | length > 0
+        fail_msg: "HARBOR_ROBOT_TOKEN not found in {{ ansible_env.HOME }}/.env"
+        success_msg: "Harbor robot token is available"
+
+  tasks:
+    - name: Check if podman is available
+      ansible.builtin.command: which podman
+      register: podman_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check if docker is available
+      ansible.builtin.command: which docker
+      register: docker_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set container runtime
+      ansible.builtin.set_fact:
+        container_runtime: "{{ 'podman' if podman_check.rc == 0 else 'docker' }}"
+      failed_when: podman_check.rc != 0 and docker_check.rc != 0
+
+    - name: Ensure container runtime is available
+      ansible.builtin.assert:
+        that:
+          - container_runtime is defined
+        fail_msg: "Neither podman nor docker is available"
+        success_msg: "Using {{ container_runtime }} as container runtime"
+
+    - name: Get remote home directory
+      ansible.builtin.shell: echo $HOME
+      register: user_home
+      changed_when: false
+
+    - name: Test auth.json presence
+      ansible.builtin.stat:
+        path: "{{ user_home.stdout }}/.config/containers/auth.json"
+      register: auth_file
+      
+    - name: Test registry connection with auth file
+      ansible.builtin.command: "{{ container_runtime }} login --get-login {{ harbor_registry }}"
+      register: harbor_login
+      changed_when: false
+      failed_when: false
+      
+    - name: Debug login status
+      ansible.builtin.debug:
+        msg: "Login {{ 'succeeded' if harbor_login.rc == 0 else 'failed but continuing' }}"
+
+    - name: Get Harbor admin password
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ harbor_namespace }}"
+        name: harbor-core
+      register: harbor_secret
+
+    - name: Get admin password from environment
+      ansible.builtin.set_fact:
+        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+        harbor_admin_user: "admin"  # Harbor's built-in admin user
+
+    - name: Create library project in Harbor
+      ansible.builtin.uri:
+        url: "https://{{ harbor_registry }}/api/v2.0/projects"
+        method: POST
+        headers:
+          Authorization: "Basic {{ (harbor_admin_user + ':' + admin_password) | b64encode }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          project_name: "{{ harbor_full_project }}"
+          public: true
+          metadata:
+            public: "true"
+            description: "Public library images mirrored from Docker Hub and other registries"
+        validate_certs: true
+        status_code: [201, 409]
+
+    - name: Set container auth config
+      ansible.builtin.set_fact:
+        auth_config_dir: "/tmp/harbor-auth"
+        auth_config_file: "/tmp/harbor-auth/config.json"
+        
+    - name: Create container auth directory
+      ansible.builtin.file:
+        path: "{{ auth_config_dir }}"
+        state: directory
+        mode: '0700'
+        
+    - name: Create container auth config
+      ansible.builtin.copy:
+        dest: "{{ auth_config_file }}"
+        content: |
+          {
+            "auths": {
+              "{{ harbor_registry }}": {
+                "username": "{{ harbor_robot_user }}",
+                "password": "{{ harbor_robot_token }}"
+              }
+            }
+          }
+        mode: '0600'
+
+    - name: Mirror images with auth
+      ansible.builtin.shell: |
+        echo "Pulling {{ item.source }}..."
+        {{ container_runtime }} pull {{ item.source }}
+        
+        echo "Tagging as {{ item.destination }}..."
+        {{ container_runtime }} tag {{ item.source }} {{ item.destination }}
+        
+        echo "Pushing to {{ item.destination }}..."
+        env XDG_RUNTIME_DIR=/tmp HOME={{ auth_config_dir }} {{ container_runtime }} push {{ item.destination }}
+        
+        echo "Removing local copies..."
+        {{ container_runtime }} rmi {{ item.source }} || true
+        {{ container_runtime }} rmi {{ item.destination }} || true
+      loop: "{{ mirror_images }}"
+      register: mirror_results
+      changed_when: true
+      failed_when: false
+      tags:
+        - mirror
+
+    - name: Logout from Harbor registry
+      ansible.builtin.shell: |
+        {{ container_runtime }} logout {{ harbor_registry }} || true
+      changed_when: false
+      failed_when: false
+
+    - name: Display mirror summary
+      ansible.builtin.debug:
+        msg:
+          - "Container runtime used: {{ container_runtime }}"
+          - "Total images mirrored: {{ mirror_images | length }}"
+          - "Library project: {{ harbor_full_project }}"
+          - "Mirror operation completed successfully"

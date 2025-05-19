@@ -38,6 +38,15 @@ keycloak_url: "https://{{ keycloak_hostname }}"
 keycloak_realm: "thinkube"  # Using thinkube realm for consistency
 thinkube_applications_displayname: "Thinkube Applications"
 
+# Harbor registry configuration
+harbor_registry: "registry.{{ domain_name }}"
+harbor_namespace: "registry"
+harbor_release: "harbor"
+harbor_project: "thinkube"
+harbor_storage_class: "microk8s-hostpath"
+harbor_registry_size: "50Gi"
+harbor_database_size: "10Gi"
+
 # Certificate paths
 ssl_cert_dir: "/etc/ssl/{{ domain_name.split('.')[0] }}_certificates"
 tls_crt_path: "{{ ssl_cert_dir }}/{{ domain_name }}.fullchain.cer"

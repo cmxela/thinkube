@@ -20,12 +20,19 @@ You are working on the **Thinkube Project** - a home-based Kubernetes platform b
 ### Variable Management
 - Installation-specific variables MUST be in inventory, NEVER in playbooks
 - Use snake_case for all variable names
-- **Application Admin**: Use `admin_username` and `admin_password`
+- **Application Admin**: ALWAYS use `admin_username` and `admin_password`
+  - MUST be used for ALL applications (Harbor, Keycloak, PostgreSQL, etc.)
+  - When migrating, MUST replace component-specific admin users with `admin_username`
+  - NEVER use component-specific variants like `harbor_admin_user` or `keycloak_admin_user`
 - **SSO/Realm Users**: Use `auth_realm_username` and `auth_realm_password`
+  - For end users authenticated via SSO/realm
 - **System Users**: Use `system_username`
-- **Environment Variables**: Use `ADMIN_PASSWORD` and `AUTH_REALM_PASSWORD`
+  - For OS-level users and service accounts
+- **Environment Variables**:
+  - Use `ADMIN_PASSWORD` for admin passwords, never component-specific like `HARBOR_ADMIN_PASS`
+  - Use `AUTH_REALM_PASSWORD` for realm passwords
 - **Default Values**:
-  - `admin_username`: `tkadmin` (application admin)
+  - `admin_username`: `tkadmin` (MUST be used for ALL application admin access)
   - `auth_realm_username`: `thinkube` (SSO user)
   - `system_username`: `thinkube` (OS user)
 
@@ -48,7 +55,9 @@ You are working on the **Thinkube Project** - a home-based Kubernetes platform b
   - `cmxela.com` → `{{ domain_name }}`
   - `192.168.191.100` → `{{ primary_ingress_ip }}`
   - `alexmc` → `{{ auth_realm_username }}` (SSO user)
-  - Application admins → `{{ admin_username }}`
+  - Application admin usernames → `{{ admin_username }}` (used for ALL applications)
+  - Component-specific admin users (`HARBOR_ADMIN_USER`, `admin`, etc.) → `{{ admin_username }}`
+  - Application admin passwords → `{{ admin_password }}`
 - Update host groups: `gato-p` → `k8s-control-node`
 - Change module names to FQCN
 - If uncertain about a change, preserve the original approach

@@ -23,13 +23,19 @@ Common variables to check in inventory:
 - `kubectl_bin`, `helm_bin`, `kubeconfig`
 
 **CRITICAL: Username and Password Guidelines**
-- Application admin credentials: Use `admin_username` and `admin_password`
+- Application admin credentials: ALWAYS use `admin_username` and `admin_password`
+  - This applies to ALL application components (Harbor, Keycloak, PostgreSQL, etc.)
+  - When migrating, MUST replace component-specific admin users (e.g., `HARBOR_ADMIN_USER`) with `admin_username`
+  - Environment variables: Use `ADMIN_PASSWORD` for admin passwords
 - SSO/realm users: Use `auth_realm_username` and `auth_realm_password`
+  - For end users authenticated via SSO/realm
+  - Environment variables: Use `AUTH_REALM_PASSWORD` for realm passwords
 - System users: Use `system_username`
-- NEVER use component-specific variants (e.g., NO `keycloak_admin_username`)
-- Environment variables: Use `ADMIN_PASSWORD` and `AUTH_REALM_PASSWORD`
+  - For OS-level users and service accounts
+- NEVER use component-specific variants (e.g., NO `keycloak_admin_username`, NO `harbor_admin_user`)
+- NEVER keep hardcoded usernames like `admin`, `alexmc`, or custom usernames in playbooks
 - Default values:
-  - `admin_username`: `tkadmin` (application admin)
+  - `admin_username`: `tkadmin` (MUST be used for ALL application admin access)
   - `auth_realm_username`: `thinkube` (SSO user)
   - `system_username`: `thinkube` (OS user)
 
@@ -48,7 +54,9 @@ Common variables to check in inventory:
      - Domain names (e.g., `cmxela.com` → `{{ domain_name }}`)
      - IP addresses (e.g., `192.168.191.100` → `{{ primary_ingress_ip }}`)
      - SSO/realm usernames (e.g., `alexmc` → `{{ auth_realm_username }}`)
-     - Application admin usernames → `{{ admin_username }}`
+     - Application admin usernames → `{{ admin_username }}` (for ALL applications)
+     - Component-specific admin users (`HARBOR_ADMIN_USER`, `admin`, etc.) → `{{ admin_username }}`
+     - Application admin passwords → `{{ admin_password }}`
      - System usernames → `{{ system_username }}`
      - Paths and directories
    - [ ] List all Kubernetes resources being created (Secrets, ConfigMaps, Services, etc.)

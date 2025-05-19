@@ -18,6 +18,7 @@ __pycache__/
 *.temp
 *.bak
 *.swp
+temp_*.sh
 
 # Logs
 *.log

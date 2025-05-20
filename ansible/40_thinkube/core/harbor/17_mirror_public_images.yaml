@@ -38,56 +38,56 @@
     github_registry: "ghcr.io"
     aws_ecr: "public.ecr.aws/docker/library"
     
-    # Library namespace inside the destination project
+    # Standard library project for mirrored images
+    # This must match exactly with "library" - the default project in Harbor
     library_project: "library"
-    harbor_full_project: "{{ harbor_project }}_{{ library_project }}"
     
     # Images to mirror - using GCR mirror for most images
     mirror_images:
       # Basic utility images
       - source: "{{ gcr_mirror }}/alpine:latest"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/alpine:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/alpine:latest"
         description: "Alpine from GCR mirror"
       
       # Runtime images
       - source: "{{ gcr_mirror }}/python:3.9-slim"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/python:3.9-slim"
+        destination: "{{ harbor_registry }}/{{ library_project }}/python:3.9-slim"
       - source: "{{ gcr_mirror }}/python:3.11-slim"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/python:3.11-slim"
+        destination: "{{ harbor_registry }}/{{ library_project }}/python:3.11-slim"
       - source: "{{ gcr_mirror }}/golang:1.21-alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/golang:1.21-alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/golang:1.21-alpine"
       - source: "{{ gcr_mirror }}/node:18-alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/node:18-alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/node:18-alpine"
       
       # Database images
       - source: "{{ gcr_mirror }}/postgres:14-alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/postgres:14-alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/postgres:14-alpine"
       - source: "{{ gcr_mirror }}/redis:7-alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/redis:7-alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/redis:7-alpine"
       - source: "{{ gcr_mirror }}/mysql:8.0"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/mysql:8.0"
+        destination: "{{ harbor_registry }}/{{ library_project }}/mysql:8.0"
       
       # Web servers
       - source: "{{ gcr_mirror }}/nginx:alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/nginx:alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/nginx:alpine"
       - source: "{{ gcr_mirror }}/httpd:alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/httpd:alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/httpd:alpine"
       
       # Kubernetes images from k8s.registry.io
       - source: "{{ k8s_registry }}/pause:3.9"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/pause:3.9"
+        destination: "{{ harbor_registry }}/{{ library_project }}/pause:3.9"
       - source: "{{ k8s_registry }}/coredns/coredns:v1.10.1"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/coredns:v1.10.1"
+        destination: "{{ harbor_registry }}/{{ library_project }}/coredns:v1.10.1"
       
       # Build tools from GCR
       - source: "{{ gcr_registry }}/kaniko-project/executor:latest"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/kaniko:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/kaniko:latest"
       
       # Popular images from Quay (when not on GCR)
       - source: "{{ quay_registry }}/prometheus/prometheus:latest"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/prometheus:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/prometheus:latest"
       - source: "{{ quay_registry }}/prometheus/alertmanager:latest"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/alertmanager:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/alertmanager:latest"
 
   pre_tasks:
     - name: Get robot token from env file
@@ -176,7 +176,7 @@
           Content-Type: "application/json"
         body_format: json
         body:
-          project_name: "{{ harbor_full_project }}"
+          project_name: "{{ library_project }}"
           public: true
           metadata:
             public: "true"
@@ -241,5 +241,5 @@
         msg:
           - "Container runtime used: {{ container_runtime }}"
           - "Total images mirrored: {{ mirror_images | length }}"
-          - "Library project: {{ harbor_full_project }}"
+          - "Library project: {{ library_project }}"
           - "Mirror operation completed successfully"

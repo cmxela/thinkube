@@ -31,8 +31,8 @@
           DNS={{ cluster_dns_ip | default('10.152.183.10') }}
           # Secondary DNS: ZeroTier DNS for thinkube domains
           DNS={{ zerotier_dns_server }}
-          # Configure domain routing
-          Domains=~cluster.local ~thinkube.com ~kn.thinkube.com
+          # Configure domain routing - only include cluster.local to prevent search domain issues
+          Domains=~cluster.local
           # Fallback DNS for everything else
           FallbackDNS=8.8.8.8 8.8.4.4
           DNSStubListener=yes
@@ -63,9 +63,21 @@
       changed_when: false
       failed_when: false
       
-    - name: Test DNS resolution for external domain
+    - name: Test DNS resolution for external domain via wildcard
       ansible.builtin.command: nslookup keycloak.{{ domain_name }}
       register: external_dns_test  
+      changed_when: false
+      failed_when: false
+      
+    - name: Test DNS resolution for Let's Encrypt domain
+      ansible.builtin.command: nslookup acme-v02.api.letsencrypt.org
+      register: letsencrypt_dns_test
+      changed_when: false
+      failed_when: false
+      
+    - name: Test DNS resolution for Let's Encrypt with trailing dot
+      ansible.builtin.command: nslookup acme-v02.api.letsencrypt.org.
+      register: letsencrypt_fqdn_dns_test
       changed_when: false
       failed_when: false
       
@@ -75,3 +87,14 @@
           Node: {{ inventory_hostname }}
           Internal DNS (cluster.local): {{ 'SUCCESS' if internal_dns_test.rc == 0 else 'FAILED' }}
           External DNS ({{ domain_name }}): {{ 'SUCCESS' if external_dns_test.rc == 0 else 'FAILED' }}
+          
+          Let's Encrypt Resolution: {{ 'SUCCESS' if letsencrypt_dns_test.rc == 0 else 'FAILED' }}
+          Let's Encrypt Resolution (FQDN): {{ 'SUCCESS' if letsencrypt_fqdn_dns_test.rc == 0 else 'FAILED' }}
+          
+          Let's Encrypt Results: 
+          {{ letsencrypt_dns_test.stdout_lines | to_nice_yaml }}
+          
+          Let's Encrypt Results (FQDN):
+          {{ letsencrypt_fqdn_dns_test.stdout_lines | to_nice_yaml }}
+          
+          EXTERNAL RESOLUTION VALIDATION: {% if "thinkube.com" in letsencrypt_dns_test.stdout %}❌ FAILED - External domains resolve to internal IPs{% else %}✅ PASSED - External domains resolve correctly{% endif %}

@@ -197,13 +197,16 @@ Configure all hosts and VMs to use the dns1 server (handled by playbooks):
    ```
    [Resolve]
    DNS={{ hostvars['dns1'].zerotier_ip }}
-   Domains=~{{ domain_name }}
+   # Only use cluster.local as search domain to prevent wildcard matching with external domains
+   Domains={{ k8s_cluster_domain }}
    ```
 
 2. Restart systemd-resolved:
    ```bash
    systemctl restart systemd-resolved
    ```
+
+> **IMPORTANT**: Do not add `{{ domain_name }}` or `kn.{{ domain_name }}` to search domains as this will cause external domain resolution issues. CoreDNS will forward requests for these domains to ZeroTier DNS server without needing them in search domains.
 
 ### MicroK8s DNS Integration
 
@@ -220,28 +223,48 @@ Configure CoreDNS in MicroK8s to forward requests for domain to the dns1 server:
      Corefile: |
        .:53 {
            errors
-           health
-           kubernetes cluster.local in-addr.arpa ip6.arpa {
-              pods insecure
-              upstream
-              fallthrough in-addr.arpa ip6.arpa
+           health {
+               lameduck 5s
            }
+           ready
+           
+           hosts {
+               {{ secondary_ingress_ip }} *.{{ kn_subdomain }}.{{ domain_name }}
+               fallthrough
+           }
+       
+           # CRITICAL: Forward ALL {{ domain_name }} queries to ZeroTier BEFORE kubernetes plugin
+           forward {{ domain_name }} {{ zerotier_dns_server }} {
+               policy sequential
+               health_check 5s
+           }
+           
+           # Forward kn.{{ domain_name }} queries to ZeroTier DNS server
+           forward kn.{{ domain_name }} {{ zerotier_dns_server }} {
+               policy sequential
+               health_check 5s
+           }
+           
+           kubernetes cluster.local in-addr.arpa ip6.arpa {
+               pods insecure
+               fallthrough in-addr.arpa ip6.arpa
+               ttl 30
+           }
+           
+           # Direct mapping from external to internal domains 
+           rewrite name regex (.+)\.{{ kn_subdomain }}\.{{ domain_name }}$ {1}.{{ kn_subdomain }}.svc.cluster.local answer auto
+           
            prometheus :9153
-           forward . /etc/resolv.conf
+           
+           # Forward everything else to upstream DNS
+           forward . /etc/resolv.conf {
+               max_concurrent 1000
+           }
+           
            cache 30
            loop
            reload
            loadbalance
-       }
-       {{ domain_name }}:53 {
-           errors
-           cache 30
-           forward . {{ hostvars['dns1'].zerotier_ip }}
-       }
-       kn.{{ domain_name }}:53 {
-           errors
-           cache 30
-           forward . {{ hostvars['dns1'].zerotier_ip }}
        }
    ```
 
@@ -303,7 +326,13 @@ Test DNS resolution from different locations:
 
 2. From inside Kubernetes pod:
    ```bash
-   kubectl run -it --rm debug --image=busybox -- nslookup service-name.{{ domain_name }}
+   kubectl run -it --rm dnsutils --image=tutum/dnsutils -- nslookup service-name.{{ domain_name }}
+   ```
+
+3. Run the comprehensive DNS test playbook:
+   ```bash
+   cd ~/thinkube
+   ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/18_test.yaml
    ```
 
 ### Connectivity Testing
@@ -342,6 +371,10 @@ REQUIRED ACTION:
 - Check if bind9 is running: systemctl status bind9
 - Verify zone files: named-checkzone {{ domain_name }} /etc/bind/zones/db.{{ domain_name }}
 - Test DNS resolution: dig @{{ hostvars['dns1'].zerotier_ip }} service-name.{{ domain_name }}
+- Check pod DNS configuration: kubectl run -it --rm dnsutils --image=tutum/dnsutils -- cat /etc/resolv.conf
+- Test from inside pods: kubectl run -it --rm dnsutils --image=tutum/dnsutils -- nslookup google.com
+- Test with trailing dot: kubectl run -it --rm dnsutils --image=tutum/dnsutils -- nslookup google.com.
+- Run DNS tests: ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/core/infrastructure/coredns/18_test.yaml
 ```
 
 ### ZeroTier Connectivity
@@ -368,6 +401,8 @@ REQUIRED ACTION:
 - ZeroTier Documentation: https://docs.zerotier.com/
 - Bind9 Documentation: https://bind9.readthedocs.io/
 - MicroK8s Documentation: https://microk8s.io/docs
+- CoreDNS Documentation: https://coredns.io/manual/toc/
+- Kubernetes DNS: https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/
 
 ## Important Principles
 
@@ -375,3 +410,21 @@ REQUIRED ACTION:
 - **Inventory as Single Source of Truth**: All IP addresses and network configuration must be defined in the inventory
 - **Variable-Based Configuration**: Use templating for all configuration files
 - **VM-Based Deployment**: All services run in LXD VMs, not containers
+
+## Known Issues and Best Practices
+
+### External Domain Resolution in Pods
+
+1. **Minimize Search Domains**: Only include essential domains like `cluster.local` in search domains. Do not add `{{ domain_name }}` or `kn.{{ domain_name }}` to search domains.
+
+2. **Keep CoreDNS and systemd-resolved in Sync**: If you update CoreDNS, make sure to update systemd-resolved configuration consistently.
+
+3. **Use Fully Qualified Domain Names**: When resolving external domains from code running in pods, consider using the trailing dot notation to ensure the domain is treated as a fully qualified domain name (FQDN):
+   ```python
+   response = requests.get("https://api.github.com./v3")
+   ```
+
+4. **DNS Test First Approach**: Always run DNS tests after any network or DNS changes:  
+   ```bash
+   ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/18_test.yaml
+   ```

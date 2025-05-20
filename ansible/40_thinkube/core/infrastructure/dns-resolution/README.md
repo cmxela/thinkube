@@ -33,7 +33,8 @@ This component configures DNS resolution on all nodes in the Thinkube platform a
 ### MicroK8s Nodes
 - Primary DNS: CoreDNS (10.152.183.10)
 - Secondary DNS: ZeroTier DNS (192.168.191.1)
-- Domains: cluster.local, thinkube.com, kn.thinkube.com
+- Domains: cluster.local (search domain only)
+- IMPORTANT: Do not add thinkube.com or kn.thinkube.com to search domains
 
 ### Standard Nodes
 - Primary DNS: ZeroTier DNS (192.168.191.1)

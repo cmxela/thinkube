@@ -254,6 +254,16 @@
           metadata:
             name: "{{ harbor_namespace }}"
 
+    - name: Check if wildcard certificate exists in default namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: default
+        name: thinkube-com-tls
+      register: wildcard_cert
+      failed_when: wildcard_cert.resources | length == 0
+
     - name: Copy wildcard certificate from default namespace
       ansible.builtin.shell: |
         # Get the wildcard certificate from default namespace and copy to harbor namespace
@@ -261,8 +271,6 @@
         sed 's/namespace: default/namespace: {{ harbor_namespace }}/' | \
         sed 's/name: thinkube-com-tls/name: harbor-tls-secret/' | \
         {{ kubectl_bin }} create -f -
-      become: true
-      ignore_errors: true
       register: copy_cert
       
     - name: Check if TLS secret already exists
@@ -384,14 +392,26 @@
       ansible.builtin.set_fact:
         harbor_generated_password: "{{ harbor_secret.resources[0].data.HARBOR_ADMIN_PASSWORD | b64decode }}"
 
+    - name: Read OIDC secret - Checking if file exists first
+      ansible.builtin.stat:
+        path: /tmp/harbor_oidc_secret
+      register: secret_file_stat
+
+    - name: Fail if OIDC secret file doesn't exist
+      ansible.builtin.fail:
+        msg: "OIDC client secret file not found at /tmp/harbor_oidc_secret. Keycloak client configuration may have failed."
+      when: not secret_file_stat.stat.exists
+
     - name: Read OIDC secret
       ansible.builtin.slurp:
         src: /tmp/harbor_oidc_secret
       register: oidc_secret_file
+      when: secret_file_stat.stat.exists
 
     - name: Set OIDC client secret fact
       ansible.builtin.set_fact:
         oidc_client_secret: "{{ oidc_secret_file.content | b64decode }}"
+      when: oidc_secret_file is defined
 
     - name: Wait for Harbor API readiness
       ansible.builtin.uri:
@@ -437,9 +457,13 @@
           oidc_auto_onboard: true
           oidc_groups_claim: "{{ oidc_group_claim }}"
           oidc_admin_group: "{{ oidc_admin_group }}"
+          oidc_verify_cert: false
         validate_certs: false
         status_code: [200, 201]
       register: oidc_config
+      retries: 3
+      delay: 5
+      until: oidc_config.status in [200, 201]
 
     - name: Verify Harbor authentication configuration
       ansible.builtin.uri:

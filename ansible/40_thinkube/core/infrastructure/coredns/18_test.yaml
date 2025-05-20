@@ -55,11 +55,41 @@
           - (coredns_pods.stdout | from_json)['items'][0]['status']['phase'] == 'Running'
         fail_msg: "CoreDNS pods are not running properly"
 
+    # Create a test pod for comprehensive DNS testing
+    - name: Create DNS test pod
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} delete pod dnsutils --ignore-not-found
+        {{ kubectl_bin }} run dnsutils --image=tutum/dnsutils --restart=Never -- sleep 3600
+      register: pod_creation
+      changed_when: pod_creation.rc == 0
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+        
+    - name: Wait for DNS test pod to be ready
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} wait --for=condition=Ready pod/dnsutils --timeout=60s
+      register: pod_ready
+      changed_when: pod_ready.rc == 0
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+        
+    # Check DNS configuration in the pod
+    - name: Check DNS configuration in test pod
+      ansible.builtin.command: >
+        {{ kubectl_bin }} exec dnsutils -- cat /etc/resolv.conf
+      register: dns_config
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+        
+    - name: Display DNS configuration
+      ansible.builtin.debug:
+        var: dns_config.stdout_lines
+
     # Test Kubernetes internal resolution
     - name: Test Kubernetes internal service resolution
       ansible.builtin.command: >
-        {{ kubectl_bin }} run test-k8s-dns-{{ 99999 | random }} --rm -i --restart=Never --image=busybox:latest -- 
-        sh -c "nslookup kubernetes.default.svc.cluster.local 10.152.183.10 && echo 'K8s service lookup successful' || echo 'K8s service lookup failed'"
+        {{ kubectl_bin }} exec dnsutils -- nslookup kubernetes.default.svc.cluster.local
       register: k8s_service_test
       changed_when: false
       environment:
@@ -73,6 +103,40 @@
       ansible.builtin.assert:
         that: k8s_service_test.rc == 0
         fail_msg: "Kubernetes internal service resolution failed"
+        
+    # Test external domain resolution
+    - name: Test external domain resolution
+      ansible.builtin.command: >
+        {{ kubectl_bin }} exec dnsutils -- nslookup {{ item }}
+      register: external_domain_test
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      with_items:
+        - google.com
+        - acme-v02.api.letsencrypt.org
+        - github.com
+
+    - name: Display external domain resolution results
+      ansible.builtin.debug:
+        var: external_domain_test.results
+        
+    # Test external domain resolution with FQDN (trailing dot)
+    - name: Test external domain resolution with FQDN
+      ansible.builtin.command: >
+        {{ kubectl_bin }} exec dnsutils -- nslookup {{ item }}.
+      register: external_fqdn_test
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      with_items:
+        - google.com
+        - acme-v02.api.letsencrypt.org
+        - github.com
+
+    - name: Display external FQDN resolution results
+      ansible.builtin.debug:
+        var: external_fqdn_test.results
 
     # Test domain forwarding to ZeroTier
     - name: Test domain forwarding to ZeroTier DNS
@@ -92,6 +156,33 @@
       ansible.builtin.assert:
         that: zerotier_dns_test.rc == 0
         fail_msg: "ZeroTier DNS forwarding failed"
+        
+    # Test resolution of subdomains in thinkube.com and kn.thinkube.com
+    - name: Test resolution of test.thinkube.com
+      ansible.builtin.command: >
+        {{ kubectl_bin }} run test-thinkube-{{ 99999 | random }} --rm -i --restart=Never --image=busybox:latest -- 
+        sh -c "nslookup test.{{ domain_name }}"
+      register: subdomain_test
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+        
+    - name: Display subdomain test results
+      ansible.builtin.debug:
+        var: subdomain_test.stdout_lines
+        
+    - name: Test resolution of test.kn.thinkube.com
+      ansible.builtin.command: >
+        {{ kubectl_bin }} run test-kn-{{ 99999 | random }} --rm -i --restart=Never --image=busybox:latest -- 
+        sh -c "nslookup test.{{ kn_subdomain }}.{{ domain_name }}"
+      register: kn_subdomain_test
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+        
+    - name: Display kn subdomain test results
+      ansible.builtin.debug:
+        var: kn_subdomain_test.stdout_lines
 
     # Check configmap
     - name: Retrieve CoreDNS ConfigMap
@@ -175,9 +266,16 @@
     - name: Display test summary
       ansible.builtin.debug:
         msg: |
-          CoreDNS Test Results:
+          ============================================
+                     DNS TEST RESULTS
+          ============================================
+          
+          CORE DNS CONFIGURATION:
           ✓ CoreDNS pods are running
-          ✓ Internal Kubernetes service resolution works
+          ✓ ConfigMap contains proper settings
+          
+          KUBERNETES INTERNAL RESOLUTION:
+          ✓ Service resolution: kubernetes.default.svc.cluster.local resolves correctly
           ✓ Domain forwarding to ZeroTier DNS works
           {% if knative_installed | bool %}
           ✓ Knative domain resolution works
@@ -186,4 +284,91 @@
           {% endif %}
           ✓ Worker nodes can resolve domains correctly
           
-          CoreDNS configuration is working properly!
+          DNS CONFIGURATION IN TEST POD:
+          {{ dns_config.stdout_lines | to_nice_yaml }}
+          
+          EXTERNAL DOMAIN RESOLUTION:
+          {% for result in external_domain_test.results %}
+          - {{ result.item }}:
+            {% if "Name:" in result.stdout and "kn.thinkube.com" in result.stdout %}
+            ❌ FAILED - Resolves to Knative wildcard (192.168.191.201)
+            {% elif "Name:" in result.stdout and "thinkube.com" in result.stdout and not "kn.thinkube.com" in result.stdout %}
+            ❌ FAILED - Resolves to Thinkube wildcard (192.168.191.200)
+            {% elif "NXDOMAIN" in result.stdout %}
+            ⚠️ WARNING - NXDOMAIN (domain not found)
+            {% elif "Name:" in result.stdout and not ("thinkube.com" in result.stdout) %}
+            ✅ SUCCESS - Resolves to external IP
+            {% else %}
+            ⚠️ INDETERMINATE - Check output manually
+            {% endif %}
+          {% endfor %}
+          
+          EXTERNAL DOMAIN RESOLUTION (WITH TRAILING DOT):
+          {% for result in external_fqdn_test.results %}
+          - {{ result.item }}:
+            {% if "Name:" in result.stdout and "kn.thinkube.com" in result.stdout %}
+            ❌ FAILED - Resolves to Knative wildcard (192.168.191.201)
+            {% elif "Name:" in result.stdout and "thinkube.com" in result.stdout and not "kn.thinkube.com" in result.stdout %}
+            ❌ FAILED - Resolves to Thinkube wildcard (192.168.191.200)
+            {% elif "NXDOMAIN" in result.stdout %}
+            ⚠️ WARNING - NXDOMAIN (domain not found)
+            {% elif "Name:" in result.stdout and not ("thinkube.com" in result.stdout) %}
+            ✅ SUCCESS - Resolves to external IP
+            {% else %}
+            ⚠️ INDETERMINATE - Check output manually
+            {% endif %}
+          {% endfor %}
+          
+          RECOMMENDATIONS:
+          {% if "kn.thinkube.com" in dns_config.stdout or "thinkube.com" in dns_config.stdout %}
+          ❌ DNS SEARCH DOMAINS ISSUE: The pod has search domains that cause external domains 
+             to be incorrectly resolved. To fix this, update inventory/inventory.yaml:
+          
+             dns_search_domains: []  # Empty list to prevent wildcard matching
+          {% else %}
+          ✅ DNS SEARCH DOMAINS: Correctly configured
+          {% endif %}
+          
+          {% set external_resolution_issue = false %}
+          {% for result in external_domain_test.results %}
+          {% if "Name:" in result.stdout and ("thinkube.com" in result.stdout) %}
+          {% set external_resolution_issue = true %}
+          {% endif %}
+          {% endfor %}
+          
+          {% if external_resolution_issue %}
+          ❌ EXTERNAL DOMAIN RESOLUTION ISSUE: External domains are resolving to internal IPs.
+             This will prevent cert-manager from connecting to Let's Encrypt servers.
+          {% endif %}
+          
+          {% set fqdn_resolution_works = false %}
+          {% for result in external_fqdn_test.results %}
+          {% if "Name:" in result.stdout and not ("thinkube.com" in result.stdout) %}
+          {% set fqdn_resolution_works = true %}
+          {% endif %}
+          {% endfor %}
+          
+          {% if fqdn_resolution_works %}
+          ✅ FQDN RESOLUTION: Works correctly with trailing dot (.)
+          {% endif %}
+          
+          ZEROTIER DOMAIN RESOLUTION:
+          {% if subdomain_test is defined and "Address: 192.168.191." in subdomain_test.stdout %}
+          ✅ test.{{ domain_name }}: Resolves to ZeroTier address ({{ subdomain_test.stdout.split('Address: ')[1].split('\n')[0] }})
+          {% elif subdomain_test is defined %}
+          ❌ test.{{ domain_name }}: Not resolving to ZeroTier network
+          {% endif %}
+          
+          {% if kn_subdomain_test is defined and "Address: 192.168.191." in kn_subdomain_test.stdout %}
+          ✅ test.{{ kn_subdomain }}.{{ domain_name }}: Resolves to ZeroTier address ({{ kn_subdomain_test.stdout.split('Address: ')[1].split('\n')[0] }})
+          {% elif kn_subdomain_test is defined %}
+          ❌ test.{{ kn_subdomain }}.{{ domain_name }}: Not resolving to ZeroTier network
+          {% endif %}
+          
+          ============================================
+          
+          OVERALL STATUS: {% if "thinkube.com" in dns_config.stdout or "kn.thinkube.com" in dns_config.stdout %}❌ NEEDS ATTENTION{% else %}✅ DNS CONFIGURATION IS WORKING PROPERLY{% endif %}
+          
+          {% if "thinkube.com" in dns_config.stdout or "kn.thinkube.com" in dns_config.stdout %}
+          Please fix the DNS search domains issue before proceeding with cert-manager deployment.
+          {% endif %}

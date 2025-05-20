@@ -70,7 +70,7 @@
           data:
             resolve.conf: |
               nameserver {{ coredns_cluster_ip }}
-              search {{ dns_search_domains | join(' ') }} {{ k8s_cluster_domain }}
+              search default.svc.{{ k8s_cluster_domain }} svc.{{ k8s_cluster_domain }} {{ k8s_cluster_domain }}
               options ndots:5
       when: "'k8s-control-node' in group_names"
       run_once: true
@@ -95,8 +95,8 @@
                   nameservers:
                     - "{{ coredns_cluster_ip }}"
                   searches:
-                    - "{{ dns_search_domains[0] }}"
-                    - "{{ dns_search_domains[1] }}"
+                    - "default.svc.{{ k8s_cluster_domain }}"
+                    - "svc.{{ k8s_cluster_domain }}"
                     - "{{ k8s_cluster_domain }}"
       loop: "{{ lxd_containers_in_k8s | default([]) }}"  # Technical variable - OK to have default
       when: "'k8s-control-node' in group_names"

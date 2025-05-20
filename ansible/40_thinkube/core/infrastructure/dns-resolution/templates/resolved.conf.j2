@@ -13,7 +13,8 @@ FallbackDNS={{ dns_servers | join(' ') }}
 DNS={{ dns_servers[0] }}
 FallbackDNS={{ dns_servers[1:] | join(' ') }}
 {% endif %}
-Domains={{ dns_search_domains | join(' ') }} {{ k8s_cluster_domain }}
+# Only set cluster.local as search domain to prevent wildcard matching with external domains
+Domains={{ k8s_cluster_domain }}
 DNSSEC=no
 Cache=yes
 CacheFromLocalhost=no

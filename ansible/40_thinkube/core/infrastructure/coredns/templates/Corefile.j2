@@ -33,6 +33,12 @@
         health_check 5s
     }
     
+    # Forward kn.{{ domain_name }} queries to ZeroTier DNS server
+    forward kn.{{ domain_name }} {{ zerotier_dns_server }} {
+        policy sequential
+        health_check 5s
+    }
+    
     kubernetes cluster.local in-addr.arpa ip6.arpa {
         pods insecure
         fallthrough in-addr.arpa ip6.arpa

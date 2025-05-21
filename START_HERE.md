@@ -129,6 +129,13 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Push changes to branch
   - [x] Create PR to main branch
 
+- [x] **[CORE-005] PostgreSQL** ([Issue #17](https://github.com/cmxela/thinkube/issues/17)) ([PR #46](https://github.com/cmxela/thinkube/pull/46))
+  - [x] Create/switch to branch: `git checkout -b feature/postgresql`
+  - [x] Implement requirement from GitHub issue #17
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Create PR to main branch
+
 - [x] **[CORE-007] Harbor** ([Issue #19](https://github.com/cmxela/thinkube/issues/19)) ([PR #41](https://github.com/cmxela/thinkube/pull/41))
   - [x] Create/switch to branch: `git checkout -b feature/harbor`
   - [x] Implement requirement from GitHub issue #19
@@ -137,13 +144,6 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Create PR to main branch
 
 ### Pending Core Services [Next Components to Implement]
-
-- [ ] **[CORE-005] PostgreSQL** ([Issue #17](https://github.com/cmxela/thinkube/issues/17))
-  - [ ] Create/switch to branch: `git checkout -b feature/postgresql`
-  - [ ] Implement requirement from GitHub issue #17
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Create PR to main branch
   
 **CRITICAL: Implementation Requirements**
 - Always use `microk8s_control_plane` (NOT `k8s-control-node` or `gato-p`)

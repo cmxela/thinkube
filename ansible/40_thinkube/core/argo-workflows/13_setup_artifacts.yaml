@@ -1,0 +1,234 @@
+---
+# ansible/40_thinkube/core/argo-workflows/13_setup_artifacts.yaml
+# Description:
+#   Configure Argo Workflows to use MinIO for artifact storage
+#
+# This playbook:
+#   1. Creates a Secret in the argo namespace with MinIO credentials
+#   2. Creates/updates the artifact-repositories ConfigMap in the argo namespace
+#   3. Configures it to use the existing MinIO installation
+#   4. Creates a test bucket if it doesn't exist
+#   5. Optionally restarts the Argo controller to apply changes
+#   6. Creates a test workflow to verify configuration
+#
+# Requirements:
+#   - MicroK8s Kubernetes cluster
+#   - Argo Workflows deployed (run 11_deploy.yaml first)
+#   - MinIO deployed (CORE-006)
+#   - ADMIN_PASSWORD environment variable set for MinIO credentials
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/argo-workflows/13_setup_artifacts.yaml
+#
+# Variables from inventory:
+#   - domain_name: Domain name for all services
+#   - admin_username: Username for admin access
+#   - kubeconfig: Path to Kubernetes configuration
+#   - kubectl_bin: Path to kubectl binary
+#   - minio_api_hostname: External hostname for MinIO API access
+#
+# Dependencies:
+#   - CORE-001: MicroK8s Control Node
+#   - CORE-006: MinIO (for artifact storage)
+#   - CORE-008: Argo Workflows (11_deploy.yaml)
+
+- name: Configure Argo Workflows to use MinIO for Artifacts
+  hosts: microk8s_control_plane
+  gather_facts: true
+  become: true
+
+  vars:
+    ###################################################################
+    # Kubernetes configuration
+    ###################################################################
+    argo_namespace: "argo"
+    
+    ###################################################################
+    # MinIO connection details
+    ###################################################################
+    minio_endpoint: "minio.minio:9000"  # Service name.namespace:port format
+    minio_external_endpoint: "{{ minio_api_hostname }}"  # External hostname for access
+    minio_alias: "minio"
+    minio_bucket: "argo-artifacts"
+    minio_root_user: "{{ admin_username }}"
+    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    
+    ###################################################################
+    # Argo configuration
+    ###################################################################
+    artifact_repo_name: "artifact-repositories"
+    artifact_repo_key: "default-v1"
+    argo_secret_name: "argo-artifacts"
+    
+    ###################################################################
+    # MC path
+    ###################################################################
+    mc_path: "/usr/local/bin/mc"
+
+  tasks:
+    ###################################################################
+    # 1) Create Secret with Minio credentials
+    ###################################################################
+    - name: Create Argo Artifacts Secret
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ argo_secret_name }}"
+            namespace: "{{ argo_namespace }}"
+          type: Opaque
+          stringData:
+            accesskey: "{{ minio_root_user }}"
+            secretkey: "{{ minio_root_password }}"
+
+    ###################################################################
+    # 2) Create/Update artifact-repositories ConfigMap
+    ###################################################################
+    - name: Prepare ConfigMap data with MinIO configuration
+      ansible.builtin.set_fact:
+        artifact_repo_config: |
+          archiveLogs: true
+          s3:
+            endpoint: {{ minio_endpoint }}
+            bucket: {{ minio_bucket }}
+            insecure: true
+            accessKeySecret:
+              name: {{ argo_secret_name }}
+              key: accesskey
+            secretKeySecret:
+              name: {{ argo_secret_name }}
+              key: secretkey
+
+    - name: Create Artifact Repositories ConfigMap
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: "{{ artifact_repo_name }}"
+            namespace: "{{ argo_namespace }}"
+          data:
+            "default-v1": "{{ artifact_repo_config }}"
+
+    ###################################################################
+    # 3) Ensure mc is installed
+    ###################################################################
+    - name: Check if mc is installed
+      ansible.builtin.stat:
+        path: "{{ mc_path }}"
+      register: mc_exists
+
+    - name: Install MinIO Client (mc) if not present
+      ansible.builtin.get_url:
+        url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+        dest: "{{ mc_path }}"
+        mode: "0755"
+      when: not mc_exists.stat.exists
+      failed_when: false
+
+    ###################################################################
+    # 4) Configure mc and create bucket if needed
+    ###################################################################
+    - name: Set mc alias
+      ansible.builtin.shell: >
+        {{ mc_path }} alias set {{ minio_alias }}
+        https://{{ minio_external_endpoint }}
+        {{ minio_root_user }}
+        {{ minio_root_password }}
+        --api S3v4
+      args:
+        executable: /bin/bash
+      failed_when: false
+
+    - name: Check if bucket exists
+      ansible.builtin.shell: >
+        {{ mc_path }} ls {{ minio_alias }}/{{ minio_bucket }} || echo "Bucket not found"
+      args:
+        executable: /bin/bash
+      register: bucket_exists
+      changed_when: false
+      failed_when: false
+
+    - name: Create bucket if it doesn't exist
+      ansible.builtin.shell: >
+        {{ mc_path }} mb {{ minio_alias }}/{{ minio_bucket }}
+      args:
+        executable: /bin/bash
+      when: "'Bucket not found' in bucket_exists.stdout"
+      failed_when: false
+
+    ###################################################################
+    # 5) Restart Argo controller (optional)
+    ###################################################################
+    - name: Check if Argo Workflow Controller exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Deployment
+        namespace: "{{ argo_namespace }}"
+        name: workflow-controller
+      register: argo_controller
+      failed_when: false
+    
+    - name: Restart Argo Workflow Controller if needed
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: workflow-controller
+            namespace: "{{ argo_namespace }}"
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "{{ ansible_date_time.iso8601 }}"
+      when: argo_controller.resources | length > 0
+      failed_when: false
+
+    ###################################################################
+    # 6) Create a test workflow to verify configuration
+    ###################################################################
+    - name: Create test workflow
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: artifact-test-
+            namespace: "{{ argo_namespace }}"
+          spec:
+            entrypoint: artifact-example
+            artifactRepositoryRef:
+              configMap: "{{ artifact_repo_name }}"
+              key: "{{ artifact_repo_key }}"
+            templates:
+            - name: artifact-example
+              container:
+                image: alpine:latest
+                command: [sh, -c]
+                args: ["echo 'MinIO test at time: $(date)' > /tmp/test.txt; echo 'File created successfully'"]
+              outputs:
+                artifacts:
+                - name: test-artifact
+                  path: /tmp/test.txt
+      register: test_workflow
+      failed_when: false
+    
+    ###################################################################
+    # 7) Output results
+    ###################################################################
+    - name: Display configuration results
+      ansible.builtin.debug:
+        msg:
+          - "Argo Workflow ConfigMap '{{ artifact_repo_name }}' configured in namespace '{{ argo_namespace }}'"
+          - "Using MinIO endpoint: {{ minio_endpoint }}"
+          - "Using bucket: {{ minio_bucket }}"
+          - "Test workflow created: {{ test_workflow.result.metadata.name if test_workflow.result.metadata is defined else 'Failed to create' }}"
+          - "Check workflow status with: {{ kubectl_bin }} get workflow -n {{ argo_namespace }} {{ test_workflow.result.metadata.name if test_workflow.result.metadata is defined else '' }}"

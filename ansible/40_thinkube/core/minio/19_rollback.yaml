@@ -1,0 +1,186 @@
+---
+# ansible/40_thinkube/core/minio/19_rollback.yaml
+# Description:
+#   Rollback MinIO deployment and related resources
+#
+# Requirements:
+#   - Kubernetes cluster with MicroK8s
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/minio/19_rollback.yaml
+#
+# Variables from inventory:
+#   - minio_namespace: Namespace for MinIO deployment
+#   - kubeconfig: Path to kubectl config
+#   - keycloak_url: URL to Keycloak instance
+#   - keycloak_realm: Keycloak realm name
+#   - admin_username: Administrator username
+#
+# Dependencies:
+#   - CORE-001: MicroK8s Control Node
+#   - CORE-004: Keycloak (for client removal)
+
+- name: Rollback MinIO deployment
+  hosts: microk8s_control_plane
+  gather_facts: true
+
+  vars:
+    ###################################################################
+    # Basic vars
+    ###################################################################
+    namespace: "{{ minio_namespace }}"
+    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    keycloak_validate_certs: true
+    mc_path: "/usr/local/bin/mc"
+    
+  tasks:
+    ###################################################################
+    # 1. Remove MinIO configuration from mc client
+    ###################################################################
+    - name: Check if mc is installed
+      ansible.builtin.stat:
+        path: "{{ mc_path }}"
+      register: mc_stat
+      
+    - name: Get aliases in mc
+      ansible.builtin.shell: |
+        {{ mc_path }} --json alias list | grep -o '^[^ ]*' || true
+      args:
+        executable: /bin/bash
+      register: mc_aliases
+      changed_when: false
+      when: mc_stat.stat.exists
+      failed_when: false
+      
+    - name: Remove minio alias if it exists
+      ansible.builtin.shell: |
+        {{ mc_path }} --json alias remove minio
+      args:
+        executable: /bin/bash
+      when: 
+        - mc_stat.stat.exists
+        - mc_aliases is defined
+      failed_when: false
+      changed_when: true
+      
+    ###################################################################
+    # 2. Remove client from Keycloak
+    ###################################################################
+    - name: Get Keycloak admin token
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/realms/master/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          client_id: "admin-cli"
+          username: "{{ admin_username }}"
+          password: "{{ keycloak_admin_password }}"
+          grant_type: "password"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: keycloak_token
+      failed_when: false
+      
+    - name: Get existing client information
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients?clientId=minio"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: client_exists
+      failed_when: false
+      when: keycloak_token is defined and keycloak_token.json is defined
+      
+    - name: Delete existing minio client if it exists
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 204
+      loop: "{{ client_exists.json | default([]) }}"
+      when: 
+        - keycloak_token is defined 
+        - keycloak_token.json is defined
+        - client_exists is defined
+        - client_exists.json is defined
+        - item.clientId == "minio"
+      failed_when: false
+      
+    - name: Get client scope
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/client-scopes"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: scope_check
+      failed_when: false
+      when: 
+        - keycloak_token is defined 
+        - keycloak_token.json is defined
+      
+    - name: Delete client scope if it exists
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/client-scopes/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 204
+      loop: "{{ scope_check.json | default([]) }}" 
+      when: 
+        - keycloak_token is defined 
+        - keycloak_token.json is defined
+        - scope_check is defined
+        - scope_check.json is defined
+        - item.name == "minio-authorization"
+      failed_when: false
+    
+    ###################################################################
+    # 3. Remove Kubernetes resources
+    ###################################################################
+    # Delete all resources at once with a single command
+    - name: Remove all MinIO resources
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: absent
+        kind: Namespace
+        name: "{{ namespace }}"
+        wait: true
+        wait_timeout: 120
+      register: ns_delete_result
+      failed_when: false
+      
+    - name: Display namespace deletion result
+      ansible.builtin.debug:
+        var: ns_delete_result
+        
+    ###################################################################
+    # 4. Clean up temporary files
+    ###################################################################
+    - name: Remove temporary files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/s3cmd.conf"
+        - "/tmp/test-file.txt"
+      failed_when: false
+      
+    ###################################################################
+    # 5. Display completion message
+    ###################################################################
+    - name: Display rollback summary
+      ansible.builtin.debug:
+        msg: |
+          MinIO rollback completed:
+          ✅ Namespace {{ namespace }} deleted
+          ✅ Keycloak client configuration removed
+          ✅ MinIO client alias removed
+          ✅ Temporary files cleaned up

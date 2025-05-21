@@ -1,0 +1,390 @@
+---
+# ansible/40_thinkube/core/minio/11_configure_keycloak.yaml
+# Description:
+#   Configure Keycloak client and roles for MinIO integration with persistent authentication
+#   
+#   This playbook sets up the Keycloak client for MinIO with proper token configuration
+#   to ensure persistent authentication. It configures:
+#   1. MinIO client with extended token lifespans and offline_access support
+#   2. Policy attribute mapper for both client and scope
+#   3. User attributes with consoleAdmin policy
+#   4. Realm-level token settings for consistent behavior
+#
+# Requirements:
+#   - Kubernetes cluster with MicroK8s
+#   - Keycloak deployed and running
+#   - ADMIN_PASSWORD environment variable set
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/minio/11_configure_keycloak.yaml
+#
+# Variables from inventory:
+#   - keycloak_url: URL to Keycloak instance
+#   - keycloak_realm: Keycloak realm name
+#   - admin_username: Administrator username
+#   - minio_console_hostname: MinIO console hostname
+#   - admin_first_name: Administrator first name
+#   - admin_last_name: Administrator last name
+#   - domain_name: Domain name for email formation
+#
+# Dependencies:
+#   - CORE-001: MicroK8s Control Node
+#   - CORE-004: Keycloak
+
+- name: Configure Keycloak "minio" client + scope + user attribute
+  hosts: microk8s_control_plane
+  gather_facts: true
+
+  vars:
+    ###################################################################
+    # Keycloak connection info
+    ###################################################################
+    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    keycloak_validate_certs: true
+
+  tasks:
+    ###################################################################
+    # Get admin token
+    ###################################################################
+    - name: Get Keycloak admin token
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/realms/master/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          client_id: "admin-cli"
+          username: "{{ admin_username }}"
+          password: "{{ keycloak_admin_password }}"
+          grant_type: "password"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: keycloak_token
+      
+    ###################################################################
+    # 1. Create or update client
+    ###################################################################
+    - name: Get existing client information
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients?clientId=minio"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: client_exists
+      
+    - name: Delete existing minio client if it exists
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 204
+      when: item.clientId == "minio"
+      loop: "{{ client_exists.json }}"
+      register: client_delete
+      failed_when: false
+      
+    - name: Check if client exists after deletion
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients?clientId=minio"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: client_check
+      
+    - name: Create new minio client with minimal configuration
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: {
+          "clientId": "minio",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "alwaysDisplayInConsole": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "publicClient": false,
+          "implicitFlowEnabled": false,
+          "fullScopeAllowed": false,
+          "redirectUris": ["https://{{ minio_console_hostname }}/oauth_callback"],
+          "webOrigins": ["*"],
+          "defaultClientScopes": ["openid", "offline_access"],
+          "optionalClientScopes": [],
+          "attributes": {
+            "access.token.lifespan": "86400",
+            "client.session.max": "172800",
+            "client.session.idle": "86400",
+            "client.offline.session.max.lifespan": "2592000",
+            "client.offline.session.idle.timeout": "1209600",
+            "refresh.token.max.reuse": "0"
+          }
+        }
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 201
+      
+    # Get the client again after creation to ensure we have the UUID
+    - name: Get updated client information
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients?clientId=minio"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: client_updated
+      
+    - name: Set client UUID
+      ansible.builtin.set_fact:
+        client_uuid: "{{ client_updated.json[0].id if client_updated.json | length > 0 else '' }}"
+      
+    ###################################################################
+    # 2. Create client scope
+    ###################################################################
+    - name: Check if client scope exists
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/client-scopes"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: scope_check
+      
+    - name: Create scope if it doesn't exist
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/client-scopes"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: {
+          "name": "minio-authorization",
+          "protocol": "openid-connect",
+          "description": "Client scope for MinIO 'policy' attribute",
+          "attributes": {
+            "include.in.token.scope": "true",
+            "display.on.consent.screen": "false" 
+          }
+        }
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 201
+      when: scope_check.json | selectattr('name', 'equalto', 'minio-authorization') | list | length == 0
+      
+    - name: Get scope UUID
+      ansible.builtin.set_fact:
+        scope_uuid: "{{ (scope_check.json | selectattr('name', 'equalto', 'minio-authorization') | list | first).id if 
+                      (scope_check.json | selectattr('name', 'equalto', 'minio-authorization') | list | length > 0) else '' }}"
+      
+    ###################################################################
+    # 3. Create scope mapper
+    ###################################################################
+    - name: Get existing protocol mappers
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/client-scopes/{{ scope_uuid }}/protocol-mappers/models"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: mapper_check
+      when: scope_uuid != ''
+      
+    - name: Create policy mapper in client scope
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/client-scopes/{{ scope_uuid }}/protocol-mappers/models"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: {
+          "name": "minio-policy-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "policy",
+            "claim.name": "policy",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "aggregate.attrs": "true",
+            "add.to.id.token": "true",
+            "add.to.access.token": "true",
+            "add.to.userinfo": "true",
+            "access.tokenResponse.claim": "true"
+          }
+        }
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 201
+      register: mapper_result
+      failed_when: 
+        - mapper_result.status != 201 
+        - "'Status code -1 for url' not in mapper_result.msg"
+        - "'Protocol mapper exists with same name' not in (mapper_result.json.errorMessage | default(''))"
+      when: 
+        - scope_uuid != ''
+        - mapper_check.json is defined
+        - mapper_check.json | selectattr('name', 'equalto', 'minio-policy-mapper') | list | length == 0
+      
+    ###################################################################
+    # 4. Assign scope to client as optional (not default)
+    ###################################################################
+    - name: Assign client scope to client as optional
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ client_uuid }}/optional-client-scopes/{{ scope_uuid }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 204
+      when: client_uuid != '' and scope_uuid != ''
+      failed_when: false  # Don't fail if scope already assigned
+      
+    ###################################################################
+    # 4.5 Add policy protocol mapper directly on client
+    ###################################################################
+    - name: Find and delete any existing policy mappers on client
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ client_uuid }}/protocol-mappers/models"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: client_mappers
+      when: client_uuid != ''
+
+    - name: Delete existing policy mapper (if any)
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ client_uuid }}/protocol-mappers/models/{{ item.id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 204
+      loop: "{{ client_mappers.json | default([]) }}"
+      when: 
+        - client_uuid != ''
+        - client_mappers.json is defined
+        - item.name in ['policy-mapper-direct', 'policy-mapper']
+      failed_when: false
+
+    - name: Create policy protocol mapper directly on client
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ client_uuid }}/protocol-mappers/models"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: {
+          "name": "policy-mapper-direct",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "policy",
+            "claim.name": "policy",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "aggregate.attrs": "true",
+            "access.tokenResponse.claim": "true"
+          }
+        }
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 201
+      register: client_direct_mapper
+      failed_when: 
+        - client_direct_mapper.status != 201 
+        - "'Status code -1 for url' not in client_direct_mapper.msg"
+        - "'Protocol mapper exists with same name' not in (client_direct_mapper.json.errorMessage | default(''))"
+      when: client_uuid != ''
+      
+    ###################################################################
+    # 4.6 Configure realm-level token settings
+    ###################################################################
+    - name: Configure realm-level token settings
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: {
+          "realm": "{{ keycloak_realm }}",
+          "accessTokenLifespan": 86400,
+          "accessTokenLifespanForImplicitFlow": 86400,
+          "ssoSessionIdleTimeout": 86400,
+          "ssoSessionMaxLifespan": 172800,
+          "offlineSessionIdleTimeout": 1209600,
+          "offlineSessionMaxLifespan": 2592000,
+          "accessCodeLifespan": 60,
+          "accessCodeLifespanUserAction": 300,
+          "accessCodeLifespanLogin": 1800,
+          "actionTokenGeneratedByAdminLifespan": 43200,
+          "actionTokenGeneratedByUserLifespan": 300
+        }
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 204
+      when: keycloak_realm != ''
+      
+    ###################################################################
+    # 5. Set policy attribute for user
+    ###################################################################
+    - name: Get user
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username={{ admin_username }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: user_check
+      
+    - name: Set required user attributes and policy claim
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ user_check.json[0].id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ user_check.json[0] | 
+                  combine({
+                    'enabled': true,
+                    'emailVerified': true,
+                    'firstName': admin_first_name,
+                    'lastName': admin_last_name,
+                    'email': admin_username + '@' + domain_name,
+                    'attributes': {'policy': ['consoleAdmin']}
+                  }, recursive=true) }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 204
+      when: user_check.json | length > 0
+      
+    ###################################################################
+    # Final output
+    ###################################################################
+    - name: Final info
+      ansible.builtin.debug:
+        msg:
+          - "Realm => {{ keycloak_realm }}"
+          - "Client => 'minio' => id={{ client_uuid }}"
+          - "Scope => 'minio-authorization' => id={{ scope_uuid }}"
+          - "Mapper => 'minio-policy-mapper' in that scope."
+          - "User => '{{ admin_username }}', policy=[ consoleAdmin ]"

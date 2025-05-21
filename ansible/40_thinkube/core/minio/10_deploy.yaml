@@ -1,0 +1,299 @@
+---
+# ansible/40_thinkube/core/minio/10_deploy.yaml
+# Description:
+#   Deploy MinIO object storage with TLS and Ingress setup
+#
+# Requirements:
+#   - Kubernetes cluster with MicroK8s
+#   - Wildcard certificate available in default namespace
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/minio/10_deploy.yaml
+#
+# Variables from inventory:
+#   - minio_namespace: Namespace for MinIO deployment
+#   - kubeconfig: Path to kubectl config
+#   - primary_ingress_class: Ingress class name
+#   - primary_ingress_service: Ingress controller service name
+#   - ingress_namespace: Namespace for ingress controller
+#   - minio_api_hostname, minio_console_hostname: Service hostnames
+#   - minio_image: Image to use for MinIO deployment
+#   - minio_capacity: Storage capacity for MinIO
+#   - minio_storage_class: Storage class for MinIO
+#   - admin_username: Application admin username
+#   - admin_password: Application admin password (from ADMIN_PASSWORD env var)
+#
+# Dependencies:
+#   - CORE-001: MicroK8s Control Node
+#   - CORE-003: Cert-Manager for TLS certificates
+
+- name: Deploy MinIO + Ingress (no OIDC)
+  hosts: microk8s_control_plane
+  gather_facts: true
+
+  vars:
+    ###################################################################
+    # Basic Vars
+    ###################################################################
+    namespace: "{{ minio_namespace }}"
+    
+    # Use primary ingress controller references
+    primary_controller_class: "{{ primary_ingress_class }}"
+    primary_ingress_controller: "{{ primary_ingress_service }}"
+    primary_ingress_namespace: "{{ ingress_namespace }}"
+
+    ###################################################################
+    # MinIO credentials
+    ###################################################################
+    minio_root_user: "{{ admin_username }}"
+    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+
+    ###################################################################
+    # TLS / Domain / Ingress
+    ###################################################################
+    minio_tls_secret_name: "{{ namespace }}-tls-secret"
+
+  tasks:
+    ###################################################################
+    # 1) Create the namespace
+    ###################################################################
+    - name: Create MinIO namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ namespace }}"
+
+    ###################################################################
+    # 2) Get wildcard certificate from default namespace
+    ###################################################################
+    - name: Get wildcard certificate from default namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: default
+        name: thinkube-com-tls
+      register: wildcard_cert
+      failed_when: wildcard_cert.resources | length == 0
+
+    - name: Copy wildcard certificate to MinIO namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ minio_tls_secret_name }}"
+            namespace: "{{ namespace }}"
+          type: kubernetes.io/tls
+          data:
+            tls.crt: "{{ wildcard_cert.resources[0].data['tls.crt'] }}"
+            tls.key: "{{ wildcard_cert.resources[0].data['tls.key'] }}"
+
+    ###################################################################
+    # 3) Create credentials secret
+    ###################################################################
+    - name: Create MinIO credentials secret
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: minio-creds
+          type: Opaque
+          stringData:
+            rootUser: "{{ minio_root_user }}"
+            rootPassword: "{{ minio_root_password }}"
+
+    ###################################################################
+    # 4) Create MinIO StatefulSet
+    ###################################################################
+    - name: Create MinIO StatefulSet
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace }}"
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: minio
+          spec:
+            serviceName: minio
+            replicas: 1
+            selector:
+              matchLabels:
+                app: minio
+            template:
+              metadata:
+                labels:
+                  app: minio
+              spec:
+                containers:
+                  - name: minio
+                    image: "{{ minio_image }}"
+                    args:
+                      - server
+                      - /data
+                      - --console-address
+                      - ":9090"
+                    env:
+                      - name: MINIO_ROOT_USER
+                        valueFrom:
+                          secretKeyRef:
+                            name: minio-creds
+                            key: rootUser
+                      - name: MINIO_ROOT_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: minio-creds
+                            key: rootPassword
+                      - name: MINIO_BROWSER_REDIRECT_URL
+                        value: "https://{{ minio_console_hostname }}"
+                      - name: MINIO_SERVER_URL
+                        value: "https://{{ minio_api_hostname }}"
+                    ports:
+                      - containerPort: 9000
+                        name: s3
+                      - containerPort: 9090
+                        name: console
+                    volumeMounts:
+                      - name: data
+                        mountPath: /data
+                      - name: minio-tls
+                        mountPath: /etc/minio/certs
+                        readOnly: true
+                volumes:
+                  - name: minio-tls
+                    secret:
+                      secretName: "{{ minio_tls_secret_name }}"
+            volumeClaimTemplates:
+              - metadata:
+                  name: data
+                spec:
+                  accessModes:
+                    - ReadWriteOnce
+                  storageClassName: "{{ minio_storage_class }}"
+                  resources:
+                    requests:
+                      storage: "{{ minio_capacity }}"
+
+    ###################################################################
+    # 5) Create Service(s)
+    ###################################################################
+    - name: Create MinIO Service
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: minio
+          spec:
+            type: ClusterIP
+            selector:
+              app: minio
+            ports:
+              - name: s3
+                port: 9000
+                targetPort: 9000
+                protocol: TCP
+              - name: console
+                port: 9090
+                targetPort: 9090
+                protocol: TCP
+
+    ###################################################################
+    # 6) Create Ingress(es) for S3 API + Console
+    ###################################################################
+    - name: Create MinIO S3 API Ingress
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace }}"
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: minio-api
+            annotations:
+              kubernetes.io/ingress.class: "nginx"
+              ingresscontroller.k8s.io/controller-class: "{{ primary_controller_class }}"
+              nginx.ingress.kubernetes.io/ingress-controller: "{{ primary_ingress_namespace }}/{{ primary_ingress_controller }}"
+              nginx.ingress.kubernetes.io/proxy-body-size: "0"
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+              nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+              nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+          spec:
+            ingressClassName: nginx
+            tls:
+              - hosts:
+                  - "{{ minio_api_hostname }}"
+                secretName: "{{ minio_tls_secret_name }}"
+            rules:
+              - host: "{{ minio_api_hostname }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: minio
+                          port:
+                            number: 9000
+
+    - name: Create MinIO Console Ingress
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ namespace }}"
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: minio-console
+            annotations:
+              kubernetes.io/ingress.class: "nginx"
+              ingresscontroller.k8s.io/controller-class: "{{ primary_controller_class }}"
+              nginx.ingress.kubernetes.io/ingress-controller: "{{ primary_ingress_namespace }}/{{ primary_ingress_controller }}"
+              nginx.ingress.kubernetes.io/proxy-body-size: "0"
+          spec:
+            ingressClassName: nginx
+            tls:
+              - hosts:
+                  - "{{ minio_console_hostname }}"
+                secretName: "{{ minio_tls_secret_name }}"
+            rules:
+              - host: "{{ minio_console_hostname }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: minio
+                          port:
+                            number: 9090
+
+    ###################################################################
+    # 7) Done
+    ###################################################################
+    - name: Final info
+      ansible.builtin.debug:
+        msg:
+          - "MinIO deployed (no OIDC)."
+          - "Namespace: {{ namespace }}"
+          - "TLS secret: {{ minio_tls_secret_name }}"
+          - "S3 API host: {{ minio_api_hostname }} => Service 'minio' port 9000"
+          - "Console host: {{ minio_console_hostname }} => Service 'minio' port 9090"

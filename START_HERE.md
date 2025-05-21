@@ -108,6 +108,18 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] ⚠️ CONSOLIDATED INTO CORE-003b: Functionality merged into CoreDNS component
   - [x] Component removed to eliminate redundancy
 
+- [x] **[CORE-003d] GPU Operator** ([Issue #44](https://github.com/cmxela/thinkube/issues/44))
+  - [x] Create/switch to branch: `git checkout -b feature/gpu-operator`
+  - [x] Create issue document in .github/issues/CORE-003d-gpu-operator.md (completed)
+  - [x] Create component directory structure
+  - [x] Implement 10_deploy.yaml
+  - [x] Implement 18_test.yaml
+  - [x] Implement 19_rollback.yaml
+  - [x] Test deployment
+  - [x] Verify CUDA test job runs successfully on all GPU nodes
+  - [x] Push changes to branch
+  - [x] Create PR to main branch
+
 ### Core Platform Services [Individual Component Branches]
 
 - [ ] **[CORE-004] Keycloak** ([Issue #16](https://github.com/cmxela/thinkube/issues/16))

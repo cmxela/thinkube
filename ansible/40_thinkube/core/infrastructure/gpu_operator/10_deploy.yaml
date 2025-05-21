@@ -1,0 +1,203 @@
+---
+# ansible/40_thinkube/core/infrastructure/gpu_operator/10_deploy.yaml
+# Description:
+#   Installs and configures NVIDIA GPU Operator on MicroK8s cluster
+#
+# Requirements:
+#   - MicroK8s >= 1.21
+#   - NVIDIA drivers >= 470.x already installed on the host system
+#   - kubernetes.core collection >= 2.3.0
+#   - Helm >= 3.7.0
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/gpu_operator/10_deploy.yaml
+#
+# Variables from inventory:
+#   - kubeconfig: Path to Kubernetes configuration file
+#   - kubectl_bin: Path to kubectl binary
+#   - helm_bin: Path to Helm binary
+#   - gpu_operator_version: (Optional) Version of GPU Operator to install
+#
+# 🤖 [AI-assisted]
+
+- name: Install NVIDIA GPU Operator
+  hosts: microk8s_control_plane
+  become: true
+  
+  pre_tasks:
+    - name: Verify required variables exist
+      ansible.builtin.fail:
+        msg: "Required variable {{ item }} is not defined"
+      when: item is not defined
+      loop:
+        - kubeconfig
+        - kubectl_bin
+        - helm_bin
+  
+  vars:
+    gpu_operator_namespace: gpu-operator
+    cuda_test_namespace: default
+    cuda_test_manifest: /tmp/cuda-vectoradd.yaml
+    cuda_test_pod: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: cuda-vectoradd
+        namespace: {{ cuda_test_namespace }}
+      spec:
+        restartPolicy: OnFailure
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          fsGroup: 1000
+        containers:
+        - name: cuda-vectoradd
+          image: "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda11.7.1-ubuntu20.04"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+            requests:
+              nvidia.com/gpu: 1
+
+  pre_tasks:
+    - name: Check MicroK8s status
+      ansible.builtin.command: microk8s status --wait-ready
+      changed_when: false
+      register: microk8s_status
+      until: microk8s_status.rc == 0
+      retries: 5
+      delay: 10
+
+  tasks:
+    - name: Create .kube directory
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.kube"
+        state: directory
+        mode: '0700'
+
+    - name: Copy kubeconfig
+      ansible.builtin.copy:
+        src: "{{ kubeconfig }}"
+        dest: "{{ ansible_env.HOME }}/.kube/config"
+        remote_src: yes
+        mode: '0600'
+
+    - name: Add NVIDIA Helm repository
+      kubernetes.core.helm_repository:
+        binary_path: "{{ helm_bin }}"
+        name: nvidia
+        repo_url: https://nvidia.github.io/gpu-operator
+        repo_state: present
+
+    - name: Update Helm repositories
+      ansible.builtin.command: "{{ helm_bin }} repo update"
+      changed_when: false
+
+    - name: Install GPU Operator
+      kubernetes.core.helm:
+        binary_path: "{{ helm_bin }}"
+        name: gpu-operator
+        chart_ref: nvidia/gpu-operator
+        chart_version: "{{ gpu_operator_version | default(omit) }}"
+        release_namespace: "{{ gpu_operator_namespace }}"
+        create_namespace: true
+        wait: true
+        values:
+          toolkit:
+            env:
+              - name: CONTAINERD_CONFIG
+                value: /var/snap/microk8s/current/args/containerd-template.toml
+              - name: CONTAINERD_SOCKET
+                value: /var/snap/microk8s/common/run/containerd.sock
+              - name: CONTAINERD_RUNTIME_CLASS
+                value: nvidia
+              - name: CONTAINERD_SET_AS_DEFAULT
+                value: "true"
+
+    - name: Wait for GPU operator critical components
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Pod
+        namespace: "{{ gpu_operator_namespace }}"
+        label_selectors:
+          - "app in (nvidia-device-plugin-daemonset,nvidia-container-toolkit-daemonset)"
+        field_selectors:
+          - status.phase=Running
+      register: gpu_pods
+      until: gpu_pods.resources | length >= 2
+      retries: 60
+      delay: 10
+
+    - name: Wait for CUDA validator completion
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Pod
+        namespace: "{{ gpu_operator_namespace }}"
+        label_selectors:
+          - app=nvidia-cuda-validator
+        field_selectors:
+          - status.phase=Succeeded
+      register: validator_pods
+      until: validator_pods.resources | length >= 1
+      retries: 60
+      delay: 10
+
+    - name: Create CUDA test manifest
+      ansible.builtin.copy:
+        content: "{{ cuda_test_pod }}"
+        dest: "{{ cuda_test_manifest }}"
+        mode: '0600'
+
+    - name: Deploy CUDA test pod
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        src: "{{ cuda_test_manifest }}"
+
+    - name: Wait for CUDA test pod completion
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        kind: Pod 
+        name: cuda-vectoradd
+        namespace: "{{ cuda_test_namespace }}"
+      register: cuda_pod
+      until: cuda_pod.resources[0].status.phase in ['Succeeded', 'Failed']
+      retries: 60
+      delay: 10
+
+    - name: Check CUDA test pod status
+      ansible.builtin.fail:
+        msg: "CUDA test pod failed: {{ cuda_pod.resources[0].status.phase }}"
+      when: cuda_pod.resources[0].status.phase == 'Failed'
+
+    - name: Get CUDA test pod logs
+      ansible.builtin.command: "{{ kubectl_bin }} logs cuda-vectoradd -n {{ cuda_test_namespace }}"
+      register: cuda_logs
+      changed_when: false
+
+    - name: Display CUDA test results
+      ansible.builtin.debug:
+        var: cuda_logs.stdout_lines
+
+    - name: Clean up CUDA test pod
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: absent
+        src: "{{ cuda_test_manifest }}"
+
+    - name: Remove temporary files
+      ansible.builtin.file:
+        path: "{{ cuda_test_manifest }}"
+        state: absent
+
+  post_tasks:
+    - name: Verify GPU operator status
+      ansible.builtin.command: "{{ kubectl_bin }} get nodes -o json"
+      register: node_status
+      changed_when: false
+      failed_when: "'nvidia.com/gpu' not in node_status.stdout"

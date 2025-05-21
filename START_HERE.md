@@ -108,9 +108,9 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] ⚠️ CONSOLIDATED INTO CORE-003b: Functionality merged into CoreDNS component
   - [x] Component removed to eliminate redundancy
 
-- [ ] **[CORE-003d] GPU Operator** 
-  - [ ] Create/switch to branch: `git checkout -b feature/gpu-operator`
-  - [ ] Create issue document in .github/issues/CORE-003d-gpu-operator.md (completed)
+- [ ] **[CORE-003d] GPU Operator** ([Issue #44](https://github.com/cmxela/thinkube/issues/44))
+  - [x] Create/switch to branch: `git checkout -b feature/gpu-operator`
+  - [x] Create issue document in .github/issues/CORE-003d-gpu-operator.md (completed)
   - [ ] Create component directory structure
   - [ ] Implement 10_deploy.yaml
   - [ ] Implement 18_test.yaml

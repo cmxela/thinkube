@@ -56,6 +56,14 @@ tls_key_path: "{{ ssl_cert_dir }}/{{ domain_name }}.key"
 postgres_hostname: "postgres.{{ domain_name }}"
 postgres_namespace: "postgres"
 
+# MinIO configuration
+minio_namespace: "minio"
+minio_api_hostname: "s3.{{ domain_name }}"
+minio_console_hostname: "minio.{{ domain_name }}"
+minio_capacity: "50Gi"
+minio_storage_class: "microk8s-hostpath"
+minio_image: "{{ harbor_registry }}/library/minio:latest"
+
 # Kubernetes configuration
 kubeconfig: "/var/snap/microk8s/current/credentials/client.config"
 kubectl_bin: "/snap/bin/microk8s.kubectl"

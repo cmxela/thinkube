@@ -156,12 +156,12 @@ This helps maintain accurate progress tracking between development sessions and 
 - The source certificate is `thinkube-com-tls` in the `default` namespace
 - Follow naming convention: `{{ component_namespace }}-tls-secret`
 
-- [ ] **[CORE-006] MinIO** ([Issue #18](https://github.com/cmxela/thinkube/issues/18))
-  - [ ] Create/switch to branch: `git checkout -b feature/minio`
-  - [ ] Implement requirement from GitHub issue #18
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Create PR to main branch
+- [x] **[CORE-006] MinIO** ([Issue #18](https://github.com/cmxela/thinkube/issues/18)) ([PR #47](https://github.com/cmxela/thinkube/pull/47))
+  - [x] Create/switch to branch: `git checkout -b feature/minio`
+  - [x] Implement requirement from GitHub issue #18
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Create PR to main branch
 
 - [ ] **[CORE-008] Argo Workflows** ([Issue #20](https://github.com/cmxela/thinkube/issues/20))
   - [ ] Create/switch to branch: `git checkout -b feature/argo-workflows`

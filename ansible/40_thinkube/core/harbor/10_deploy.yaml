@@ -71,7 +71,7 @@
           password: "{{ admin_password }}"
           grant_type: password
           client_id: "admin-cli"
-        validate_certs: true
+        validate_certs: false  # TODO: Set to true once DNS resolves properly for auth.thinkube.com
         status_code: [200, 201]
       register: keycloak_token
       no_log: true
@@ -190,38 +190,71 @@
         body_format: json
         body:
           name: "{{ oidc_admin_group }}"
+          attributes:
+            description: ["Harbor Registry Administrators"]
         status_code: [201, 409]
       register: group_creation
 
-    - name: Get user info
+    - name: Get user ID for '{{ admin_username }}'
       ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username={{ admin_username }}"
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username={{ admin_username }}&exact=true"
         method: GET
         headers:
           Authorization: "Bearer {{ keycloak_token.json.access_token }}"
         status_code: 200
-      register: user_info
+      register: keycloak_user_response
+      no_log: false
 
-    - name: Get harbor-admins group ID
+    - name: Get 'harbor-admins' group ID
       ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups?search={{ oidc_admin_group }}"
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups"
         method: GET
         headers:
           Authorization: "Bearer {{ keycloak_token.json.access_token }}"
         status_code: 200
-      register: admin_group_info
+      register: groups_response
+      no_log: false
+      
+    - name: Debug user and group information
+      ansible.builtin.debug:
+        msg: 
+          - "User found: {{ keycloak_user_response.json | length > 0 }}"
+          - "Group found: {{ groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0 }}"
 
-    - name: Add user to harbor-admins group
+    - name: Add '{{ admin_username }}' to 'harbor-admins' group
       ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ user_info.json[0].id }}/groups/{{ admin_group_info.json[0].id }}"
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ keycloak_user_response.json[0].id }}/groups/{{ groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | map(attribute='id') | first }}"
         method: PUT
         headers:
           Authorization: "Bearer {{ keycloak_token.json.access_token }}"
           Content-Type: "application/json"
-        status_code: [204, 409]
-      when:
-        - user_info.json | length > 0
-        - admin_group_info.json | length > 0
+        status_code: 204
+      when: 
+        - keycloak_user_response.json | length > 0
+        - groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0
+        
+    # Make sure thinkube user is also in harbor-admins group
+    - name: Get thinkube user info
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username=thinkube&exact=true"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        status_code: 200
+      register: thinkube_user_response
+      no_log: false
+      
+    - name: Add 'thinkube' user to 'harbor-admins' group if it exists
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ thinkube_user_response.json[0].id }}/groups/{{ groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | map(attribute='id') | first }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+          Content-Type: "application/json"
+        status_code: 204
+      when: 
+        - thinkube_user_response.json | length > 0
+        - groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0
 
     - name: Get client secret for harbor
       ansible.builtin.uri:
@@ -254,18 +287,43 @@
           metadata:
             name: "{{ harbor_namespace }}"
 
+    - name: Check if wildcard certificate exists in default namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: default
+        name: thinkube-com-tls
+      register: wildcard_cert
+      failed_when: wildcard_cert.resources | length == 0
+
+    - name: Check if TLS secret already exists in harbor namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ harbor_namespace }}"
+        name: harbor-tls-secret
+      register: existing_cert_check
+
+    - name: Delete existing TLS secret if it exists
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: absent
+        api_version: v1
+        kind: Secret
+        namespace: "{{ harbor_namespace }}"
+        name: harbor-tls-secret
+      when: existing_cert_check.resources | length > 0
+      
     - name: Copy wildcard certificate from default namespace
-      ansible.builtin.shell: |
-        # Get the wildcard certificate from default namespace and copy to harbor namespace
-        {{ kubectl_bin }} get secret thinkube-com-tls -n default -o yaml | \
-        sed 's/namespace: default/namespace: {{ harbor_namespace }}/' | \
-        sed 's/name: thinkube-com-tls/name: harbor-tls-secret/' | \
-        {{ kubectl_bin }} create -f -
-      become: true
-      ignore_errors: true
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition: "{{ lookup('template', 'templates/harbor-tls-secret.yaml.j2') | from_yaml }}"
       register: copy_cert
       
-    - name: Check if TLS secret already exists
+    - name: Check if TLS secret was created
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig }}"
         api_version: v1
@@ -384,14 +442,26 @@
       ansible.builtin.set_fact:
         harbor_generated_password: "{{ harbor_secret.resources[0].data.HARBOR_ADMIN_PASSWORD | b64decode }}"
 
+    - name: Read OIDC secret - Checking if file exists first
+      ansible.builtin.stat:
+        path: /tmp/harbor_oidc_secret
+      register: secret_file_stat
+
+    - name: Fail if OIDC secret file doesn't exist
+      ansible.builtin.fail:
+        msg: "OIDC client secret file not found at /tmp/harbor_oidc_secret. Keycloak client configuration may have failed."
+      when: not secret_file_stat.stat.exists
+
     - name: Read OIDC secret
       ansible.builtin.slurp:
         src: /tmp/harbor_oidc_secret
       register: oidc_secret_file
+      when: secret_file_stat.stat.exists
 
     - name: Set OIDC client secret fact
       ansible.builtin.set_fact:
         oidc_client_secret: "{{ oidc_secret_file.content | b64decode }}"
+      when: oidc_secret_file is defined
 
     - name: Wait for Harbor API readiness
       ansible.builtin.uri:
@@ -419,7 +489,48 @@
           new_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
         validate_certs: false
         status_code: 200
+        
+    # Update admin_password to use the new password
+    - name: Update admin_password with the new value
+      ansible.builtin.set_fact:
+        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+        
+    # Refresh Keycloak token before verifying group
+    - name: Refresh Keycloak admin token
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/realms/master/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          username: "{{ admin_username }}"
+          password: "{{ admin_password }}"
+          grant_type: password
+          client_id: "admin-cli"
+        validate_certs: false
+        status_code: [200, 201]
+      register: keycloak_token_refresh
+      no_log: true
+      
+    - name: Update token variable
+      ansible.builtin.set_fact:
+        keycloak_token: "{{ keycloak_token_refresh }}"
+        
+    - name: Verify that harbor-admins group exists in Keycloak
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups?search={{ oidc_admin_group }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        status_code: 200
+      register: verify_admin_group
+      
+    - name: Verify admin group exists
+      ansible.builtin.assert:
+        that: verify_admin_group.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0
+        fail_msg: "The harbor-admins group does not exist in Keycloak! OIDC admin privileges will not work."
+        success_msg: "harbor-admins group exists in Keycloak"
 
+    # This follows exactly the approach from the original playbook
     - name: Configure Harbor OIDC authentication
       ansible.builtin.uri:
         url: "https://{{ harbor_registry }}/api/v2.0/configurations"
@@ -441,6 +552,71 @@
         status_code: [200, 201]
       register: oidc_config
 
+    # Copy the Let's Encrypt certificate to Harbor's trusted store
+    - name: Extract Let's Encrypt R11 certificate from default/thinkube-com-tls
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} get secret thinkube-com-tls -n default -o jsonpath='{.data.tls\.crt}' | base64 -d > /tmp/thinkube-com.crt
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Get the intermediate certificate chain for Let's Encrypt
+      ansible.builtin.shell: |
+        openssl s_client -showcerts -connect auth.thinkube.com:443 </dev/null 2>/dev/null | \
+        awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/{ if(!/BEGIN CERTIFICATE/ && !/END CERTIFICATE/) print }' > /tmp/lets-encrypt-chain.pem
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Read certificate files
+      ansible.builtin.slurp:
+        src: "/tmp/thinkube-com.crt"
+      register: cert_content
+
+    - name: Read chain files
+      ansible.builtin.slurp:
+        src: "/tmp/lets-encrypt-chain.pem"
+      register: chain_content
+
+    - name: Create a ConfigMap with the certificates
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: trusted-ca-bundle
+            namespace: "{{ harbor_namespace }}"
+          data:
+            ca-certificates.crt: "{{ cert_content.content | b64decode }}"
+            lets-encrypt-chain.pem: "{{ chain_content.content | b64decode }}"
+
+    - name: Patch Harbor core deployment to mount the ConfigMap
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} patch deployment harbor-core -n {{ harbor_namespace }} --type=json -p='[
+          {"op":"add", "path":"/spec/template/spec/volumes/-", "value":{"name":"trusted-ca-bundle","configMap":{"name":"trusted-ca-bundle"}}},
+          {"op":"add", "path":"/spec/template/spec/containers/0/volumeMounts/-", "value":{"name":"trusted-ca-bundle","mountPath":"/usr/local/share/ca-certificates","readOnly":true}}
+        ]'
+      args:
+        executable: /bin/bash
+      changed_when: true
+      ignore_errors: true  # In case the volume already exists
+
+    - name: Restart Harbor core to pick up certificate changes
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} rollout restart deployment harbor-core -n {{ harbor_namespace }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Wait for Harbor core to be ready
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} rollout status deployment harbor-core -n {{ harbor_namespace }} --timeout=120s
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Verify Harbor authentication configuration
       ansible.builtin.uri:
         url: "https://{{ harbor_registry }}/api/v2.0/systeminfo"
@@ -451,6 +627,24 @@
         status_code: 200
       register: final_config
       failed_when: final_config.json.auth_mode != 'oidc_auth'
+      
+    - name: Verify OIDC configuration
+      ansible.builtin.uri:
+        url: "https://{{ harbor_registry }}/api/v2.0/configurations"
+        method: GET
+        headers:
+          Authorization: "Basic {{ (harbor_admin_user + ':' + admin_password) | b64encode }}"
+        validate_certs: false
+        status_code: 200
+      register: harbor_config
+      
+    - name: Display OIDC configuration
+      ansible.builtin.debug:
+        msg: 
+          - "Auth Mode: {{ harbor_config.json.auth_mode.value }}"
+          - "OIDC Admin Group: {{ harbor_config.json.oidc_admin_group.value }}"
+          - "OIDC Auto Onboard: {{ harbor_config.json.oidc_auto_onboard.value }}"
+          - "OIDC Groups Claim: {{ harbor_config.json.oidc_groups_claim.value }}"
 
     - name: Display deployment status
       ansible.builtin.debug:

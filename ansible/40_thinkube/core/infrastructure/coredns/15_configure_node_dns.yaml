@@ -1,38 +1,64 @@
 ---
-# Configure MicroK8s nodes to properly use DNS after CoreDNS is deployed
-# This ensures MicroK8s nodes can resolve both internal and external domains
+# Configure DNS on all nodes (MicroK8s and non-MicroK8s) after CoreDNS is deployed
+# This ensures all nodes can resolve both internal and external domains correctly
 
-- name: Configure DNS on MicroK8s nodes after CoreDNS deployment
-  hosts: microk8s
+- name: Configure DNS on all nodes after CoreDNS deployment
+  hosts: all
   gather_facts: true
   become: true
   
   vars:
     zerotier_dns_server: "{{ hostvars['dns1'].zerotier_ip }}"  # 192.168.191.1
+    k8s_cluster_domain: "cluster.local"
+    coredns_cluster_ip: "10.152.183.10"  # Standard CoreDNS cluster IP
     
   tasks:
+    # Get CoreDNS IP from MicroK8s
     - name: Get CoreDNS service IP
       ansible.builtin.command: |
         microk8s kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}'
       register: coredns_ip
       when: inventory_hostname in groups['microk8s_control_plane']
+      ignore_errors: true
       
-    - name: Share CoreDNS IP with all MicroK8s nodes
+    - name: Share CoreDNS IP with all nodes
       ansible.builtin.set_fact:
-        cluster_dns_ip: "{{ hostvars[groups['microk8s_control_plane'][0]]['coredns_ip']['stdout'] }}"
-      when: groups['microk8s_control_plane'][0] in hostvars
+        cluster_dns_ip: "{{ hostvars[groups['microk8s_control_plane'][0]]['coredns_ip']['stdout'] | default('10.152.183.10') }}"
+      when: groups['microk8s_control_plane'][0] is defined and groups['microk8s_control_plane'][0] in hostvars
+      
+    # Create systemd-resolved directory for drop-in configs
+    - name: Create systemd-resolved directory
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
         
-    - name: Update systemd-resolved configuration for MicroK8s nodes
+    # Remove any conflicting DNS configuration files first
+    - name: Remove conflicting DNS configuration files
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d/dns.conf
+        state: absent
+      notify: restart systemd-resolved
+      
+    # Configure MicroK8s nodes
+    - name: Configure systemd-resolved for MicroK8s nodes
       ansible.builtin.copy:
         content: |
           # Updated DNS configuration for MicroK8s nodes
           [Resolve]
           # Primary DNS: CoreDNS for cluster.local domains
           DNS={{ cluster_dns_ip | default('10.152.183.10') }}
-          # Secondary DNS: ZeroTier DNS for thinkube domains
+          # Secondary DNS: ZeroTier DNS for domain resolution
           DNS={{ zerotier_dns_server }}
-          # Configure domain routing
-          Domains=~cluster.local ~thinkube.com ~kn.thinkube.com
+          # Only include cluster.local to prevent search domain issues with external domains
+          Domains=~cluster.local
+          # Include explicit domain for *.thinkube.com resolution
+          Domains=~{{ domain_name }}
+          # Forward ACME challenges directly to public DNS
+          Domains=~_acme-challenge.{{ domain_name }}
+          Domains=~_acme-challenge.kn.{{ domain_name }}
           # Fallback DNS for everything else
           FallbackDNS=8.8.8.8 8.8.4.4
           DNSStubListener=yes
@@ -40,32 +66,115 @@
         owner: root
         group: root
         mode: '0644'
+      when: inventory_hostname in groups['microk8s']
+      notify: restart systemd-resolved
+        
+    # Configure LXD containers (non-MicroK8s)
+    - name: Remove conflicting DNS configuration for LXD containers
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d/dns.conf
+        state: absent
+      when: "'lxd_containers' in group_names and inventory_hostname not in groups['microk8s']"
       notify: restart systemd-resolved
       
-    - name: Ensure DNS resolution order is correct
-      ansible.builtin.lineinfile:
-        path: /etc/systemd/resolved.conf
-        regexp: '^#?DNS='
-        line: 'DNS={{ cluster_dns_ip | default("10.152.183.10") }} {{ zerotier_dns_server }}'
-        backup: yes
-      when: ansible_service_mgr == "systemd"
+    - name: Configure systemd-resolved for LXD containers
+      ansible.builtin.copy:
+        content: |
+          # Updated DNS configuration for LXD containers
+          [Resolve]
+          # Primary DNS: ZeroTier DNS for domain resolution
+          DNS={{ zerotier_dns_server }}
+          # No search domains to prevent issues with external resolution
+          Domains=
+          # Fallback DNS for external domains
+          FallbackDNS=8.8.8.8 8.8.4.4
+          DNSStubListener=yes
+        dest: /etc/systemd/resolved.conf.d/10-thinkube.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: "'lxd_containers' in group_names and inventory_hostname not in groups['microk8s']"
+      notify: restart systemd-resolved
+      
+    # Configure physical nodes (non-MicroK8s) 
+    - name: Remove conflicting DNS configuration for physical nodes
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d/dns.conf
+        state: absent
+      when: "'baremetal' in group_names and inventory_hostname not in groups['microk8s']"
+      notify: restart systemd-resolved
+      
+    - name: Configure systemd-resolved for physical nodes
+      ansible.builtin.copy:
+        content: |
+          # Updated DNS configuration for physical nodes
+          [Resolve]
+          # Primary DNS: ZeroTier DNS for domain resolution
+          DNS={{ zerotier_dns_server }}
+          # No search domains to prevent issues with external resolution
+          Domains=
+          # Fallback DNS for external domains
+          FallbackDNS=8.8.8.8 8.8.4.4
+          DNSStubListener=yes
+        dest: /etc/systemd/resolved.conf.d/10-thinkube.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: "'baremetal' in group_names and inventory_hostname not in groups['microk8s']"
+      notify: restart systemd-resolved
+      
+    # Configure MicroK8s DNS settings for Kubernetes pods
+    - name: Configure MicroK8s DNS settings for Kubernetes pods
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig | default('/var/snap/microk8s/current/credentials/client.config') }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: lxd-dns-config
+            namespace: kube-system
+          data:
+            resolve.conf: |
+              nameserver {{ cluster_dns_ip | default('10.152.183.10') }}
+              search default.svc.{{ k8s_cluster_domain }} svc.{{ k8s_cluster_domain }} {{ k8s_cluster_domain }}
+              options ndots:5
+      when: inventory_hostname in groups['microk8s_control_plane']
+      run_once: true
+      ignore_errors: true
       
   handlers:
     - name: restart systemd-resolved
       ansible.builtin.systemd:
         name: systemd-resolved
         state: restarted
+        daemon_reload: true
         
   post_tasks:
+    # Test DNS resolution to verify configuration
     - name: Test DNS resolution for internal cluster domain
       ansible.builtin.command: nslookup kubernetes.default.svc.cluster.local
       register: internal_dns_test
       changed_when: false
       failed_when: false
+      when: inventory_hostname in groups['microk8s']
       
     - name: Test DNS resolution for external domain
-      ansible.builtin.command: nslookup keycloak.{{ domain_name }}
+      ansible.builtin.command: nslookup {{ item }}
+      with_items:
+        - "keycloak.{{ domain_name }}"
+        - "acme-v02.api.letsencrypt.org"
+        - "github.com"
       register: external_dns_test  
+      changed_when: false
+      failed_when: false
+      
+    - name: Test DNS resolution with trailing dot (FQDN)
+      ansible.builtin.command: nslookup {{ item }}.
+      with_items:
+        - "acme-v02.api.letsencrypt.org"
+        - "github.com"
+      register: fqdn_dns_test
       changed_when: false
       failed_when: false
       
@@ -73,5 +182,31 @@
       ansible.builtin.debug:
         msg: |
           Node: {{ inventory_hostname }}
+          
+          {% if inventory_hostname in groups['microk8s'] %}
           Internal DNS (cluster.local): {{ 'SUCCESS' if internal_dns_test.rc == 0 else 'FAILED' }}
-          External DNS ({{ domain_name }}): {{ 'SUCCESS' if external_dns_test.rc == 0 else 'FAILED' }}
+          {% endif %}
+          
+          External DNS Resolution:
+          {% for result in external_dns_test.results %}
+          - {{ result.item }}: {{ 'SUCCESS' if result.rc == 0 else 'FAILED' }}
+          {% endfor %}
+          
+          FQDN Resolution (with trailing dot):
+          {% for result in fqdn_dns_test.results %}
+          - {{ result.item }}: {{ 'SUCCESS' if result.rc == 0 else 'FAILED' }}
+          {% endfor %}
+          
+          EXTERNAL RESOLUTION VALIDATION: 
+          {% set has_domain_issue = false %}
+          {% for result in external_dns_test.results %}
+          {% if result.stdout is defined and "thinkube.com" in result.stdout and not result.item.endswith(domain_name) %}
+          {% set has_domain_issue = true %}
+          {% endif %}
+          {% endfor %}
+          
+          {% if has_domain_issue %}
+          ❌ FAILED - External domains are resolving to internal IPs
+          {% else %}
+          ✅ PASSED - External domains resolve correctly
+          {% endif %}

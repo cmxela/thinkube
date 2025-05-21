@@ -38,56 +38,148 @@
     github_registry: "ghcr.io"
     aws_ecr: "public.ecr.aws/docker/library"
     
-    # Library namespace inside the destination project
+    # Standard library project for mirrored images
+    # This must match exactly with "library" - the default project in Harbor
     library_project: "library"
-    harbor_full_project: "{{ harbor_project }}_{{ library_project }}"
     
-    # Images to mirror - using GCR mirror for most images
+    # Images to mirror - using GCR mirror for most images (identical to Docker Hub)
     mirror_images:
       # Basic utility images
       - source: "{{ gcr_mirror }}/alpine:latest"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/alpine:latest"
-        description: "Alpine from GCR mirror"
+        destination: "{{ harbor_registry }}/{{ library_project }}/alpine:latest"
+        description: "Alpine from GCR mirror - identical to Docker Hub"
       
-      # Runtime images
+      - source: "{{ gcr_mirror }}/busybox:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/busybox:latest" 
+        description: "Busybox from GCR mirror - identical to Docker Hub"
+      
+      # Programming languages  
       - source: "{{ gcr_mirror }}/python:3.9-slim"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/python:3.9-slim"
+        destination: "{{ harbor_registry }}/{{ library_project }}/python:3.9-slim"
+        description: "Python 3.9 from GCR mirror - identical to Docker Hub"
+      
       - source: "{{ gcr_mirror }}/python:3.11-slim"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/python:3.11-slim"
+        destination: "{{ harbor_registry }}/{{ library_project }}/python:3.11-slim"
+        description: "Python 3.11 from GCR mirror - identical to Docker Hub"
+        
       - source: "{{ gcr_mirror }}/golang:1.21-alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/golang:1.21-alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/golang:1.21-alpine"
+        description: "Golang 1.21 from GCR mirror - identical to Docker Hub"
+        
       - source: "{{ gcr_mirror }}/node:18-alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/node:18-alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/node:18-alpine"
+        description: "Node.js 18 from GCR mirror - identical to Docker Hub"
       
-      # Database images
-      - source: "{{ gcr_mirror }}/postgres:14-alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/postgres:14-alpine"
-      - source: "{{ gcr_mirror }}/redis:7-alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/redis:7-alpine"
-      - source: "{{ gcr_mirror }}/mysql:8.0"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/mysql:8.0"
+      # Databases
+      - source: "{{ gcr_mirror }}/redis:7.0.9"
+        destination: "{{ harbor_registry }}/{{ library_project }}/redis:7.0.9" 
+        description: "Redis 7.0.9 from GCR mirror - identical to Docker Hub"
       
-      # Web servers
-      - source: "{{ gcr_mirror }}/nginx:alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/nginx:alpine"
-      - source: "{{ gcr_mirror }}/httpd:alpine"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/httpd:alpine"
+      - source: "{{ gcr_mirror }}/postgres:14.5-alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/postgres:14.5-alpine"
+        description: "PostgreSQL from GCR mirror - identical to Docker Hub"
       
-      # Kubernetes images from k8s.registry.io
-      - source: "{{ k8s_registry }}/pause:3.9"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/pause:3.9"
-      - source: "{{ k8s_registry }}/coredns/coredns:v1.10.1"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/coredns:v1.10.1"
+      # Development tools 
+      - source: "{{ github_registry }}/coder/code-server:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/code-server:latest"
+        description: "Code Server from GitHub - official source, same as Docker Hub"
+      
+      # Base images
+      - source: "{{ gcr_mirror }}/ubuntu:22.04"
+        destination: "{{ harbor_registry }}/{{ library_project }}/ubuntu:22.04"
+        description: "Ubuntu 22.04 from GCR mirror - identical to Docker Hub"
+        
+      # Jupyter notebook images from Quay.io
+      - source: "{{ quay_registry }}/jupyter/docker-stacks-foundation:latest" 
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-docker-stacks-foundation:latest"
+        description: "Jupyter Docker Stacks Foundation Image from Quay.io"
+        
+      - source: "{{ quay_registry }}/jupyter/base-notebook:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-base-notebook:latest"
+        description: "Jupyter Base Notebook from Quay.io"
+        
+      - source: "{{ quay_registry }}/jupyter/minimal-notebook:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-minimal-notebook:latest"
+        description: "Jupyter Minimal Notebook from Quay.io"
+        
+      - source: "{{ quay_registry }}/jupyter/scipy-notebook:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-scipy-notebook:latest"
+        description: "Jupyter SciPy Notebook from Quay.io"
+        
+      - source: "{{ quay_registry }}/jupyter/datascience-notebook:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-datascience-notebook:latest"
+        description: "Jupyter Data Science Notebook from Quay.io"
+        
+      - source: "{{ quay_registry }}/jupyter/tensorflow-notebook:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-tensorflow-notebook:latest"
+        description: "Jupyter TensorFlow Notebook from Quay.io"
+        
+      - source: "{{ quay_registry }}/jupyter/pyspark-notebook:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-pyspark-notebook:latest"
+        description: "Jupyter PySpark Notebook from Quay.io"
+        
+      - source: "{{ quay_registry }}/jupyter/all-spark-notebook:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-all-spark-notebook:latest"
+        description: "Jupyter All-Spark Notebook from Quay.io"
+        
+      # Monitoring images (Prometheus, Grafana)
+      - source: "{{ quay_registry }}/prometheus/prometheus:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/prometheus:latest"
+        description: "Prometheus monitoring system from Quay.io"
+      
+      - source: "{{ quay_registry }}/prometheus/alertmanager:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/alertmanager:latest"
+        description: "Prometheus Alertmanager from Quay.io"
+        
+      - source: "{{ quay_registry }}/prometheus/node-exporter:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/node-exporter:latest"
+        description: "Prometheus Node Exporter from Quay.io"
+        
+      - source: "{{ quay_registry }}/prometheus/blackbox-exporter:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/blackbox-exporter:latest"
+        description: "Prometheus Blackbox Exporter from Quay.io"
+        
+      - source: "docker.io/grafana/grafana:latest" 
+        destination: "{{ harbor_registry }}/{{ library_project }}/grafana:latest"
+        description: "Grafana from Docker Hub"
+        
+      # Penpot images
+      - source: "docker.io/penpotapp/backend:{{ penpot_version | default('2.5.4') }}"
+        destination: "{{ harbor_registry }}/{{ library_project }}/penpot-backend:{{ penpot_version | default('2.5.4') }}"
+        description: "Penpot backend from Docker Hub"
+        
+      - source: "docker.io/penpotapp/frontend:{{ penpot_version | default('2.5.4') }}"
+        destination: "{{ harbor_registry }}/{{ library_project }}/penpot-frontend:{{ penpot_version | default('2.5.4') }}"
+        description: "Penpot frontend from Docker Hub"
+        
+      - source: "docker.io/penpotapp/exporter:{{ penpot_version | default('2.5.4') }}"
+        destination: "{{ harbor_registry }}/{{ library_project }}/penpot-exporter:{{ penpot_version | default('2.5.4') }}"
+        description: "Penpot exporter from Docker Hub"
+        
+      # Documentation images
+      - source: "docker.io/squidfunk/mkdocs-material:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/mkdocs-material:latest"
+        description: "MkDocs Material theme from Docker Hub"
+        
+      # Utility images
+      - source: "docker.io/curlimages/curl:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/curl:latest"
+        description: "Curl utility image from Docker Hub"
+        
+      # Storage services
+      - source: "docker.io/minio/minio:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/minio:latest"
+        description: "MinIO object storage server from Docker Hub"
+        
+      # Knative related images
+      - source: "{{ gcr_registry }}/knative-samples/helloworld-go:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/helloworld-go:latest"
+        description: "Knative Hello World Go sample from GCR"
       
       # Build tools from GCR
       - source: "{{ gcr_registry }}/kaniko-project/executor:latest"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/kaniko:latest"
-      
-      # Popular images from Quay (when not on GCR)
-      - source: "{{ quay_registry }}/prometheus/prometheus:latest"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/prometheus:latest"
-      - source: "{{ quay_registry }}/prometheus/alertmanager:latest"
-        destination: "{{ harbor_registry }}/{{ harbor_full_project }}/alertmanager:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/kaniko:latest"
+        description: "Kaniko executor from GCR"
 
   pre_tasks:
     - name: Get robot token from env file
@@ -176,7 +268,7 @@
           Content-Type: "application/json"
         body_format: json
         body:
-          project_name: "{{ harbor_full_project }}"
+          project_name: "{{ library_project }}"
           public: true
           metadata:
             public: "true"
@@ -184,62 +276,46 @@
         validate_certs: true
         status_code: [201, 409]
 
-    - name: Set container auth config
-      ansible.builtin.set_fact:
-        auth_config_dir: "/tmp/harbor-auth"
-        auth_config_file: "/tmp/harbor-auth/config.json"
-        
-    - name: Create container auth directory
-      ansible.builtin.file:
-        path: "{{ auth_config_dir }}"
-        state: directory
-        mode: '0700'
-        
-    - name: Create container auth config
-      ansible.builtin.copy:
-        dest: "{{ auth_config_file }}"
-        content: |
-          {
-            "auths": {
-              "{{ harbor_registry }}": {
-                "username": "{{ harbor_robot_user }}",
-                "password": "{{ harbor_robot_token }}"
-              }
-            }
-          }
-        mode: '0600'
-
-    - name: Mirror images with auth
-      ansible.builtin.shell: |
-        echo "Pulling {{ item.source }}..."
-        {{ container_runtime }} pull {{ item.source }}
-        
-        echo "Tagging as {{ item.destination }}..."
-        {{ container_runtime }} tag {{ item.source }} {{ item.destination }}
-        
-        echo "Pushing to {{ item.destination }}..."
-        env XDG_RUNTIME_DIR=/tmp HOME={{ auth_config_dir }} {{ container_runtime }} push {{ item.destination }}
-        
-        echo "Removing local copies..."
-        {{ container_runtime }} rmi {{ item.source }} || true
-        {{ container_runtime }} rmi {{ item.destination }} || true
+    # Process each image using the image_mirror role
+    - name: Login to Harbor registry
+      ansible.builtin.command: >
+        {{ container_runtime }} login {{ harbor_registry }}
+        --username {{ harbor_robot_user }}
+        --password {{ harbor_robot_token }}
+        --tls-verify=true
+      register: harbor_login
+      changed_when: "'Login Succeeded' in harbor_login.stdout"
+      no_log: true
+      
+    - name: Loop through images and mirror them to Harbor
+      include_role:
+        name: container_deployment/image_mirror
+      vars:
+        source_image: "{{ item.source }}"
+        destination_image: "{{ item.destination }}"
+        harbor_api_user: "{{ harbor_admin_user }}"
+        harbor_api_password: "{{ admin_password }}"
       loop: "{{ mirror_images }}"
-      register: mirror_results
-      changed_when: true
-      failed_when: false
+      loop_control:
+        label: "{{ item.description if item.description is defined else item.destination }}"
       tags:
         - mirror
 
     - name: Logout from Harbor registry
-      ansible.builtin.shell: |
-        {{ container_runtime }} logout {{ harbor_registry }} || true
+      ansible.builtin.command: >-
+        {{ container_runtime }} logout {{ harbor_registry }}
       changed_when: false
       failed_when: false
 
-    - name: Display mirror summary
+    - name: Display results
       ansible.builtin.debug:
-        msg:
+        msg: 
+          - "Image mirroring complete"
+          - "----------------------------------------"
+          - "The following images are available in Harbor:"
+          - "• {{ mirror_images | map(attribute='destination') | join('\n• ') }}"
+          - "----------------------------------------"
+          - "These images can now be used in your deployments to avoid Docker Hub rate limits."
           - "Container runtime used: {{ container_runtime }}"
           - "Total images mirrored: {{ mirror_images | length }}"
-          - "Library project: {{ harbor_full_project }}"
-          - "Mirror operation completed successfully"
+          - "Library project: {{ library_project }}"

@@ -58,9 +58,10 @@ coredns/
 
 The configuration implements:
 1. **Kubernetes Internal**: Routes `*.cluster.local` to internal kubernetes DNS
-2. **Domain Forwarding**: Forwards `*.cmxela.com` to ZeroTier DNS server
-3. **Knative Routing**: Maps `*.kn.cmxela.com` to secondary ingress IP
+2. **Domain Forwarding**: Forwards `*.thinkube.com` to ZeroTier DNS server
+3. **Knative Routing**: Maps `*.kn.thinkube.com` to secondary ingress IP
 4. **Hairpin Support**: Enables external access to route back to internal services
+5. **External Domain Resolution**: Ensures external domains resolve correctly
 
 ### Worker Node Configuration
 

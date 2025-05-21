@@ -82,6 +82,82 @@
       register: cleanup_check
       failed_when: cleanup_check.resources | length > 0
 
+    # Retrieve Keycloak token to delete the OIDC client
+    - name: Get Keycloak admin token
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/realms/master/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          username: "{{ admin_username }}"
+          password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+          grant_type: password
+          client_id: "admin-cli"
+        validate_certs: true
+        status_code: [200, 201]
+      register: keycloak_token
+      no_log: true
+      ignore_errors: true
+
+    - name: Get harbor client info
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients?clientId=harbor"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        status_code: [200, 201, 404]
+      register: harbor_client_info
+      ignore_errors: true
+      when: keycloak_token is success
+
+    - name: Extract client ID from response
+      ansible.builtin.set_fact:
+        harbor_client_uuid: "{{ harbor_client_info.json[0].id }}"
+      when: 
+        - keycloak_token is success
+        - harbor_client_info is success 
+        - harbor_client_info.json | length > 0
+
+    - name: Delete harbor client in Keycloak
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ harbor_client_uuid }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        status_code: [204, 404]
+      ignore_errors: true
+      when: harbor_client_uuid is defined
+      
+    # Remove the harbor-admins group from Keycloak
+    - name: Get harbor-admins group info
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups?search=harbor-admins"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        status_code: 200
+      register: harbor_admins_group
+      ignore_errors: true
+      when: keycloak_token is success
+      
+    - name: Extract harbor-admins group ID
+      ansible.builtin.set_fact:
+        harbor_admins_group_id: "{{ harbor_admins_group.json[0].id }}"
+      when: 
+        - keycloak_token is success
+        - harbor_admins_group is success
+        - harbor_admins_group.json | length > 0
+        
+    - name: Delete harbor-admins group from Keycloak
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups/{{ harbor_admins_group_id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        status_code: [204, 404]
+      ignore_errors: true
+      when: harbor_admins_group_id is defined
+
     - name: Remove Harbor OIDC secret file if exists
       ansible.builtin.file:
         path: /tmp/harbor_oidc_secret
@@ -121,4 +197,6 @@
           - "Harbor Helm release: {{ 'Deleted' if helm_check.status is defined else 'Not found' }}"
           - "Harbor robot token: Removed from environment file"
           - "Harbor pull secret: Removed from default namespace"
+          - "Harbor OIDC client: {{ 'Deleted' if harbor_client_uuid is defined else 'Not found' }}"
+          - "Harbor-admins group: {{ 'Deleted' if harbor_admins_group_id is defined else 'Not found' }}"
           - "Cleanup completed successfully"

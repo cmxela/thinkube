@@ -17,7 +17,7 @@ all:
     zerotier_network_id: "{{ lookup('env', 'ZEROTIER_NETWORK_ID') }}"
     zerotier_cidr: "192.168.191.0/24"  # ZeroTier subnet
     dns_servers: ["8.8.8.8", "8.8.4.4"]  # Default DNS servers
-    dns_search_domains: ["thinkube.com", "kn.thinkube.com"]  # DNS search domains
+    dns_search_domains: []  # No custom DNS search domains to prevent wildcard matching with external domains
 
   children:
     # Hardware architecture groups

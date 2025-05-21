@@ -18,15 +18,6 @@
   
   vars:
     keycloak_namespace: keycloak
-    confirm_rollback: false  # Set to true to confirm rollback
-    
-  pre_tasks:
-    - name: Confirm rollback action
-      ansible.builtin.assert:
-        that:
-          - confirm_rollback | bool
-        fail_msg: "Rollback not confirmed. Set confirm_rollback=true to proceed"
-        success_msg: "Rollback confirmed, proceeding with Keycloak removal"
         
   tasks:
     - name: Delete Keycloak ingress

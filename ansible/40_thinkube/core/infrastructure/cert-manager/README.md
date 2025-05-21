@@ -14,7 +14,8 @@ Cert-manager replaces manual SSL certificate management by automatically issuing
 
 ## Environment Variables
 
-- `CLOUDFLARE_API_TOKEN`: Required - Your Cloudflare API token for DNS validation
+- `CLOUDFLARE_API_TOKEN`: Required - Your Cloudflare API token with DNS edit permissions
+- `CLOUDFLARE_ZONE_ID`: Required - Your Cloudflare zone ID for the domain (required for API compatibility)
 
 ## Playbooks
 
@@ -58,10 +59,33 @@ Key variables used (from inventory):
 ## Certificate Configuration
 
 The deployment creates a wildcard certificate covering:
-- `thinkube.com`
 - `*.thinkube.com`
-- `*.k8s.thinkube.com`
 - `*.kn.thinkube.com`
+
+Note: The base domain (`thinkube.com`) is not included in the wildcard certificate to avoid conflicts with DNS challenge validation. When you need to use the base domain, create a separate certificate for it during the specific service deployment using a template like:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: thinkube-base-tls
+  namespace: your-service-namespace
+  annotations:
+    cert-manager.io/issue-temporary-certificate: "true"
+    cert-manager.io/dns01-recursive-nameservers: "8.8.8.8:53,1.1.1.1:53" 
+    cert-manager.io/dns01-recursive-nameservers-only: "true"
+    acme.cert-manager.io/dns01-check-interval: "10s"
+    acme.cert-manager.io/dns01-propagation-timeout: "180s"
+spec:
+  secretName: thinkube-base-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  commonName: "thinkube.com"
+  dnsNames:
+  - "thinkube.com"
+  renewBefore: 720h
+```
 
 ## Usage
 
@@ -89,7 +113,9 @@ The deployment creates a wildcard certificate covering:
 
 ## Using Certificates in Ingress
 
-To use the wildcard certificate in an ingress resource:
+### Using the Wildcard Certificate
+
+For any subdomain (like example.thinkube.com), use the wildcard certificate:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -114,21 +140,58 @@ spec:
                   number: 80
 ```
 
+### Using the Base Domain Certificate
+
+For the base domain (thinkube.com), create a separate certificate first, then use it:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: base-domain-ingress
+spec:
+  tls:
+    - hosts:
+        - thinkube.com
+      secretName: thinkube-base-tls
+  rules:
+    - host: thinkube.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: main-website
+                port:
+                  number: 80
+```
+
 ## Troubleshooting
 
 1. Certificate not issuing:
    - Check ClusterIssuer status: `kubectl describe clusterissuer letsencrypt-prod`
    - Check certificate status: `kubectl describe certificate -n default`
    - Check cert-manager logs: `kubectl logs -n cert-manager deployment/cert-manager`
+   - Check certificate requests: `kubectl get certificaterequests -A`
+   - Check order status: `kubectl get order -A`
 
 2. DNS validation failing:
    - Verify Cloudflare API token has correct permissions
    - Check DNS challenge status: `kubectl get challenges -A`
+   - Check challenge details: `kubectl describe challenges -A`
    - Ensure domain is managed by Cloudflare
 
-3. Pods not starting:
+3. Handling DNS challenge conflicts:
+   - Use separate certificates for base domain and wildcards
+   - Never include both `domain.com` and `*.domain.com` in the same certificate
+   - For base domain certificates, create them during the specific service deployment
+   - Monitor challenges with `kubectl get challenges -A` during issuance
+
+4. Pods not starting:
    - Check namespace: `kubectl get pods -n cert-manager`
    - Check events: `kubectl get events -n cert-manager`
+   - Verify CRDs: `kubectl get crds | grep cert-manager`
 
 ## Migration from Manual Certificates
 

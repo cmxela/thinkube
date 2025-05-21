@@ -138,6 +138,15 @@
                   resource: "repository"
                 - action: "list"
                   resource: "repository"
+            - kind: "project"
+              namespace: "library"
+              access:
+                - action: "pull"
+                  resource: "repository"
+                - action: "push"
+                  resource: "repository"
+                - action: "list"
+                  resource: "repository"
         validate_certs: true
         status_code: [201, 409]
       register: robot_creation
@@ -181,6 +190,15 @@
               permissions:
                 - kind: "project"
                   namespace: "{{ harbor_project }}"
+                  access:
+                    - action: "pull"
+                      resource: "repository"
+                    - action: "push"
+                      resource: "repository"
+                    - action: "list"
+                      resource: "repository"
+                - kind: "project"
+                  namespace: "library"
                   access:
                     - action: "pull"
                       resource: "repository"

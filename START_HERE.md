@@ -163,12 +163,12 @@ This helps maintain accurate progress tracking between development sessions and 
   - [x] Push changes to branch
   - [x] Create PR to main branch
 
-- [ ] **[CORE-008] Argo Workflows** ([Issue #20](https://github.com/cmxela/thinkube/issues/20))
-  - [ ] Create/switch to branch: `git checkout -b feature/argo-workflows`
-  - [ ] Implement requirement from GitHub issue #20
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Create PR to main branch
+- [x] **[CORE-008] Argo Workflows** ([Issue #20](https://github.com/cmxela/thinkube/issues/20))
+  - [x] Create/switch to branch: `git checkout -b feature/argo-workflows`
+  - [x] Implement requirement from GitHub issue #20
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Create PR to main branch
 
 - [ ] **[CORE-009] ArgoCD** ([Issue #21](https://github.com/cmxela/thinkube/issues/21))
   - [ ] Create/switch to branch: `git checkout -b feature/argocd`

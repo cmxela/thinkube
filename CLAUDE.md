@@ -52,6 +52,30 @@ Thinkube is a home-based development platform built on Kubernetes, designed spec
 - **Become**: Never use become at playbook level, only for specific tasks
 - **DNS Usage**: Use DNS hostnames, eliminate hardcoded IPs
 
+## Command Execution Reference
+
+### Running Commands in Kubernetes Control Node (tkc)
+
+To run commands in the Kubernetes control node (tkc), use the `run_ssh_command.sh` script:
+
+```bash
+# General syntax
+./scripts/run_ssh_command.sh tkc "command_to_run"
+
+# Example: Check pod status
+./scripts/run_ssh_command.sh tkc "microk8s.kubectl get pods -n registry"
+
+# Example: Check logs
+./scripts/run_ssh_command.sh tkc "microk8s.kubectl logs -n registry deploy/harbor-core -c harbor-core --tail 50"
+```
+
+Key kubectl commands for troubleshooting:
+- List pods: `microk8s.kubectl get pods -n <namespace>`
+- Check logs: `microk8s.kubectl logs -n <namespace> <pod-name> -c <container-name> --tail <number>`
+- Describe pod: `microk8s.kubectl describe pod -n <namespace> <pod-name>`
+- Check services: `microk8s.kubectl get svc -n <namespace>`
+- Check ingress: `microk8s.kubectl get ingress -n <namespace>`
+
 ## Playbook Numbering Convention
 
 - **10-17**: Main component setup and configuration

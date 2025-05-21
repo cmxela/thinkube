@@ -20,6 +20,10 @@
 #   - MicroK8s is installed on the target host.
 #   - MetalLB is configured for the appropriate IP range.
 #   - The kubernetes.core collection is installed.
+#   - cert-manager must be deployed first (CORE-003a)
+#
+# This playbook also creates certificates in the ingress namespaces after the controllers
+# are deployed, to ensure that the namespaces exist before certificates are created.
 #
 # Usage:
 #   Run from ansible root directory:
@@ -111,6 +115,7 @@
             extraArgs:
               tcp-services-configmap: "{{ ingress_namespace }}/{{ ingress_tcp_configmap_name }}"
               controller-class: "{{ primary_controller_class }}"
+              default-ssl-certificate: "{{ ingress_namespace }}/{{ ingress_namespace }}-tls-secret"
 
     - name: Get Primary Ingress Service Info
       kubernetes.core.k8s_info:
@@ -249,3 +254,75 @@
 
     - name: Restart secondary ingress controller pods to pick up new args
       ansible.builtin.shell: "{{ kubectl_bin }} rollout restart deployment {{ secondary_release }}-ingress-nginx-controller -n {{ ingress_kn_namespace }}"
+
+- name: Create and apply certificates for ingress namespaces
+  hosts: microk8s_control_plane
+  become: true
+  vars:
+    kubeconfig: "/var/snap/microk8s/current/credentials/client.config"
+    kubectl_bin: "/snap/bin/microk8s.kubectl"
+  tasks:
+    - name: Create wildcard certificate for primary ingress namespace
+      ansible.builtin.copy:
+        content: |
+          apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: {{ domain_name.replace('.', '-') }}-wildcard
+            namespace: {{ ingress_namespace }}
+          spec:
+            secretName: {{ ingress_namespace }}-tls-secret
+            issuerRef:
+              name: letsencrypt-prod
+              kind: ClusterIssuer
+            dnsNames:
+            - "{{ domain_name }}"
+            - "*.{{ domain_name }}"
+            - "*.kn.{{ domain_name }}"
+            renewBefore: 720h  # 30 days
+        dest: /tmp/certificate-ingress.yaml
+      tags:
+        - certificate
+        
+    - name: Create wildcard certificate for secondary ingress namespace
+      ansible.builtin.copy:
+        content: |
+          apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: {{ domain_name.replace('.', '-') }}-wildcard
+            namespace: {{ ingress_kn_namespace }}
+          spec:
+            secretName: {{ ingress_kn_namespace }}-tls-secret
+            issuerRef:
+              name: letsencrypt-prod
+              kind: ClusterIssuer
+            dnsNames:
+            - "{{ domain_name }}"
+            - "*.{{ domain_name }}"
+            - "*.kn.{{ domain_name }}"
+            renewBefore: 720h  # 30 days
+        dest: /tmp/certificate-ingress-kn.yaml
+      tags:
+        - certificate
+        
+    - name: Apply primary ingress certificate
+      ansible.builtin.command: {{ kubectl_bin }} apply -f /tmp/certificate-ingress.yaml
+      register: cert_result_ingress
+      tags:
+        - certificate
+        
+    - name: Apply secondary ingress certificate
+      ansible.builtin.command: {{ kubectl_bin }} apply -f /tmp/certificate-ingress-kn.yaml
+      register: cert_result_ingress_kn
+      tags:
+        - certificate
+        
+    - name: Display certificate status
+      ansible.builtin.debug:
+        msg:
+          - "Certificates deployed successfully to ingress namespaces"
+          - "Primary ingress certificate: {{ cert_result_ingress.stdout }}"
+          - "Secondary ingress certificate: {{ cert_result_ingress_kn.stdout }}"
+      tags:
+        - info

@@ -264,16 +264,33 @@
       register: wildcard_cert
       failed_when: wildcard_cert.resources | length == 0
 
+    - name: Check if TLS secret already exists in harbor namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ harbor_namespace }}"
+        name: harbor-tls-secret
+      register: existing_cert_check
+
+    - name: Delete existing TLS secret if it exists
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: absent
+        api_version: v1
+        kind: Secret
+        namespace: "{{ harbor_namespace }}"
+        name: harbor-tls-secret
+      when: existing_cert_check.resources | length > 0
+      
     - name: Copy wildcard certificate from default namespace
-      ansible.builtin.shell: |
-        # Get the wildcard certificate from default namespace and copy to harbor namespace
-        {{ kubectl_bin }} get secret thinkube-com-tls -n default -o yaml | \
-        sed 's/namespace: default/namespace: {{ harbor_namespace }}/' | \
-        sed 's/name: thinkube-com-tls/name: harbor-tls-secret/' | \
-        {{ kubectl_bin }} create -f -
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition: "{{ lookup('template', 'templates/harbor-tls-secret.yaml.j2') | from_yaml }}"
       register: copy_cert
       
-    - name: Check if TLS secret already exists
+    - name: Check if TLS secret was created
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig }}"
         api_version: v1
@@ -439,7 +456,13 @@
           new_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
         validate_certs: false
         status_code: 200
+        
+    # Update admin_password to use the new password
+    - name: Update admin_password with the new value
+      ansible.builtin.set_fact:
+        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
 
+    # This follows exactly the approach from the original playbook
     - name: Configure Harbor OIDC authentication
       ansible.builtin.uri:
         url: "https://{{ harbor_registry }}/api/v2.0/configurations"
@@ -457,13 +480,74 @@
           oidc_auto_onboard: true
           oidc_groups_claim: "{{ oidc_group_claim }}"
           oidc_admin_group: "{{ oidc_admin_group }}"
-          oidc_verify_cert: false
         validate_certs: false
         status_code: [200, 201]
       register: oidc_config
-      retries: 3
-      delay: 5
-      until: oidc_config.status in [200, 201]
+
+    # Copy the Let's Encrypt certificate to Harbor's trusted store
+    - name: Extract Let's Encrypt R11 certificate from default/thinkube-com-tls
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} get secret thinkube-com-tls -n default -o jsonpath='{.data.tls\.crt}' | base64 -d > /tmp/thinkube-com.crt
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Get the intermediate certificate chain for Let's Encrypt
+      ansible.builtin.shell: |
+        openssl s_client -showcerts -connect auth.thinkube.com:443 </dev/null 2>/dev/null | \
+        awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/{ if(!/BEGIN CERTIFICATE/ && !/END CERTIFICATE/) print }' > /tmp/lets-encrypt-chain.pem
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Read certificate files
+      ansible.builtin.slurp:
+        src: "/tmp/thinkube-com.crt"
+      register: cert_content
+
+    - name: Read chain files
+      ansible.builtin.slurp:
+        src: "/tmp/lets-encrypt-chain.pem"
+      register: chain_content
+
+    - name: Create a ConfigMap with the certificates
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: trusted-ca-bundle
+            namespace: "{{ harbor_namespace }}"
+          data:
+            ca-certificates.crt: "{{ cert_content.content | b64decode }}"
+            lets-encrypt-chain.pem: "{{ chain_content.content | b64decode }}"
+
+    - name: Patch Harbor core deployment to mount the ConfigMap
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} patch deployment harbor-core -n {{ harbor_namespace }} --type=json -p='[
+          {"op":"add", "path":"/spec/template/spec/volumes/-", "value":{"name":"trusted-ca-bundle","configMap":{"name":"trusted-ca-bundle"}}},
+          {"op":"add", "path":"/spec/template/spec/containers/0/volumeMounts/-", "value":{"name":"trusted-ca-bundle","mountPath":"/usr/local/share/ca-certificates","readOnly":true}}
+        ]'
+      args:
+        executable: /bin/bash
+      changed_when: true
+      ignore_errors: true  # In case the volume already exists
+
+    - name: Restart Harbor core to pick up certificate changes
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} rollout restart deployment harbor-core -n {{ harbor_namespace }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Wait for Harbor core to be ready
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} rollout status deployment harbor-core -n {{ harbor_namespace }} --timeout=120s
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     - name: Verify Harbor authentication configuration
       ansible.builtin.uri:

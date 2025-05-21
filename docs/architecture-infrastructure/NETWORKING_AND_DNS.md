@@ -109,6 +109,16 @@ iptables -A FORWARD -o zt+ -j ACCEPT
 
 ## DNS Configuration
 
+### DNS Architecture Overview
+
+Thinkube uses a multi-layered DNS approach:
+
+1. **External DNS (dns1 VM)**: Bind9 server for external domain resolution of thinkube.com services
+2. **Internal DNS (CoreDNS)**: Kubernetes cluster DNS for service discovery
+3. **Node-level DNS (systemd-resolved)**: Client configuration on all nodes
+
+This layered approach ensures both Kubernetes services and external domains can be resolved correctly from any location.
+
 ### DNS Server Setup (dns1 VM)
 
 The DNS server (dns1) is configured using bind9 to provide name resolution for all Thinkube services.
@@ -189,11 +199,21 @@ The DNS server (dns1) is configured using bind9 to provide name resolution for a
    };
    ```
 
-### DNS Client Configuration
+### DNS Client Configuration (All Nodes)
 
-Configure all hosts and VMs to use the dns1 server (handled by playbooks):
+The client DNS configuration for all nodes (MicroK8s, LXD containers, and baremetal) is managed by the CoreDNS component's node configuration playbook:
 
-1. Edit /etc/systemd/resolved.conf:
+```bash
+# Deploy CoreDNS in Kubernetes
+./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/10_deploy.yaml
+
+# Configure all nodes to use the correct DNS settings
+./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/15_configure_node_dns.yaml
+```
+
+The node configuration sets up systemd-resolved on all hosts:
+
+1. Creates a drop-in configuration file at `/etc/systemd/resolved.conf.d/thinkube-dns.conf`:
    ```
    [Resolve]
    DNS={{ hostvars['dns1'].zerotier_ip }}
@@ -201,18 +221,24 @@ Configure all hosts and VMs to use the dns1 server (handled by playbooks):
    Domains={{ k8s_cluster_domain }}
    ```
 
-2. Restart systemd-resolved:
+2. Restarts systemd-resolved to apply changes:
    ```bash
    systemctl restart systemd-resolved
    ```
 
 > **IMPORTANT**: Do not add `{{ domain_name }}` or `kn.{{ domain_name }}` to search domains as this will cause external domain resolution issues. CoreDNS will forward requests for these domains to ZeroTier DNS server without needing them in search domains.
 
-### MicroK8s DNS Integration
+### MicroK8s DNS Integration (CoreDNS)
 
-Configure CoreDNS in MicroK8s to forward requests for domain to the dns1 server:
+CoreDNS is deployed in MicroK8s for in-cluster DNS resolution with proper forwarding to external DNS:
 
-1. Edit the CoreDNS ConfigMap:
+1. **CoreDNS Deployment**:
+   ```bash
+   # Deploy CoreDNS in Kubernetes
+   ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/10_deploy.yaml
+   ```
+
+2. **CoreDNS Configuration** (via ConfigMap):
    ```yaml
    apiVersion: v1
    kind: ConfigMap
@@ -268,11 +294,23 @@ Configure CoreDNS in MicroK8s to forward requests for domain to the dns1 server:
        }
    ```
 
-2. Apply the ConfigMap and restart CoreDNS (handled by playbooks):
+3. **Key Configuration Points**:
+   - Forwards `.thinkube.com` and `.kn.thinkube.com` domains to ZeroTier DNS server
+   - Uses Kubernetes internal DNS for cluster services
+   - Has domain rewriting for knative services
+   - Falls back to upstream DNS for all other domains
+
+4. **Testing CoreDNS Configuration**:
    ```bash
-   # This is handled by the playbook
-   ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/30_setup_coredns.yaml
+   # Comprehensive DNS test suite
+   ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/18_test.yaml
    ```
+   
+This configuration ensures:
+- Kubernetes services can resolve each other (via `cluster.local` domain)
+- All nodes can resolve external domains correctly
+- Thinkube services are accessible via their domain names
+- Knative services are accessible via specific domains
 
 ## Service Exposure Strategy
 
@@ -357,7 +395,16 @@ Following our "fail fast" error handling principle, here are structured troubles
 
 ### DNS Issues
 
-If DNS resolution fails:
+1. **Basic DNS Resolution Testing**:
+
+If DNS resolution fails, run the comprehensive test playbook first to diagnose:
+
+```bash
+cd ~/thinkube
+./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/18_test.yaml
+```
+
+2. **Common DNS Issues and Fixes**:
 
 ```
 ERROR: DNS Server Not Responding
@@ -374,7 +421,44 @@ REQUIRED ACTION:
 - Check pod DNS configuration: kubectl run -it --rm dnsutils --image=tutum/dnsutils -- cat /etc/resolv.conf
 - Test from inside pods: kubectl run -it --rm dnsutils --image=tutum/dnsutils -- nslookup google.com
 - Test with trailing dot: kubectl run -it --rm dnsutils --image=tutum/dnsutils -- nslookup google.com.
-- Run DNS tests: ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/core/infrastructure/coredns/18_test.yaml
+```
+
+3. **Resolving External Domain Issues**:
+
+If pods can't resolve external domains (frequent issue):
+```
+ERROR: External Domain Resolution Failed
+
+DETAILS:
+- Pods can't resolve external domains but can resolve kubernetes.default.svc.cluster.local
+- This often happens when search domains include {{ domain_name }} or kn.{{ domain_name }}
+- Search domains cause DNS queries to try different combinations before the direct lookup
+
+REQUIRED ACTION:
+- Check search domains in /etc/systemd/resolved.conf: should ONLY include cluster.local
+- Fix with node DNS configuration playbook:
+  ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/15_configure_node_dns.yaml
+- Verify fix with:
+  kubectl run -it --rm dnsutils --image=tutum/dnsutils -- nslookup google.com
+```
+
+4. **Resolving CoreDNS Configuration Issues**:
+
+If CoreDNS configuration seems incorrect:
+```
+ERROR: CoreDNS Configuration Issue
+
+DETAILS:
+- CoreDNS ConfigMap may have incorrect settings
+- Domain forwarding may be misconfigured
+
+REQUIRED ACTION:
+- Reset to default configuration with rollback playbook:
+  ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/19_rollback.yaml
+- Re-apply proper configuration:
+  ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/10_deploy.yaml
+  ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/15_configure_node_dns.yaml
+- Test with the comprehensive DNS test playbook
 ```
 
 ### ZeroTier Connectivity
@@ -404,12 +488,45 @@ REQUIRED ACTION:
 - CoreDNS Documentation: https://coredns.io/manual/toc/
 - Kubernetes DNS: https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/
 
+## DNS Component Architecture
+
+### DNS Component Consolidation
+
+In the initial architecture, DNS configuration was split between two components:
+
+1. **CoreDNS Component** (`ansible/40_thinkube/core/infrastructure/coredns/`):
+   - Handled CoreDNS deployment in Kubernetes
+   - Configured Kubernetes pods DNS resolution
+   - Previously limited to MicroK8s nodes only
+
+2. **DNS Resolution Component** (`ansible/40_thinkube/core/infrastructure/dns-resolution/`):
+   - Configured systemd-resolved on all nodes
+   - Set appropriate search domains
+
+These components were consolidated for simplicity and maintainability:
+
+- The `dns-resolution` functionality was merged into the CoreDNS component
+- The `15_configure_node_dns.yaml` playbook was enhanced to target all hosts
+- Node-specific configurations are handled within a single playbook
+
+### Current DNS Component Structure
+
+The unified CoreDNS component now:
+
+1. Handles CoreDNS deployment in Kubernetes (`10_deploy.yaml`)
+2. Configures systemd-resolved on all nodes (`15_configure_node_dns.yaml`)
+3. Provides comprehensive testing (`18_test.yaml`)
+4. Includes rollback capability (`19_rollback.yaml`)
+
+This consolidation follows our principle of eliminating redundancy and making the architecture more maintainable.
+
 ## Important Principles
 
 - **No Hardcoded Values**: All network configuration must come from inventory
 - **Inventory as Single Source of Truth**: All IP addresses and network configuration must be defined in the inventory
 - **Variable-Based Configuration**: Use templating for all configuration files
 - **VM-Based Deployment**: All services run in LXD VMs, not containers
+- **Component Consolidation**: Eliminate redundant components when functions overlap
 
 ## Known Issues and Best Practices
 

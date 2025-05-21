@@ -71,7 +71,7 @@
           password: "{{ admin_password }}"
           grant_type: password
           client_id: "admin-cli"
-        validate_certs: true
+        validate_certs: false  # TODO: Set to true once DNS resolves properly for auth.thinkube.com
         status_code: [200, 201]
       register: keycloak_token
       no_log: true
@@ -190,38 +190,71 @@
         body_format: json
         body:
           name: "{{ oidc_admin_group }}"
+          attributes:
+            description: ["Harbor Registry Administrators"]
         status_code: [201, 409]
       register: group_creation
 
-    - name: Get user info
+    - name: Get user ID for '{{ admin_username }}'
       ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username={{ admin_username }}"
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username={{ admin_username }}&exact=true"
         method: GET
         headers:
           Authorization: "Bearer {{ keycloak_token.json.access_token }}"
         status_code: 200
-      register: user_info
+      register: keycloak_user_response
+      no_log: false
 
-    - name: Get harbor-admins group ID
+    - name: Get 'harbor-admins' group ID
       ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups?search={{ oidc_admin_group }}"
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups"
         method: GET
         headers:
           Authorization: "Bearer {{ keycloak_token.json.access_token }}"
         status_code: 200
-      register: admin_group_info
+      register: groups_response
+      no_log: false
+      
+    - name: Debug user and group information
+      ansible.builtin.debug:
+        msg: 
+          - "User found: {{ keycloak_user_response.json | length > 0 }}"
+          - "Group found: {{ groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0 }}"
 
-    - name: Add user to harbor-admins group
+    - name: Add '{{ admin_username }}' to 'harbor-admins' group
       ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ user_info.json[0].id }}/groups/{{ admin_group_info.json[0].id }}"
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ keycloak_user_response.json[0].id }}/groups/{{ groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | map(attribute='id') | first }}"
         method: PUT
         headers:
           Authorization: "Bearer {{ keycloak_token.json.access_token }}"
           Content-Type: "application/json"
-        status_code: [204, 409]
-      when:
-        - user_info.json | length > 0
-        - admin_group_info.json | length > 0
+        status_code: 204
+      when: 
+        - keycloak_user_response.json | length > 0
+        - groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0
+        
+    # Make sure thinkube user is also in harbor-admins group
+    - name: Get thinkube user info
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username=thinkube&exact=true"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        status_code: 200
+      register: thinkube_user_response
+      no_log: false
+      
+    - name: Add 'thinkube' user to 'harbor-admins' group if it exists
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ thinkube_user_response.json[0].id }}/groups/{{ groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | map(attribute='id') | first }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+          Content-Type: "application/json"
+        status_code: 204
+      when: 
+        - thinkube_user_response.json | length > 0
+        - groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0
 
     - name: Get client secret for harbor
       ansible.builtin.uri:
@@ -461,6 +494,41 @@
     - name: Update admin_password with the new value
       ansible.builtin.set_fact:
         admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+        
+    # Refresh Keycloak token before verifying group
+    - name: Refresh Keycloak admin token
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/realms/master/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          username: "{{ admin_username }}"
+          password: "{{ admin_password }}"
+          grant_type: password
+          client_id: "admin-cli"
+        validate_certs: false
+        status_code: [200, 201]
+      register: keycloak_token_refresh
+      no_log: true
+      
+    - name: Update token variable
+      ansible.builtin.set_fact:
+        keycloak_token: "{{ keycloak_token_refresh }}"
+        
+    - name: Verify that harbor-admins group exists in Keycloak
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups?search={{ oidc_admin_group }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        status_code: 200
+      register: verify_admin_group
+      
+    - name: Verify admin group exists
+      ansible.builtin.assert:
+        that: verify_admin_group.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0
+        fail_msg: "The harbor-admins group does not exist in Keycloak! OIDC admin privileges will not work."
+        success_msg: "harbor-admins group exists in Keycloak"
 
     # This follows exactly the approach from the original playbook
     - name: Configure Harbor OIDC authentication
@@ -559,6 +627,24 @@
         status_code: 200
       register: final_config
       failed_when: final_config.json.auth_mode != 'oidc_auth'
+      
+    - name: Verify OIDC configuration
+      ansible.builtin.uri:
+        url: "https://{{ harbor_registry }}/api/v2.0/configurations"
+        method: GET
+        headers:
+          Authorization: "Basic {{ (harbor_admin_user + ':' + admin_password) | b64encode }}"
+        validate_certs: false
+        status_code: 200
+      register: harbor_config
+      
+    - name: Display OIDC configuration
+      ansible.builtin.debug:
+        msg: 
+          - "Auth Mode: {{ harbor_config.json.auth_mode.value }}"
+          - "OIDC Admin Group: {{ harbor_config.json.oidc_admin_group.value }}"
+          - "OIDC Auto Onboard: {{ harbor_config.json.oidc_auto_onboard.value }}"
+          - "OIDC Groups Claim: {{ harbor_config.json.oidc_groups_claim.value }}"
 
     - name: Display deployment status
       ansible.builtin.debug:

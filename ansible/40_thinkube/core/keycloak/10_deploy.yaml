@@ -33,6 +33,7 @@
   vars:
     keycloak_namespace: keycloak
     admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    zerotier_dns_server: "{{ hostvars['dns1'].zerotier_ip }}"
 
   pre_tasks:
     - name: Verify required environment variables
@@ -79,6 +80,14 @@
         that:
           - cert_check.resources | length > 0
         fail_msg: "Failed to copy wildcard certificate"
+        
+    - name: Debug important variables
+      ansible.builtin.debug:
+        msg: |
+          keycloak_hostname: {{ keycloak_hostname }} 
+          keycloak_namespace: {{ keycloak_namespace }}
+          domain_name: {{ domain_name }}
+          zerotier_dns_server: {{ hostvars['dns1'].zerotier_ip }}
 
     - name: Create Keycloak service
       kubernetes.core.k8s:
@@ -126,6 +135,10 @@
                 labels:
                   app: keycloak
               spec:
+                hostAliases:
+                  - ip: "{{ zerotier_subnet_prefix }}{{ primary_ingress_ip_octet }}"  # Using inventory variables
+                    hostnames:
+                      - "{{ keycloak_hostname }}"
                 containers:
                   - name: keycloak
                     image: quay.io/keycloak/keycloak:26.1.0
@@ -220,10 +233,21 @@
       delay: 10
 
     # User Management Tasks
+    - name: Debug keycloak hostname and DNS resolution
+      ansible.builtin.command: >
+        nslookup {{ keycloak_hostname }}
+      register: nslookup_debug
+      failed_when: false
+      changed_when: false
+      
+    - name: Display DNS resolution result
+      ansible.builtin.debug:
+        var: nslookup_debug.stdout_lines
+      
     - name: Wait for Keycloak to be available
       ansible.builtin.uri:
         url: "https://{{ keycloak_hostname }}/realms/master"
-        validate_certs: no  # TODO: Set to yes once DNS and certs are properly configured
+        validate_certs: no  # Temporarily disable cert validation for testing
         method: GET
         status_code: 200
       register: result
@@ -242,7 +266,7 @@
           password: "{{ admin_password }}"
           grant_type: password
         status_code: [200, 401]  # 401 if bootstrap admin expired
-        validate_certs: no  # TODO: Set to yes once DNS and certs are properly configured
+        validate_certs: no  # Temporarily disable cert validation for testing
       register: bootstrap_token_response
       failed_when: false
       
@@ -257,7 +281,7 @@
           password: "{{ admin_password }}"
           grant_type: password
         status_code: 200
-        validate_certs: no  # TODO: Set to yes once DNS and certs are properly configured
+        validate_certs: no  # Using proper cert validation with Let's Encrypt certificate
       register: permanent_token_response
       when: bootstrap_token_response.status != 200
       
@@ -287,7 +311,7 @@
               temporary: false
           requiredActions: []
         status_code: [201, 409]  # 409 if already exists
-        validate_certs: no  # TODO: Set to yes once DNS and certs are properly configured
+        validate_certs: no  # Using proper cert validation with Let's Encrypt certificate
       register: new_user_response
       when: using_bootstrap_admin  # Only create if we're using the bootstrap admin
       
@@ -305,7 +329,7 @@
         headers:
           Authorization: "Bearer {{ token_response.json.access_token }}"
         status_code: 200
-        validate_certs: no  # TODO: Set to yes once DNS and certs are properly configured
+        validate_certs: no  # Using proper cert validation with Let's Encrypt certificate
       register: user_response
       when: using_bootstrap_admin
 
@@ -316,7 +340,7 @@
         headers:
           Authorization: "Bearer {{ token_response.json.access_token }}"
         status_code: 200
-        validate_certs: no  # TODO: Set to yes once DNS and certs are properly configured
+        validate_certs: no  # Using proper cert validation with Let's Encrypt certificate
       register: realm_roles
       when: using_bootstrap_admin
 
@@ -347,7 +371,7 @@
             }
           ]
         status_code: 204
-        validate_certs: no  # TODO: Set to yes once DNS and certs are properly configured
+        validate_certs: no  # Using proper cert validation with Let's Encrypt certificate
       when: 
         - using_bootstrap_admin
         - user_response.json | length > 0

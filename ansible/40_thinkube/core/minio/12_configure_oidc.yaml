@@ -180,7 +180,6 @@
       args:
         executable: /bin/bash
       register: idp_result
-      failed_when: false
 
     ###################################################################
     # 4) Restart MinIO to apply changes
@@ -191,7 +190,6 @@
       args:
         executable: /bin/bash
       register: restart_result
-      failed_when: false
 
     - name: Display restart result
       ansible.builtin.debug:
@@ -213,6 +211,10 @@
     ###################################################################
     # 5) Verify the OIDC configuration
     ###################################################################
+    - name: Wait for MinIO to stabilize after restart
+      ansible.builtin.pause:
+        seconds: 5
+      
     - name: Verify OIDC configuration
       ansible.builtin.shell: >
         {{ mc_path }} --json idp openid ls {{ minio_alias }}
@@ -220,8 +222,7 @@
       args:
         executable: /bin/bash
       changed_when: false
-      failed_when: false
-
+      
     - name: Display verification results
       ansible.builtin.debug:
         var: idp_list.stdout_lines

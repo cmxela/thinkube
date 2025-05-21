@@ -119,8 +119,19 @@ When migrating playbooks from thinkube-core:
    - Test that the service behaves identically after migration
 
 2. **Host Group Updates**
-   - Replace `gato-p` with `k8s-control-node`
-   - Replace `gato-w1` with `k8s-worker-nodes`
+   - Replace `gato-p` with `microk8s_control_plane` (NOT `k8s-control-node`)
+   - Replace `gato-w1` with `microk8s_workers` (NOT `k8s-worker-nodes`)
+   
+   **CRITICAL: Host Group Reference**
+   - `microk8s_control_plane`: Control plane node (host: tkc)
+   - `microk8s_workers`: Worker nodes (hosts: tkw1, bcn1)
+   - `microk8s`: All Kubernetes nodes (both control plane and workers)
+   
+   **NEVER use incorrect group names like:**
+   - `gato-p` (old name from thinkube-core)
+   - `k8s-control-node` (incorrect name)
+   - `gato-w1` (old name from thinkube-core)
+   - `k8s-worker-nodes` (incorrect name)
 
 3. **Variable Compliance**
    - Move ALL hardcoded values to inventory variables
@@ -131,9 +142,38 @@ When migrating playbooks from thinkube-core:
      - `alexmc` → `{{ admin_username }}`
 
 4. **TLS Certificate Migration**
-   - Replace manual certificate copying with Cert-Manager
-   - Ensure the same certificate domains/SANs are preserved
-   - Use Certificate resources instead of manual Secret creation
+   - **CRITICAL: ALWAYS copy the wildcard certificate from default namespace**
+   - The source certificate name is `thinkube-com-tls` in the `default` namespace
+   - Components must copy this certificate to their namespaces
+   - Follow the naming convention `{{ component_namespace }}-tls-secret`
+   - Example of the correct approach:
+     ```yaml
+     - name: Get wildcard certificate from default namespace
+       kubernetes.core.k8s_info:
+         kubeconfig: "{{ kubeconfig }}"
+         api_version: v1
+         kind: Secret
+         namespace: default
+         name: thinkube-com-tls
+       register: wildcard_cert
+       failed_when: wildcard_cert.resources | length == 0
+
+     - name: Copy wildcard certificate to component namespace
+       kubernetes.core.k8s:
+         kubeconfig: "{{ kubeconfig }}"
+         state: present
+         definition:
+           apiVersion: v1
+           kind: Secret
+           metadata:
+             name: "{{ component_namespace }}-tls-secret"
+             namespace: "{{ component_namespace }}"
+           type: kubernetes.io/tls
+           data:
+             tls.crt: "{{ wildcard_cert.resources[0].data['tls.crt'] }}"
+             tls.key: "{{ wildcard_cert.resources[0].data['tls.key'] }}"
+     ```
+   - **NEVER** create TLS secrets from certificate files on disk
 
 5. **Module Name Compliance**
    - Use fully qualified collection names
@@ -161,6 +201,16 @@ Before considering a migration complete:
 5. **Verify Tests Pass**: Run test playbook
 6. **Create PR**: Link to issue, include test results
 7. **Merge to Main**: After review and approval
+
+**CRITICAL: Never Commit Without Testing**
+- **NEVER commit without successfully RUNNING 10_deploy.yaml and 18_test.yaml**
+- Syntax checking (--syntax-check) is NOT sufficient
+- All code MUST be deployed and tested in a real environment before commit
+- At minimum, execute with actual deployment and verify:
+  1. `10_deploy.yaml` - Successful real deployment (not just syntax check)
+  2. `18_test.yaml` - All tests pass in the live environment
+
+**IMPORTANT**: "Run" always means actual execution against the infrastructure, not syntax validation
 
 ### AI-Generated Content
 

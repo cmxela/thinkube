@@ -122,12 +122,21 @@ This helps maintain accurate progress tracking between development sessions and 
 
 ### Core Platform Services [Individual Component Branches]
 
-- [ ] **[CORE-004] Keycloak** ([Issue #16](https://github.com/cmxela/thinkube/issues/16))
-  - [ ] Create/switch to branch: `git checkout -b feature/keycloak`
-  - [ ] Implement requirement from GitHub issue #16
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Create PR to main branch
+- [x] **[CORE-004] Keycloak** ([Issue #16](https://github.com/cmxela/thinkube/issues/16)) ([PR #40](https://github.com/cmxela/thinkube/pull/40))
+  - [x] Create/switch to branch: `git checkout -b feature/keycloak`
+  - [x] Implement requirement from GitHub issue #16
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Create PR to main branch
+
+- [x] **[CORE-007] Harbor** ([Issue #19](https://github.com/cmxela/thinkube/issues/19)) ([PR #41](https://github.com/cmxela/thinkube/pull/41))
+  - [x] Create/switch to branch: `git checkout -b feature/harbor`
+  - [x] Implement requirement from GitHub issue #19
+  - [x] Verify all checklist items in the issue
+  - [x] Push changes to branch
+  - [x] Create PR to main branch
+
+### Pending Core Services [Next Components to Implement]
 
 - [ ] **[CORE-005] PostgreSQL** ([Issue #17](https://github.com/cmxela/thinkube/issues/17))
   - [ ] Create/switch to branch: `git checkout -b feature/postgresql`
@@ -135,17 +144,21 @@ This helps maintain accurate progress tracking between development sessions and 
   - [ ] Verify all checklist items in the issue
   - [ ] Push changes to branch
   - [ ] Create PR to main branch
+  
+**CRITICAL: Implementation Requirements**
+- Always use `microk8s_control_plane` (NOT `k8s-control-node` or `gato-p`)
+- Always use `microk8s_workers` (NOT `k8s-worker-nodes` or `gato-w1`)
+- See CLAUDE.md for detailed host group information
+- **NEVER commit without successfully RUNNING 10_deploy.yaml and 18_test.yaml**
+- Syntax checking is NOT sufficient - must deploy and test in real environment
+- "Run" always means actual execution against the infrastructure
+- For TLS certificates, ALWAYS copy the wildcard certificate from default namespace
+- The source certificate is `thinkube-com-tls` in the `default` namespace
+- Follow naming convention: `{{ component_namespace }}-tls-secret`
 
 - [ ] **[CORE-006] MinIO** ([Issue #18](https://github.com/cmxela/thinkube/issues/18))
   - [ ] Create/switch to branch: `git checkout -b feature/minio`
   - [ ] Implement requirement from GitHub issue #18
-  - [ ] Verify all checklist items in the issue
-  - [ ] Push changes to branch
-  - [ ] Create PR to main branch
-
-- [ ] **[CORE-007] Harbor** ([Issue #19](https://github.com/cmxela/thinkube/issues/19))
-  - [ ] Create/switch to branch: `git checkout -b feature/harbor`
-  - [ ] Implement requirement from GitHub issue #19
   - [ ] Verify all checklist items in the issue
   - [ ] Push changes to branch
   - [ ] Create PR to main branch

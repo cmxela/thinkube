@@ -297,7 +297,7 @@
             "user.attribute": "policy",
             "claim.name": "policy",
             "id.token.claim": "true",
-            "access.token.claim": "true",
+            "access.token.claim": "true", 
             "userinfo.token.claim": "true",
             "jsonType.label": "String",
             "multivalued": "true",
@@ -348,13 +348,18 @@
     ###################################################################
     - name: Get user
       ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username={{ admin_username }}"
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username={{ auth_realm_username }}"
         method: GET
         headers:
           Authorization: "Bearer {{ keycloak_token.json.access_token }}"
         validate_certs: "{{ keycloak_validate_certs }}"
         status_code: 200
       register: user_check
+      
+    - name: Verify user exists
+      ansible.builtin.fail:
+        msg: "SSO user '{{ auth_realm_username }}' not found in Keycloak. Please create the user first."
+      when: user_check.json | length == 0
       
     - name: Set required user attributes and policy claim
       ansible.builtin.uri:
@@ -370,12 +375,30 @@
                     'emailVerified': true,
                     'firstName': admin_first_name,
                     'lastName': admin_last_name,
-                    'email': admin_username + '@' + domain_name,
+                    'email': auth_realm_username + '@' + domain_name,
                     'attributes': {'policy': ['consoleAdmin']}
                   }, recursive=true) }}"
         validate_certs: "{{ keycloak_validate_certs }}"
         status_code: 204
       when: user_check.json | length > 0
+      
+    - name: Verify user attribute was set
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ user_check.json[0].id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: "{{ keycloak_validate_certs }}"
+        status_code: 200
+      register: updated_user
+      when: user_check.json | length > 0
+      
+    - name: Display user policy attribute status
+      ansible.builtin.debug:
+        msg: "User '{{ auth_realm_username }}' has policy attributes: {{ updated_user.json.attributes.policy | default(['none']) }}"
+      when: user_check.json | length > 0
+      
+    # No display task in original playbook
       
     ###################################################################
     # Final output
@@ -387,4 +410,4 @@
           - "Client => 'minio' => id={{ client_uuid }}"
           - "Scope => 'minio-authorization' => id={{ scope_uuid }}"
           - "Mapper => 'minio-policy-mapper' in that scope."
-          - "User => '{{ admin_username }}', policy=[ consoleAdmin ]"
+          - "User => '{{ auth_realm_username }}', policy=[ consoleAdmin ]"

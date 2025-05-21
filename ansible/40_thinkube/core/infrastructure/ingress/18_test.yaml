@@ -115,7 +115,9 @@
         -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].spec.template.spec.containers[0].args}'
       become: true
       register: primary_args
-      failed_when: "'--default-ssl-certificate={{ primary_namespace }}/{{ primary_namespace }}-tls-secret' not in primary_args.stdout"
+      vars:
+        cert_path_string: "--default-ssl-certificate={{ primary_namespace }}/{{ primary_namespace }}-tls-secret"
+      failed_when: cert_path_string not in primary_args.stdout
       tags:
         - test
         
@@ -125,7 +127,9 @@
         -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].spec.template.spec.containers[0].args}'
       become: true
       register: secondary_args
-      failed_when: "'--default-ssl-certificate={{ secondary_namespace }}/{{ secondary_namespace }}-tls-secret' not in secondary_args.stdout"
+      vars:
+        cert_path_string: "--default-ssl-certificate={{ secondary_namespace }}/{{ secondary_namespace }}-tls-secret"
+      failed_when: cert_path_string not in secondary_args.stdout
       tags:
         - test
 

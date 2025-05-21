@@ -27,7 +27,19 @@
         fallthrough
     }
 
-    # CRITICAL: Forward ALL {{ domain_name }} queries to ZeroTier BEFORE kubernetes plugin
+    # CRITICAL: Forward ACME challenge queries directly to public DNS
+    forward _acme-challenge.{{ domain_name }} 8.8.8.8 {
+        policy sequential
+        health_check 5s
+    }
+    
+    # CRITICAL: Forward ACME challenge queries for kn subdomain directly to public DNS
+    forward _acme-challenge.{{ kn_subdomain }}.{{ domain_name }} 8.8.8.8 {
+        policy sequential
+        health_check 5s
+    }
+    
+    # CRITICAL: Forward ALL other {{ domain_name }} queries to ZeroTier
     forward {{ domain_name }} {{ zerotier_dns_server }} {
         policy sequential
         health_check 5s

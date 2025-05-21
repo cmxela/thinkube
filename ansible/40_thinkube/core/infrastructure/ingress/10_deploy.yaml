@@ -46,7 +46,7 @@
 
   pre_tasks:
     - name: Add ingress-nginx Helm repository
-      ansible.builtin.command: "{{ helm_bin }} repo add ingress-nginx https://kubernetes.github.io/ingress-nginx"
+      ansible.builtin.command: "{{ helm_bin }} repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update"
       ignore_errors: yes
 
     - name: Update Helm repositories
@@ -196,6 +196,8 @@
         release_namespace: "{{ ingress_kn_namespace }}"
         create_namespace: false
         wait: true
+        force: true
+        update_repo_cache: true
         values:
           controller:
             electionID: "secondary-ingress-ingress-nginx-leader"
@@ -307,13 +309,13 @@
         - certificate
         
     - name: Apply primary ingress certificate
-      ansible.builtin.command: {{ kubectl_bin }} apply -f /tmp/certificate-ingress.yaml
+      ansible.builtin.command: "{{ kubectl_bin }} apply -f /tmp/certificate-ingress.yaml"
       register: cert_result_ingress
       tags:
         - certificate
         
     - name: Apply secondary ingress certificate
-      ansible.builtin.command: {{ kubectl_bin }} apply -f /tmp/certificate-ingress-kn.yaml
+      ansible.builtin.command: "{{ kubectl_bin }} apply -f /tmp/certificate-ingress-kn.yaml"
       register: cert_result_ingress_kn
       tags:
         - certificate

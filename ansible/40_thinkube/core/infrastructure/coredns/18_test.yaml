@@ -137,6 +137,46 @@
     - name: Display external FQDN resolution results
       ansible.builtin.debug:
         var: external_fqdn_test.results
+        
+    # Test ACME challenge domain resolution for cert-manager
+    - name: Test ACME challenge domain forwarding to external DNS (not ZeroTier)
+      ansible.builtin.command: >
+        {{ kubectl_bin }} exec dnsutils -- nslookup _acme-challenge.{{ domain_name }}
+      register: acme_challenge_test
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      
+    - name: Display ACME challenge resolution test results
+      ansible.builtin.debug:
+        var: acme_challenge_test.stdout_lines
+        
+    - name: Verify ACME challenge is NOT forwarded to ZeroTier
+      ansible.builtin.assert:
+        that: 
+          - "'192.168.191.' not in acme_challenge_test.stdout"
+        success_msg: "✅ ACME challenge DNS correctly forwarded to external DNS (not ZeroTier)"
+        fail_msg: "❌ ACME challenge DNS incorrectly forwarded to ZeroTier instead of external DNS"
+    
+    # Test ACME challenge for kn subdomain
+    - name: Test ACME challenge for kn subdomain domain forwarding to external DNS (not ZeroTier)
+      ansible.builtin.command: >
+        {{ kubectl_bin }} exec dnsutils -- nslookup _acme-challenge.{{ kn_subdomain }}.{{ domain_name }}
+      register: acme_challenge_kn_test
+      changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      
+    - name: Display kn subdomain ACME challenge resolution test results
+      ansible.builtin.debug:
+        var: acme_challenge_kn_test.stdout_lines
+        
+    - name: Verify kn subdomain ACME challenge is NOT forwarded to ZeroTier
+      ansible.builtin.assert:
+        that: 
+          - "'192.168.191.' not in acme_challenge_kn_test.stdout"
+        success_msg: "✅ kn subdomain ACME challenge DNS correctly forwarded to external DNS (not ZeroTier)"
+        fail_msg: "❌ kn subdomain ACME challenge DNS incorrectly forwarded to ZeroTier instead of external DNS"
 
     # Test domain forwarding to ZeroTier
     - name: Test domain forwarding to ZeroTier DNS
@@ -183,6 +223,38 @@
     - name: Display kn subdomain test results
       ansible.builtin.debug:
         var: kn_subdomain_test.stdout_lines
+        
+    # Test resolution of specific service domains that will be used by platform components
+    - name: Test common service domains resolution (wildcards)
+      ansible.builtin.command: >
+        {{ kubectl_bin }} run test-service-{{ item | replace('.', '-') }}-{{ 99999 | random }} --rm -i --restart=Never --image=busybox:latest -- 
+        sh -c "nslookup {{ item }}.{{ domain_name }}"
+      register: service_subdomain_test
+      changed_when: false
+      failed_when: service_subdomain_test.rc != 0 or "192.168.191.200" not in service_subdomain_test.stdout
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      with_items:
+        - "auth"
+        - "keycloak"
+        - "harbor"
+        - "registry"
+        - "postgres"
+        - "minio"
+        - "argocd"
+        - "workflows"
+        - "devpi"
+        - "awx"
+        - "docs"
+        - "dashboard"
+        
+    - name: Display service domains resolution results
+      ansible.builtin.debug:
+        msg: |
+          Service Domain Resolution:
+          {% for result in service_subdomain_test.results %}
+          - {{ result.item }}.{{ domain_name }}: {{ "SUCCESS - " + result.stdout.split('Address:')[-1].strip() if result.rc == 0 else "FAILED" }}
+          {% endfor %}
 
     # Check configmap
     - name: Retrieve CoreDNS ConfigMap
@@ -244,6 +316,58 @@
         that: item.rc == 0
         fail_msg: "DNS resolution failed on worker node {{ item.item }}"
       loop: "{{ worker_dns_test.results }}"
+      
+    # Check for conflicting DNS configurations
+    - name: Check for conflicting DNS configuration files
+      ansible.builtin.stat:
+        path: /etc/systemd/resolved.conf.d/dns.conf
+      register: conflicting_dns_file
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] }}"
+      
+    - name: Display warning for conflicting DNS configuration files
+      ansible.builtin.debug:
+        msg: |
+          ⚠️ WARNING: Conflicting DNS configuration file detected on node {{ item.item }}
+          
+          The file /etc/systemd/resolved.conf.d/dns.conf exists, which may override
+          the DNS routing configuration in 10-thinkube.conf.
+          
+          Run the following command to fix this issue:
+          ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/15_configure_node_dns.yaml
+      when: item.stat.exists | default(false)
+      loop: "{{ conflicting_dns_file.results }}"
+      
+    - name: Check DNS configuration precedence
+      ansible.builtin.shell: |
+        # Test specific domain resolution to verify wildcard DNS is working
+        nslookup auth.{{ domain_name }}
+      register: auth_domain_test
+      delegate_to: "{{ item }}"
+      changed_when: false
+      failed_when: false
+      loop: "{{ groups['microk8s'] }}"
+      
+    - name: Display auth domain resolution results
+      ansible.builtin.debug:
+        msg: |
+          Node: {{ item.item }}
+          auth.{{ domain_name }} resolution: {{ "SUCCESS" if "192.168.191.200" in item.stdout else "FAILED" }}
+          Result: {{ item.stdout | default('No output') }}
+      loop: "{{ auth_domain_test.results }}"
+      
+    - name: Warn about DNS precedence issues
+      ansible.builtin.debug:
+        msg: |
+          ⚠️ WARNING: DNS Precedence Issue Detected on node {{ item.item }}
+          
+          The wildcard DNS resolution is not working correctly for auth.{{ domain_name }}.
+          This may indicate a conflict in the systemd-resolved configuration.
+          
+          Run the following command to fix this issue:
+          ./scripts/run_ansible.sh ansible/40_thinkube/core/infrastructure/coredns/15_configure_node_dns.yaml
+      when: "item.rc != 0 or '192.168.191.200' not in item.stdout"
+      loop: "{{ auth_domain_test.results }}"
 
     # Verify final configuration
     - name: Verify CoreDNS configuration is successful
@@ -252,6 +376,8 @@
           - k8s_service_test.rc == 0
           - zerotier_dns_test.rc == 0
           - not knative_installed | bool or kn_dns_test.rc == 0
+          - "'192.168.191.' not in acme_challenge_test.stdout"  # ACME challenge must use external DNS
+          - "'192.168.191.' not in acme_challenge_kn_test.stdout"  # kn subdomain ACME challenge must use external DNS
         fail_msg: >
           CoreDNS configuration validation failed:
           - Internal DNS: {{ "✓" if k8s_service_test.rc == 0 else "✗" }}
@@ -259,6 +385,8 @@
           {% if knative_installed | bool %}
           - Knative DNS: {{ "✓" if kn_dns_test.rc == 0 else "✗" }}
           {% endif %}
+          - ACME challenge DNS: {{ "✓" if "192.168.191." not in acme_challenge_test.stdout else "✗" }}
+          - kn subdomain ACME challenge DNS: {{ "✓" if "192.168.191." not in acme_challenge_kn_test.stdout else "✗" }}
           
           Please check the logs for more details.
         success_msg: "All CoreDNS tests passed successfully."
@@ -350,6 +478,19 @@
           
           {% if fqdn_resolution_works %}
           ✅ FQDN RESOLUTION: Works correctly with trailing dot (.)
+          {% endif %}
+          
+          CERTIFICATE MANAGER DNS ROUTING:
+          {% if acme_challenge_test is defined and "192.168.191." not in acme_challenge_test.stdout %}
+          ✅ ACME Challenge DNS: _acme-challenge.{{ domain_name }} correctly routed to external DNS (not ZeroTier)
+          {% elif acme_challenge_test is defined %}
+          ❌ ACME Challenge DNS: _acme-challenge.{{ domain_name }} incorrectly routed to ZeroTier
+          {% endif %}
+          
+          {% if acme_challenge_kn_test is defined and "192.168.191." not in acme_challenge_kn_test.stdout %}
+          ✅ KN ACME Challenge DNS: _acme-challenge.{{ kn_subdomain }}.{{ domain_name }} correctly routed to external DNS (not ZeroTier)
+          {% elif acme_challenge_kn_test is defined %}
+          ❌ KN ACME Challenge DNS: _acme-challenge.{{ kn_subdomain }}.{{ domain_name }} incorrectly routed to ZeroTier
           {% endif %}
           
           ZEROTIER DOMAIN RESOLUTION:

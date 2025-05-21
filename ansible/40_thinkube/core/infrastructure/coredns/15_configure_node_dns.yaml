@@ -35,6 +35,13 @@
         owner: root
         group: root
         
+    # Remove any conflicting DNS configuration files first
+    - name: Remove conflicting DNS configuration files
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d/dns.conf
+        state: absent
+      notify: restart systemd-resolved
+      
     # Configure MicroK8s nodes
     - name: Configure systemd-resolved for MicroK8s nodes
       ansible.builtin.copy:
@@ -47,6 +54,11 @@
           DNS={{ zerotier_dns_server }}
           # Only include cluster.local to prevent search domain issues with external domains
           Domains=~cluster.local
+          # Include explicit domain for *.thinkube.com resolution
+          Domains=~{{ domain_name }}
+          # Forward ACME challenges directly to public DNS
+          Domains=~_acme-challenge.{{ domain_name }}
+          Domains=~_acme-challenge.kn.{{ domain_name }}
           # Fallback DNS for everything else
           FallbackDNS=8.8.8.8 8.8.4.4
           DNSStubListener=yes
@@ -58,6 +70,13 @@
       notify: restart systemd-resolved
         
     # Configure LXD containers (non-MicroK8s)
+    - name: Remove conflicting DNS configuration for LXD containers
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d/dns.conf
+        state: absent
+      when: "'lxd_containers' in group_names and inventory_hostname not in groups['microk8s']"
+      notify: restart systemd-resolved
+      
     - name: Configure systemd-resolved for LXD containers
       ansible.builtin.copy:
         content: |
@@ -78,6 +97,13 @@
       notify: restart systemd-resolved
       
     # Configure physical nodes (non-MicroK8s) 
+    - name: Remove conflicting DNS configuration for physical nodes
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d/dns.conf
+        state: absent
+      when: "'baremetal' in group_names and inventory_hostname not in groups['microk8s']"
+      notify: restart systemd-resolved
+      
     - name: Configure systemd-resolved for physical nodes
       ansible.builtin.copy:
         content: |

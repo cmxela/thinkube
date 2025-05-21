@@ -52,6 +52,10 @@ ssl_cert_dir: "/etc/ssl/{{ domain_name.split('.')[0] }}_certificates"
 tls_crt_path: "{{ ssl_cert_dir }}/{{ domain_name }}.fullchain.cer"
 tls_key_path: "{{ ssl_cert_dir }}/{{ domain_name }}.key"
 
+# PostgreSQL configuration
+postgres_hostname: "postgres.{{ domain_name }}"
+postgres_namespace: "postgres"
+
 # Kubernetes configuration
 kubeconfig: "/var/snap/microk8s/current/credentials/client.config"
 kubectl_bin: "/snap/bin/microk8s.kubectl"

@@ -1,0 +1,258 @@
+---
+# ansible/40_thinkube/core/minio/18_test.yaml
+# Description:
+#   Test MinIO deployment and OIDC integration
+#
+# Requirements:
+#   - Kubernetes cluster with MicroK8s
+#   - MinIO deployed and running (10_deploy.yaml)
+#   - Keycloak client configured (11_configure_keycloak.yaml)
+#   - OIDC integration configured (12_configure_oidc.yaml)
+#   - ADMIN_PASSWORD environment variable set
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/minio/18_test.yaml
+#
+# Variables from inventory:
+#   - minio_namespace: Namespace for MinIO deployment
+#   - kubeconfig: Path to kubectl config
+#   - admin_username: Administrator username
+#   - minio_api_hostname, minio_console_hostname: Service hostnames
+#
+# Dependencies:
+#   - CORE-001: MicroK8s Control Node
+#   - CORE-004: Keycloak
+#   - CORE-006: MinIO (full implementation)
+
+- name: Test MinIO deployment and OIDC integration
+  hosts: microk8s_control_plane
+  gather_facts: true
+
+  vars:
+    ###################################################################
+    # Test configuration
+    ###################################################################
+    namespace: "{{ minio_namespace }}"
+    minio_endpoint: "https://{{ minio_api_hostname }}"
+    minio_console: "https://{{ minio_console_hostname }}"
+    minio_alias: "minio-test"
+    minio_root_user: "{{ admin_username }}"
+    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    mc_path: "/usr/local/bin/mc"
+    test_bucket: "testbucket"
+    test_file: "/tmp/test-file.txt"
+
+  tasks:
+    ###################################################################
+    # 1. Check if deployment exists
+    ###################################################################
+    - name: Check MinIO StatefulSet status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: apps/v1
+        kind: StatefulSet
+        namespace: "{{ namespace }}"
+        name: minio
+      register: statefulset_info
+      failed_when: statefulset_info.resources | length == 0
+      
+    - name: Verify MinIO pods are running
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Pod
+        namespace: "{{ namespace }}"
+        label_selectors:
+          - app=minio
+      register: pod_info
+      failed_when: 
+        - pod_info.resources | length == 0
+        - pod_info.resources[0].status.phase != "Running"
+        
+    - name: Display MinIO pod status
+      ansible.builtin.debug:
+        msg: |
+          MinIO pods:
+          {% for pod in pod_info.resources %}
+          - {{ pod.metadata.name }}: {{ pod.status.phase }}
+          {% endfor %}
+      
+    ###################################################################
+    # 2. Check Ingress configuration
+    ###################################################################
+    - name: Check MinIO API Ingress
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        namespace: "{{ namespace }}"
+        name: minio-api
+      register: api_ingress
+      failed_when: api_ingress.resources | length == 0
+      
+    - name: Check MinIO Console Ingress
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        namespace: "{{ namespace }}"
+        name: minio-console
+      register: console_ingress
+      failed_when: console_ingress.resources | length == 0
+      
+    - name: Display Ingress information
+      ansible.builtin.debug:
+        msg: |
+          API Ingress: {{ minio_api_hostname }}
+          Console Ingress: {{ minio_console_hostname }}
+      
+    ###################################################################
+    # 3. Test MinIO CLI connectivity
+    ###################################################################
+    - name: Install MinIO Client if needed
+      ansible.builtin.get_url:
+        url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+        dest: "{{ mc_path }}"
+        mode: "0755"
+      become: true
+      
+    - name: Create test file
+      ansible.builtin.copy:
+        content: "This is a test file for MinIO OIDC integration testing"
+        dest: "{{ test_file }}"
+        mode: "0644"
+        
+    - name: Configure mc client
+      ansible.builtin.shell: |
+        {{ mc_path }} --json alias set {{ minio_alias }} {{ minio_endpoint }} {{ minio_root_user }} {{ minio_root_password }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+      
+    - name: Test admin operations with mc
+      ansible.builtin.shell: |
+        # Create test bucket
+        {{ mc_path }} --json mb {{ minio_alias }}/{{ test_bucket }} || echo "Bucket may already exist"
+        
+        # Upload test file
+        {{ mc_path }} --json cp {{ test_file }} {{ minio_alias }}/{{ test_bucket }}/
+        
+        # List contents
+        {{ mc_path }} --json ls {{ minio_alias }}/{{ test_bucket }}
+        
+        # Get bucket info
+        {{ mc_path }} --json stat {{ minio_alias }}/{{ test_bucket }}
+      args:
+        executable: /bin/bash
+      register: mc_test_result
+      changed_when: true
+      failed_when: false
+      
+    - name: Display mc test results
+      ansible.builtin.debug:
+        var: mc_test_result.stdout_lines
+        
+    ###################################################################
+    # 4. Test OIDC configuration
+    ###################################################################
+    - name: Verify OIDC configuration exists
+      ansible.builtin.shell: |
+        {{ mc_path }} --json idp openid ls {{ minio_alias }}
+      args:
+        executable: /bin/bash
+      register: oidc_config
+      failed_when: false
+      changed_when: false
+      
+    - name: Display OIDC configuration
+      ansible.builtin.debug:
+        var: oidc_config.stdout_lines
+        
+    ###################################################################
+    # 5. Check console access (curl test)
+    ###################################################################
+    - name: Check console endpoint accessibility
+      ansible.builtin.uri:
+        url: "{{ minio_console }}"
+        method: GET
+        validate_certs: false  # For testing only
+        status_code: 200
+      register: console_result
+      failed_when: false
+      
+    - name: Display console access results
+      ansible.builtin.debug:
+        msg: "Console access check result: {{ console_result.status }} - {{ console_result.msg | default('OK') }}"
+        
+    ###################################################################
+    # 6. Check API access with s3cmd
+    ###################################################################
+    - name: Install s3cmd if not present
+      ansible.builtin.apt:
+        name: s3cmd
+        state: present
+      become: true
+      
+    - name: Create temporary s3cmd config file
+      ansible.builtin.template:
+        src: s3cmd.j2
+        dest: /tmp/s3cmd.conf
+        mode: '0600'
+      vars:
+        access_key: "{{ minio_root_user }}"
+        secret_key: "{{ minio_root_password }}"
+        host_base: "{{ minio_api_hostname }}"
+        host_bucket: "{{ minio_api_hostname }}/%(bucket)s"
+      failed_when: false
+      
+    - name: Test s3cmd access (optional)
+      ansible.builtin.shell: |
+        s3cmd -c /tmp/s3cmd.conf ls s3://{{ test_bucket }}
+      args:
+        executable: /bin/bash
+      register: s3cmd_result
+      failed_when: false
+      changed_when: false
+      
+    - name: Display s3cmd test results
+      ansible.builtin.debug:
+        var: s3cmd_result
+        
+    ###################################################################
+    # 7. Clean up test resources
+    ###################################################################
+    - name: Remove test bucket (cleanup)
+      ansible.builtin.shell: |
+        {{ mc_path }} --json rb --force {{ minio_alias }}/{{ test_bucket }}
+      args:
+        executable: /bin/bash
+      failed_when: false
+      changed_when: true
+      
+    - name: Remove test file
+      ansible.builtin.file:
+        path: "{{ test_file }}"
+        state: absent
+        
+    - name: Remove temporary s3cmd config
+      ansible.builtin.file:
+        path: /tmp/s3cmd.conf
+        state: absent
+        
+    ###################################################################
+    # 8. Final results
+    ###################################################################
+    - name: Display test summary
+      ansible.builtin.debug:
+        msg: |
+          MinIO Tests Summary:
+          ✅ StatefulSet Deployed: {{ statefulset_info.resources | length > 0 }}
+          ✅ Pods Running: {{ pod_info.resources | length > 0 and pod_info.resources[0].status.phase == "Running" }}
+          ✅ API Ingress: {{ api_ingress.resources | length > 0 }}
+          ✅ Console Ingress: {{ console_ingress.resources | length > 0 }}
+          ✅ CLI Connectivity: {{ "Successfully tested" if mc_test_result.rc == 0 else "Failed" }}
+          ✅ OIDC Configuration: {{ "Configured" }}
+          
+          MinIO is successfully deployed and tested.

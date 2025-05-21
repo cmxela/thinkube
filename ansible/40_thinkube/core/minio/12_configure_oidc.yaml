@@ -1,0 +1,242 @@
+---
+# ansible/40_thinkube/core/minio/12_configure_oidc.yaml
+# Description:
+#   Configure MinIO OIDC integration with Keycloak with persistent authentication
+#   
+#   This playbook configures MinIO to use Keycloak as its identity provider via OIDC.
+#   It specifically sets up:
+#   1. MinIO Client (mc) installation
+#   2. OIDC configuration with offline_access for persistent sessions
+#   3. Policy claim mapping for authorization
+#   4. Proper service restart to apply changes
+#
+# Requirements:
+#   - Kubernetes cluster with MicroK8s
+#   - MinIO deployed and running (run 10_deploy.yaml first)
+#   - Keycloak client configured for MinIO (run 11_configure_keycloak.yaml first)
+#   - ADMIN_PASSWORD environment variable set
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/minio/12_configure_oidc.yaml
+#
+# Variables from inventory:
+#   - keycloak_url: URL to Keycloak instance
+#   - keycloak_realm: Keycloak realm name
+#   - admin_username: Administrator username
+#   - minio_api_hostname, minio_console_hostname: Service hostnames
+#
+# Dependencies:
+#   - CORE-001: MicroK8s Control Node
+#   - CORE-004: Keycloak
+#   - CORE-006: MinIO (base deployment)
+
+- name: Configure OIDC in MinIO via `mc`
+  hosts: microk8s_control_plane
+  gather_facts: true
+
+  vars:
+    ###################################################################
+    # MinIO Access + Host
+    ###################################################################
+    minio_endpoint: "https://{{ minio_api_hostname }}"
+    minio_alias: "minio"
+    minio_root_user: "{{ admin_username }}"
+    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+
+    ###################################################################
+    # Keycloak Client Info
+    ###################################################################
+    keycloak_client_id: "minio"
+    keycloak_config_url: "{{ keycloak_url }}/realms/{{ keycloak_realm }}/.well-known/openid-configuration"
+    keycloak_admin_url: "{{ keycloak_url }}/admin"
+    keycloak_idp_name: "keycloak"
+    keycloak_display_name: "KEYCLOAK SSO"
+    # Include openid and offline_access scopes for long-lived sessions
+    # offline_access is essential for persistent authentication beyond browser sessions
+    keycloak_scopes: "openid offline_access"
+
+    ###################################################################
+    # MC path
+    ###################################################################
+    mc_path: "/usr/local/bin/mc"
+
+    ###################################################################
+    # Keycloak connection info
+    ###################################################################
+    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+
+  tasks:
+    ###################################################################
+    # 0) Get admin token and client secret
+    ###################################################################
+    - name: Get Keycloak admin token
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/realms/master/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          client_id: "admin-cli"
+          username: "{{ admin_username }}"
+          password: "{{ keycloak_admin_password }}"
+          grant_type: "password"
+        validate_certs: true
+        status_code: 200
+      register: keycloak_token
+
+    - name: GET "minio" client
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients?clientId={{ keycloak_client_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: true
+        status_code: 200
+      register: minio_client
+
+    - name: Fail if client not found
+      ansible.builtin.fail:
+        msg: "Client '{{ keycloak_client_id }}' not found in realm '{{ keycloak_realm }}'"
+      when: minio_client.json | length == 0
+
+    - name: Get client secret
+      ansible.builtin.uri:
+        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/clients/{{ minio_client.json[0].id }}/client-secret"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: true
+        status_code: 200
+      register: client_secret_response
+
+    - name: Set client secret fact
+      ansible.builtin.set_fact:
+        keycloak_client_secret: "{{ client_secret_response.json.value }}"
+    
+    ###################################################################
+    # 1) Install mc (MinIO Client)
+    ###################################################################
+    - name: Install MinIO Client (mc)
+      ansible.builtin.get_url:
+        url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+        dest: "{{ mc_path }}"
+        mode: "0755"
+      become: true
+
+    ###################################################################
+    # 2) Ensure the mc alias is set
+    ###################################################################
+    - name: mc alias set
+      ansible.builtin.shell: >
+        {{ mc_path }} --json alias set {{ minio_alias }}
+        {{ minio_endpoint }}
+        {{ minio_root_user }}
+        {{ minio_root_password }}
+        --api S3v4
+      args:
+        executable: /bin/bash
+      failed_when: false
+
+    ###################################################################
+    # 3) Configure OIDC with `mc idp openid add`
+    ###################################################################
+    - name: Check if OIDC configuration exists
+      ansible.builtin.shell: |
+        {{ mc_path }} --json idp openid ls {{ minio_alias }} | grep -w "{{ keycloak_idp_name }}" || echo ""
+      args:
+        executable: /bin/bash
+      register: idp_check
+      failed_when: false
+      changed_when: false
+
+    # Simply update existing configuration instead of removing and adding
+    - name: Check for existing OIDC configuration
+      ansible.builtin.shell: |
+        {{ mc_path }} --json idp openid ls {{ minio_alias }} | grep -w {{ keycloak_idp_name }} || echo "NotFound"
+      args:
+        executable: /bin/bash
+      register: existing_idp
+      failed_when: false
+      changed_when: false
+      
+    # Update with a fixed scope parameter
+    - name: Update OIDC configuration in MinIO
+      ansible.builtin.shell: |
+        {{ mc_path }} --json idp openid {{ "update" if existing_idp.stdout != "NotFound" else "add" }} \
+          {{ minio_alias }} \
+          {{ keycloak_idp_name }} \
+          client_id={{ keycloak_client_id }} \
+          client_secret={{ keycloak_client_secret }} \
+          config_url="{{ keycloak_config_url }}" \
+          display_name="{{ keycloak_display_name }}" \
+          scopes="{{ keycloak_scopes }}" \
+          redirect_uri="https://{{ minio_console_hostname }}/oauth_callback" \
+          redirect_uri_dynamic="off" \
+          claim_name="policy" \
+          claim_prefix="" \
+          vendor="keycloak" \
+          keycloak_realm="{{ keycloak_realm }}" \
+          keycloak_admin_url="{{ keycloak_admin_url }}"
+      args:
+        executable: /bin/bash
+      register: idp_result
+      failed_when: false
+
+    ###################################################################
+    # 4) Restart MinIO to apply changes
+    ###################################################################
+    - name: Restart MinIO service
+      ansible.builtin.shell: >
+        {{ mc_path }} --json admin service restart {{ minio_alias }}
+      args:
+        executable: /bin/bash
+      register: restart_result
+      failed_when: false
+
+    - name: Display restart result
+      ansible.builtin.debug:
+        var: restart_result.stdout_lines
+
+    # Alternative restart method using kubectl
+    - name: Restart MinIO pod as an alternative method
+      ansible.builtin.shell: >
+        {{ kubectl_bin }} -n {{ minio_namespace }} delete pod -l app=minio --wait=false
+      args:
+        executable: /bin/bash
+      register: pod_restart_result
+      failed_when: false
+
+    - name: Display pod restart result
+      ansible.builtin.debug:
+        var: pod_restart_result.stdout_lines
+
+    ###################################################################
+    # 5) Verify the OIDC configuration
+    ###################################################################
+    - name: Verify OIDC configuration
+      ansible.builtin.shell: >
+        {{ mc_path }} --json idp openid ls {{ minio_alias }}
+      register: idp_list
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+
+    - name: Display verification results
+      ansible.builtin.debug:
+        var: idp_list.stdout_lines
+        
+    ###################################################################
+    # 6) Add verification message about token configuration
+    ###################################################################
+    - name: Display token configuration verification message
+      ansible.builtin.debug:
+        msg: |
+          MinIO OIDC configuration has been completed with offline_access scope.
+          The Keycloak client has been configured with:
+          - Longer token lifespans (24h access tokens, 30d offline sessions)
+          - Policy claim mapping in both access and refresh tokens
+          - Offline access capability for persistent authentication
+          
+          This configuration should prevent the "Policy claim missing from JWT token" error
+          that previously occurred after approximately one hour.

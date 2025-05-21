@@ -15,13 +15,8 @@
   hosts: microk8s_control_plane
   gather_facts: true
   vars:
-    microk8s_bin: "/snap/bin/microk8s"
-    helm_bin: "{{ microk8s_bin }} helm3"
-    kubectl_bin: "{{ microk8s_bin }} kubectl"
     primary_release: "primary-ingress"
     secondary_release: "secondary-ingress"
-    ingress_namespace: "{{ ingress_namespace | default('ingress') }}"
-    ingress_kn_namespace: "{{ ingress_kn_namespace | default('ingress-kn') }}"
 
   tasks:
     - name: Uninstall primary ingress controller
@@ -84,12 +79,7 @@
       tags:
         - rollback
 
-    - name: Re-enable MicroK8s built-in ingress addon (optional)
-      ansible.builtin.command: "{{ microk8s_bin }} enable ingress"
-      become: true
-      when: enable_builtin_ingress | default(false)
-      tags:
-        - rollback
+    # We don't re-enable the built-in ingress as we are using our custom ingress controllers
 
     - name: Display rollback summary
       ansible.builtin.debug:
@@ -105,11 +95,7 @@
           - "  ✓ Namespaces ({{ ingress_namespace }}, {{ ingress_kn_namespace }})"
           - "  ✓ Helm repository (ingress-nginx)"
           - ""
-          - "{% if enable_builtin_ingress | default(false) %}"
-          - "Built-in ingress addon: Re-enabled"
-          - "{% else %}"
-          - "Built-in ingress addon: Not re-enabled"
-          - "{% endif %}"
+          - "Built-in ingress addon: {{ 'Re-enabled' if enable_builtin_ingress | default(false) else 'Not re-enabled' }}"
           - ""
           - "==========================================="
       tags:

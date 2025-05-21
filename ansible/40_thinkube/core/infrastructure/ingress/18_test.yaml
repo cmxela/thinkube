@@ -108,6 +108,26 @@
       failed_when: secondary_class_check.rc != 0
       tags:
         - test
+        
+    - name: Test - Primary ingress controller has default SSL certificate configured
+      ansible.builtin.command: >
+        microk8s kubectl get deployment -n {{ primary_namespace }} 
+        -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].spec.template.spec.containers[0].args}'
+      become: true
+      register: primary_args
+      failed_when: "'--default-ssl-certificate={{ primary_namespace }}/{{ primary_namespace }}-tls-secret' not in primary_args.stdout"
+      tags:
+        - test
+        
+    - name: Test - Secondary ingress controller has default SSL certificate configured
+      ansible.builtin.command: >
+        microk8s kubectl get deployment -n {{ secondary_namespace }} 
+        -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[0].spec.template.spec.containers[0].args}'
+      become: true
+      register: secondary_args
+      failed_when: "'--default-ssl-certificate={{ secondary_namespace }}/{{ secondary_namespace }}-tls-secret' not in secondary_args.stdout"
+      tags:
+        - test
 
     - name: Test - Primary ingress controller is responding to health checks
       ansible.builtin.uri:
@@ -139,6 +159,7 @@
           - "  ✓ Pods running"
           - "  ✓ Service IP: {{ primary_ip }}"
           - "  ✓ IngressClass: {{ primary_class }} (default)"
+          - "  ✓ Default SSL certificate: {{ primary_namespace }}/{{ primary_namespace }}-tls-secret"
           - "  ✓ Health check passed"
           - ""
           - "Secondary Ingress Controller ({{ secondary_namespace }}):"
@@ -146,6 +167,7 @@
           - "  ✓ Pods running"
           - "  ✓ Service IP: {{ secondary_ip }}"
           - "  ✓ IngressClass: {{ secondary_class }}"
+          - "  ✓ Default SSL certificate: {{ secondary_namespace }}/{{ secondary_namespace }}-tls-secret"
           - "  ✓ Health check passed"
           - ""
           - "MetalLB: Enabled and configured"

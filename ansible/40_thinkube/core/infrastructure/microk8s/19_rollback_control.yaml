@@ -42,13 +42,20 @@
       changed_when: true
       failed_when: false
 
-    - name: Remove user from microk8s group
+    - name: Get current groups for user
+      ansible.builtin.command: "id -nG {{ user }}"
+      register: current_groups
+      changed_when: false
+      become: true
+
+    - name: Remove microk8s from user groups
       ansible.builtin.user:
         name: "{{ user }}"
-        groups: microk8s
+        groups: "{{ (current_groups.stdout.split() | reject('equalto', 'microk8s')) | join(',') }}"
         append: false
         state: present
       become: true
+      when: "'microk8s' in current_groups.stdout"
       failed_when: false
 
     - name: Remove MicroK8s snap

@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles for thinkube installer */
+@layer base {
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-alata;
+  }
+  
+  body {
+    @apply font-roboto-slab;
+  }
+  
+  code, pre {
+    @apply font-mono;
+  }
+}
+
+/* Custom animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Custom scrollbar for logs */
+.log-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.log-container::-webkit-scrollbar-track {
+  @apply bg-base-200;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+  @apply bg-base-300 rounded;
+}
+
+.log-container::-webkit-scrollbar-thumb:hover {
+  @apply bg-primary;
+}

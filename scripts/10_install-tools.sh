@@ -1,16 +1,34 @@
 #!/bin/sh
 # install-tools.sh - Install Ansible and configure shell environments
 
+set -e  # Exit on error
+
 echo "Installing Ansible and configuring shell environments..."
+echo "[INSTALLER_STATUS] PROGRESS:0"
+echo "[INSTALLER_STATUS] Starting thinkube tools installation"
+
+# Check if SUDO_ASKPASS is set and use it
+if [ -n "$SUDO_ASKPASS" ]; then
+    export SUDO_FLAGS="-A"
+else
+    export SUDO_FLAGS=""
+fi
 
 # Install dependencies
-sudo apt-get update
-sudo apt-get install -y python3-venv python3-full curl gnupg apt-transport-https ca-certificates software-properties-common git sshpass expect
+echo "[INSTALLER_STATUS] PROGRESS:10"
+echo "[INSTALLER_STATUS] Updating package lists..."
+sudo $SUDO_FLAGS apt-get update || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to update package lists"; exit 1; }
+
+echo "[INSTALLER_STATUS] PROGRESS:20"
+echo "[INSTALLER_STATUS] Installing Python and system dependencies..."
+sudo $SUDO_FLAGS apt-get install -y python3-venv python3-full curl gnupg apt-transport-https ca-certificates software-properties-common git sshpass expect || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to install dependencies"; exit 1; }
 
 # Install micro editor
+echo "[INSTALLER_STATUS] PROGRESS:30"
+echo "[INSTALLER_STATUS] Installing micro editor..."
 if ! command -v micro >/dev/null 2>&1; then
     echo "Installing micro editor..."
-    sudo apt-get install -y micro
+    sudo $SUDO_FLAGS apt-get install -y micro || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to install micro editor"; exit 1; }
     echo "micro editor installed successfully"
 else
     echo "micro editor is already installed"
@@ -20,37 +38,50 @@ fi
 EDITOR_MARKER="# Editor configuration"
 
 # Install Zsh if not already installed
+echo "[INSTALLER_STATUS] PROGRESS:40"
+echo "[INSTALLER_STATUS] Installing shell environments..."
 if ! command -v zsh >/dev/null 2>&1; then
     echo "Installing Zsh..."
-    sudo apt-get install -y zsh
+    sudo $SUDO_FLAGS apt-get install -y zsh || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to install Zsh"; exit 1; }
 fi
 
 # Install Fish if not already installed
+echo "[INSTALLER_STATUS] PROGRESS:50"
 if ! command -v fish >/dev/null 2>&1; then
     echo "Installing Fish..."
-    sudo apt-get install -y fish
+    sudo $SUDO_FLAGS apt-get install -y fish || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to install Fish"; exit 1; }
 fi
 
 # Set up Python virtual environment
 VENV_DIR="$HOME/.venv"
+echo "[INSTALLER_STATUS] PROGRESS:60"
+echo "[INSTALLER_STATUS] Creating Python virtual environment..."
 echo "Creating Python virtual environment at $VENV_DIR..."
 
 # Create the virtual environment if it doesn't exist
 if [ ! -d "$VENV_DIR" ]; then
-    python3 -m venv "$VENV_DIR"
+    python3 -m venv "$VENV_DIR" || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to create virtual environment"; exit 1; }
 fi
 
 # Activate the environment for the current session
-. "$VENV_DIR/bin/activate"
+. "$VENV_DIR/bin/activate" || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to activate virtual environment"; exit 1; }
 
 # Install Ansible in the virtual environment
+echo "[INSTALLER_STATUS] PROGRESS:70"
+echo "[INSTALLER_STATUS] Upgrading pip..."
 echo "Installing Ansible in the virtual environment..."
-pip install --upgrade pip
-pip install ansible ansible-lint
+pip install --upgrade pip || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to upgrade pip"; exit 1; }
+
+echo "[INSTALLER_STATUS] PROGRESS:80"
+echo "[INSTALLER_STATUS] Installing Ansible..."
+pip install ansible ansible-lint || { echo "[INSTALLER_STATUS] COMPLETED:FAILED"; echo "[INSTALLER_STATUS] Failed to install Ansible"; exit 1; }
 
 # Create a unique marker that includes the venv path to check for existing configuration
 VENV_MARKER="# Ansible venv auto-activation for: ${VENV_DIR}"
 ENV_MARKER="# .env auto-loading configuration"
+
+echo "[INSTALLER_STATUS] PROGRESS:90"
+echo "[INSTALLER_STATUS] Configuring shell environments..."
 
 # Set up automatic activation in Bash and .env loading
 if [ -f "$HOME/.bashrc" ]; then
@@ -276,3 +307,11 @@ echo ""
 echo "IMPORTANT: You'll need to restart your shell sessions or source"
 echo "your shell configuration files for the changes to take effect."
 echo "============================================================"
+
+# Add clear completion markers for the installer
+echo "[INSTALLER_STATUS] PROGRESS:100"
+echo "[INSTALLER_STATUS] COMPLETED:SUCCESS"
+echo "[INSTALLER_STATUS] Thinkube tools installation finished successfully"
+
+# Exit with success code
+exit 0

@@ -164,4 +164,26 @@ The main workflow is documented in `/installer/WORKFLOW_PLAN.md` which provides 
 
 ---
 
-Safe travels to Barcelona! The installer is ready for testing and further development.
+## CRITICAL: Ansible Playbook Integration Not Complete
+
+**IMPORTANT**: The installer UI and workflow are complete, but the actual ansible playbook integration is NOT implemented. The deployment will not actually work until the playbooks are properly integrated.
+
+### What IS Complete:
+- Full UI workflow with all screens
+- Backend API structure and endpoints  
+- WebSocket for progress tracking
+- SSH verification logic
+- Hardware detection logic
+- Test mode for development
+
+### What is NOT Complete:
+- Actual ansible playbook execution
+- Real deployment functionality
+- Progress tracking from ansible output
+- Error handling from playbook failures
+- Rollback mechanisms
+
+### Next Critical Step:
+The `backend/main.py` needs to be updated to actually call the ansible playbooks using subprocess or ansible-runner. Currently, the deploy endpoint only simulates progress.
+
+Safe travels to Barcelona! The installer UI is ready but needs ansible integration to function.

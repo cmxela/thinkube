@@ -4,7 +4,7 @@
 
 Setting up Thinkube involves these key steps:
 
-1. **Initial Setup**: Install tools and clone the repository
+1. **Initial Setup**: Configure GitHub and clone the repository
 2. **Network Configuration**: Set up fixed IP addresses on servers
 3. **SSH Configuration**: Establish passwordless SSH access between servers
 4. **Deployment**: Run the Ansible playbooks to deploy services
@@ -24,7 +24,7 @@ Note: All scripts will automatically install necessary packages if they are not 
 
 ## Initial Setup
 
-### GitHub Setup and Tools Installation
+### GitHub Setup and Repository Cloning
 
 Generate a GitHub Personal Access Token with these permissions:
 - `repo` (Full control of private repositories)
@@ -152,23 +152,7 @@ if [ ! -d "$REPO_DIR" ]; then
   # Check if the clone was successful
   if [ $? -eq 0 ]; then
     echo "Repository cloned to $REPO_DIR"
-    
-    # Run the tools installation script if it exists
-    if [ -f "$REPO_DIR/scripts/10_install-tools.sh" ]; then
-      echo "Installing Ansible and other required tools..."
-      cd "$REPO_DIR"
-      bash ./scripts/10_install-tools.sh
-      
-      # Activate the Python virtual environment if it exists
-      if [ -f "$HOME/.venv/bin/activate" ]; then
-        source "$HOME/.venv/bin/activate"
-        echo "Python virtual environment activated with Ansible $(ansible --version | head -n1)"
-      else
-        echo "Python virtual environment not found at $HOME/.venv/bin/activate"
-      fi
-    else
-      echo "Tools installation script not found at $REPO_DIR/scripts/10_install-tools.sh"
-    fi
+    echo "To install tools, run: cd $REPO_DIR && ./scripts/10_install-tools.sh"
   else
     echo "Failed to clone repository. Please check your access rights."
     echo "You can try to manually clone it later with: git clone git@${REPO_URL}.git $REPO_DIR"
@@ -193,6 +177,8 @@ else
 fi
 
 echo "Initial setup complete!"
+echo "Repository cloned to $REPO_DIR"
+echo "To install tools, run: cd $REPO_DIR && ./scripts/10_install-tools.sh"
 echo "Next, configure network settings on all servers."
 EOFSCRIPT
 

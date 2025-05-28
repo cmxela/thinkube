@@ -4,11 +4,10 @@ Documentation=https://github.com/thinkube/thinkube
 DefaultDependencies=no
 After=local-fs.target
 After=systemd-modules-load.service
-After=sound.target
+Before=sound.target
 Before=display-manager.service
 Before=graphical.target
-# Run after the sound subsystem is initialized so we can properly handle audio devices
-Conflicts=sound.target
+# Run before the sound subsystem to claim audio devices first
 
 [Service]
 Type=oneshot

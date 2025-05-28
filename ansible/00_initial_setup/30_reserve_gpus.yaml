@@ -30,6 +30,15 @@
     host_gpu_index: 0     # If multiple of same type, which one to keep (0-based)
     
   tasks:
+    - name: Check if GPU passthrough should be configured
+      ansible.builtin.debug:
+        msg: "Skipping GPU passthrough configuration for {{ inventory_hostname }} - configure_gpu_passthrough is not true"
+      when: configure_gpu_passthrough is not defined or not configure_gpu_passthrough
+
+    - name: Skip host if GPU passthrough not needed
+      ansible.builtin.meta: end_host
+      when: configure_gpu_passthrough is not defined or not configure_gpu_passthrough
+
     - name: Display setup information
       ansible.builtin.debug:
         msg: >-

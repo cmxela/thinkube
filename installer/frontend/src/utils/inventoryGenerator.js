@@ -167,12 +167,23 @@ export function generateDynamicInventory() {
     
     // Determine if this host needs GPU passthrough configuration
     const gpuAssignments = JSON.parse(sessionStorage.getItem('gpuAssignments') || '{}')
-    const hasGPUPassthrough = Object.values(gpuAssignments).some(assignment => {
-      // Check if any GPU is assigned to a VM on this host
-      return configuredVirtualMachines.some(vm => vm.host === hostname && vm.name === assignment)
+    const assignedSlots = []
+    
+    // Find GPUs assigned to VMs on this host
+    Object.entries(gpuAssignments).forEach(([pciAddress, assignment]) => {
+      if (assignment !== 'baremetal' && configuredVirtualMachines.some(vm => vm.host === hostname && vm.name === assignment)) {
+        // This GPU is assigned to a VM on this host
+        assignedSlots.push(pciAddress)
+      }
     })
     
+    const hasGPUPassthrough = assignedSlots.length > 0
     serverDef.configure_gpu_passthrough = hasGPUPassthrough
+    
+    // Add assigned PCI slots if any
+    if (hasGPUPassthrough) {
+      serverDef.assigned_pci_slots = assignedSlots
+    }
     
     // Add to inventory
     inventory.all.children.baremetal.hosts[hostname] = serverDef

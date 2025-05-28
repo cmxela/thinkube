@@ -162,15 +162,8 @@
     # Check for assigned PCI slots in inventory
     - name: Check if PCI slots are explicitly assigned in inventory
       ansible.builtin.set_fact:
-        assigned_pci_slots: "{{ assigned_pci_slots | default([]) + [item.value.pci_slot | lower] }}"
-      loop: "{{ lookup('dict', hostvars) }}"
-      when: >
-        item.value.gpu_passthrough is defined and 
-        item.value.gpu_passthrough | bool and 
-        item.value.parent_host is defined and 
-        item.value.parent_host == inventory_hostname and 
-        item.value.pci_slot is defined and 
-        item.value.pci_slot | trim != ''
+        assigned_pci_slots: "{{ assigned_pci_slots | default([]) }}"
+      when: assigned_pci_slots is defined
     
     - name: Display assigned PCI slots from inventory
       ansible.builtin.debug:
@@ -191,29 +184,40 @@
         assigned_pci_slots is defined and
         assigned_pci_slots | length > 0 and
         item is regex('\\[[0-9a-f]{4}:[0-9a-f]{4}\\]') and
+        pci_slot != '' and
         (pci_slot | lower in assigned_pci_slots or
          pci_slot | replace('.', ':') | lower in assigned_pci_slots)
         
-    # Fallback: Extract PCI IDs for passthrough GPUs if no assigned slots
-    - name: Extract PCI IDs for GPUs (fallback method)
-      ansible.builtin.set_fact:
-        gpu_pci_ids: "{{ gpu_pci_ids | default([]) + [detected_id] }}"
-      vars:
-        detected_id: "{{ item | regex_findall('\\[[0-9a-f]{4}:[0-9a-f]{4}\\]') | first | regex_replace('\\[([0-9a-f]{4}:[0-9a-f]{4})\\]', '\\1') }}"
-      loop: "{{ nvidia_gpus + amd_gpus + intel_gpus }}"
-      when: >
-        (assigned_pci_slots is not defined or assigned_pci_slots | length == 0) and
-        item is regex('\\[[0-9a-f]{4}:[0-9a-f]{4}\\]') and 
-        (host_gpu is not defined or item != host_gpu)
+    # Fallback: Skip PCI ID extraction when no slots are assigned
+    - name: Skip automatic GPU binding when no slots assigned
+      ansible.builtin.debug:
+        msg: |
+          No specific PCI slots assigned for passthrough.
+          Skipping automatic PCI ID extraction to prevent binding all GPUs.
+          Only GPUs explicitly listed in assigned_pci_slots will be configured for passthrough.
+      when: assigned_pci_slots is not defined or assigned_pci_slots | length == 0
         
-    # Use a simpler approach for now - find NVIDIA audio devices directly
-    - name: Get associated audio devices for GPUs
+    # Find audio devices only for assigned GPU slots
+    - name: Get associated audio devices for assigned GPUs
       ansible.builtin.shell: |
-        # Find all NVIDIA audio devices
-        lspci -n | grep "10de" | grep "0403" | awk '{print $3}' | tr -d .
+        # Find audio devices for assigned GPU slots only
+        {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
+        for slot in {{ assigned_pci_slots | join(' ') }}; do
+          # Convert slot format if needed (01:00.0 -> 01:00.1)
+          audio_slot="${slot%.0}.1"
+          # Check if audio device exists at this slot
+          if lspci -n -s "$audio_slot" 2>/dev/null | grep -q "0403"; then
+            # Get the vendor:device ID
+            lspci -n -s "$audio_slot" | awk '{print $3}' | tr -d .
+          fi
+        done
+        {% else %}
+        # No assigned slots - don't find any audio devices
+        echo ""
+        {% endif %}
       register: audio_devices_result
       changed_when: false
-      when: can_configure_passthrough and (gpu_pci_ids is defined and gpu_pci_ids | length > 0)
+      when: can_configure_passthrough
       
     # Add audio device IDs to the PCI IDs for passthrough
     - name: Add audio device IDs to passthrough list
@@ -245,27 +249,8 @@
           done
         done
         {% else %}
-        # Fallback to all NVIDIA GPUs if no assigned slots
-        gpu_slots=$(lspci | grep "VGA.*NVIDIA" | awk '{print $1}')
-        
-        # Find which IOMMU groups these GPUs belong to
-        for gpu in $gpu_slots; do
-          # Find IOMMU group
-          for group_dir in /sys/kernel/iommu_groups/*/devices/0000:$gpu; do
-            if [ -e "$group_dir" ]; then
-              group=$(echo $group_dir | cut -d/ -f5)
-              echo "IOMMU Group $group for GPU $gpu:"
-              # List all devices in this group by vendor:device ID
-              for dev in /sys/kernel/iommu_groups/$group/devices/*; do
-                dev_addr=$(basename $dev)
-                vendor_device=$(lspci -n -s $dev_addr | awk '{print $3}')
-                if [ -n "$vendor_device" ]; then
-                  echo "$vendor_device"
-                fi
-              done
-            fi
-          done
-        done
+        # No assigned slots - don't process any IOMMU groups
+        echo ""
         {% endif %}
         
         # Show PCI slot format for reference
@@ -442,18 +427,22 @@
         assigned_pci_slots is defined and
         assigned_pci_slots | length > 0
     
-    # Standard configuration for other hosts without specific slot assignments
-    - name: Create VFIO configuration - standard
+    # Create VFIO configuration with specific PCI IDs only for assigned slots
+    - name: Create VFIO configuration - specific slots only
       ansible.builtin.copy:
-        dest: /etc/modprobe.d/vfio.conf
+        dest: /etc/modprobe.d/vfio-pci-ids.conf
         content: |
-          # Standard VFIO configuration by vendor:device ID
+          # VFIO configuration for specific GPU passthrough
+          # Only bind GPUs that are explicitly assigned for passthrough
+          {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
+          # Using PCI IDs from assigned slots only
           options vfio-pci ids={{ gpu_pci_ids | join(',') }}
+          {% else %}
+          # No specific slots assigned - VFIO will not auto-bind any devices
+          # Devices must be manually bound if needed
+          {% endif %}
         mode: '0644'
-      when: >
-        (assigned_pci_slots is not defined or assigned_pci_slots | length == 0) and
-        gpu_pci_ids is defined and 
-        gpu_pci_ids | length > 0
+      when: can_configure_passthrough
     
     - name: Ensure VFIO modules are loaded early
       ansible.builtin.lineinfile:
@@ -465,6 +454,7 @@
         - "vfio_iommu_type1"
         - "vfio_pci"
         - "vfio_virqfd"
+      when: assigned_pci_slots is defined and assigned_pci_slots | length > 0
     
     # Ensure audio module loads at boot to prevent loss of system audio
     - name: Check if system uses HD Audio

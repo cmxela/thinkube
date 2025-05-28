@@ -9,6 +9,8 @@ import HardwareDetection from '../views/HardwareDetection.vue'
 import VMPlanning from '../views/VMPlanning.vue'
 import RoleAssignment from '../views/RoleAssignment.vue'
 import Configuration from '../views/Configuration.vue'
+import NetworkConfiguration from '../views/NetworkConfiguration.vue'
+import GPUAssignment from '../views/GPUAssignment.vue'
 import Review from '../views/Review.vue'
 import Deploy from '../views/Deploy.vue'
 import Complete from '../views/Complete.vue'
@@ -63,6 +65,16 @@ const routes = [
     path: '/configuration',
     name: 'configuration',
     component: Configuration
+  },
+  {
+    path: '/network-configuration',
+    name: 'network-configuration',
+    component: NetworkConfiguration
+  },
+  {
+    path: '/gpu-assignment',
+    name: 'gpu-assignment',
+    component: GPUAssignment
   },
   {
     path: '/review',

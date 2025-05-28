@@ -23,7 +23,7 @@
 
 # PLAY 1: Set up primary node
 - name: Set up primary node for LXD cluster
-  hosts: "{{ groups['baremetal'][0] }}"  # Primary node (bcn2)
+  hosts: lxd_primary
   gather_facts: true
   become: true
   
@@ -92,6 +92,8 @@
           storage_pools:
           - name: default
             driver: zfs
+            config:
+              size: 800GB
           networks:
           - name: {{ lxd_network_name }}
             type: bridge
@@ -120,19 +122,27 @@
       failed_when: false
       changed_when: false
 
-    # Initialize LXD on primary node only if not already initialized
+    # Check if LXD is in cluster mode
+    - name: Check if LXD is in cluster mode
+      ansible.builtin.command: lxc cluster list
+      register: lxd_cluster_check
+      failed_when: false
+      changed_when: false
+      when: lxd_initialized.rc == 0
+
+    # Initialize LXD on primary node if not initialized OR not in cluster mode
     - name: Initialize LXD on primary node with preseed
       ansible.builtin.shell: |
         cat {{ temp_dir }}/primary-init.yaml | lxd init --preseed
       register: primary_init
-      when: lxd_initialized.rc != 0
+      when: lxd_initialized.rc != 0 or (lxd_initialized.rc == 0 and lxd_cluster_check.rc != 0)
     
     # Wait for initialization to complete
     - name: Wait for LXD initialization on primary node
       ansible.builtin.pause:
         seconds: 10
         prompt: "Waiting for LXD to initialize on primary node..."
-      when: lxd_initialized.rc != 0
+      when: lxd_initialized.rc != 0 or (lxd_initialized.rc == 0 and lxd_cluster_check.rc != 0)
 
     # Verify LXD initialization
     - name: Verify LXD is initialized and running
@@ -211,35 +221,41 @@
             lxc profile create vm-gpu 2>/dev/null || true
             cat {{ temp_dir }}/vm-gpu.yaml | lxc profile edit vm-gpu
     
-    # Generate and store token for secondary nodes
-    - name: Generate join token for bcn1
+    # Generate and store tokens for all secondary nodes
+    - name: Generate join tokens for secondary nodes
       ansible.builtin.command: |
-        lxc cluster add bcn1
-      register: token_result
+        lxc cluster add {{ item }}
+      register: token_results
+      loop: "{{ groups['lxd_secondary'] }}"
+      failed_when: false  # Don't fail if node already exists in cluster
     
-    - name: Extract and save token
+    - name: Extract and save tokens for each node
       ansible.builtin.set_fact:
-        cluster_token: "{{ token_result.stdout_lines[1] | default('') }}"
+        cluster_tokens: "{{ cluster_tokens | default({}) | combine({item.item: item.stdout_lines[1] | default('')}) }}"
         cacheable: true
+      loop: "{{ token_results.results }}"
+      when: item.rc == 0
     
-    - name: Save token to file for secondary nodes
+    - name: Save tokens to files for secondary nodes
       ansible.builtin.copy:
-        content: "{{ cluster_token }}"
-        dest: "/tmp/lxd_cluster_token.txt"
+        content: "{{ cluster_tokens[item] }}"
+        dest: "/tmp/lxd_cluster_token_{{ item }}.txt"
         mode: '0644'
+      loop: "{{ groups['lxd_secondary'] }}"
+      when: cluster_tokens[item] is defined
     
     - name: Display token information (truncated)
       ansible.builtin.debug:
-        msg: "Generated token for secondary nodes: {{ cluster_token | truncate(20, true) }}..."
+        msg: "Generated tokens for secondary nodes: {{ cluster_tokens.keys() | list }}"
 
 # PLAY 2: Join secondary nodes to the cluster
 - name: Join secondary nodes to LXD cluster
-  hosts: "{{ groups['baremetal'][1:] }}"  # Secondary nodes (bcn1, etc.)
+  hosts: lxd_secondary
   gather_facts: true
   become: true
   
   vars:
-    primary_node: "{{ groups['baremetal'][0] }}"  # First node (bcn2)
+    primary_node: "{{ groups['lxd_primary'][0] }}"
     temp_dir: "/tmp/lxd-setup-{{ inventory_hostname }}"
     lxd_trust_password: "{{ lookup('env', 'LXD_TRUST_PASSWORD') | default('thinkube-lxd-cluster', true) }}"
   
@@ -287,10 +303,10 @@
         state: directory
         mode: '0755'
     
-    # Get join token from primary node
+    # Get join token from primary node (specific to this node)
     - name: Get cluster join token from primary node
       ansible.builtin.slurp:
-        src: "/tmp/lxd_cluster_token.txt"
+        src: "/tmp/lxd_cluster_token_{{ inventory_hostname }}.txt"
       register: token_file_b64
       delegate_to: "{{ primary_node }}"
     

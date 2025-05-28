@@ -7,7 +7,7 @@
       <div class="card-body">
         <h2 class="card-title mb-4">Scan Network for Ubuntu Servers</h2>
         
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div class="mb-4">
           <div class="form-control">
             <label class="label">
               <span class="label-text">Network CIDR</span>
@@ -21,15 +21,6 @@
             />
           </div>
           
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">Discovery Mode</span>
-            </label>
-            <select v-model="testMode" class="select select-bordered" :disabled="isScanning">
-              <option :value="true">Test Mode (Emulated)</option>
-              <option :value="false">Real Network Scan</option>
-            </select>
-          </div>
         </div>
         
         <div class="flex items-center gap-4">
@@ -63,8 +54,8 @@
     <div v-if="isScanning" class="card bg-base-100 shadow-xl mb-6">
       <div class="card-body">
         <div class="flex items-center gap-4">
-          <div class="radial-progress text-primary" :style="`--value:${scanProgress};`">
-            {{ scanProgress }}%
+          <div class="radial-progress text-primary" :style="`--value:${Math.round(scanProgress)};`">
+            {{ Math.round(scanProgress) }}%
           </div>
           <div class="flex-1">
             <p class="text-lg font-semibold">Scanning Network...</p>
@@ -218,7 +209,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 
@@ -250,7 +241,7 @@ const startDiscovery = async () => {
   // Simulate progress
   const progressInterval = setInterval(() => {
     if (scanProgress.value < 90) {
-      scanProgress.value += Math.random() * 20
+      scanProgress.value = Math.min(90, scanProgress.value + Math.random() * 20)
       scanStatus.value = `Scanning ${networkCIDR.value} - Checking ${Math.floor(scanProgress.value * 2.54)} of 254 hosts`
     }
   }, 500)
@@ -344,8 +335,24 @@ const proceedToNodeConfig = () => {
   sessionStorage.setItem('testMode', testMode.value)
   // Store discovered servers
   sessionStorage.setItem('discoveredServers', JSON.stringify(selectedServers.value))
+  // Store network CIDR for inventory generation
+  sessionStorage.setItem('networkCIDR', networkCIDR.value)
   router.push('/ssh-setup')
 }
+
+// Auto-detect network on mount
+onMounted(async () => {
+  try {
+    const response = await axios.get('/api/local-network')
+    if (response.data.detected) {
+      networkCIDR.value = response.data.network_cidr
+      console.log(`Auto-detected network: ${response.data.network_cidr}`)
+    }
+  } catch (error) {
+    console.error('Failed to auto-detect network:', error)
+    // Keep default value
+  }
+})
 </script>
 
 <style scoped>

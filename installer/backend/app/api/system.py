@@ -1,0 +1,749 @@
+"""
+API routes for system requirements and checks
+"""
+
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+from pathlib import Path
+import asyncio
+import logging
+import os
+import json
+import ipaddress
+import re
+from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api", tags=["system"])
+
+
+@router.get("/local-network")
+async def get_local_network():
+    """Detect the local network CIDR based on the primary network interface"""
+    try:
+        # Get primary network interface info
+        result = await asyncio.create_subprocess_exec(
+            'ip', 'route', 'get', '8.8.8.8',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await result.communicate()
+        
+        if result.returncode != 0:
+            logger.error("Failed to get default route")
+            return {"network_cidr": "192.168.1.0/24", "detected": False}
+        
+        # Parse output to get the interface and source IP
+        output = stdout.decode()
+        interface_match = re.search(r'dev (\S+)', output)
+        src_ip_match = re.search(r'src (\d+\.\d+\.\d+\.\d+)', output)
+        
+        if not interface_match or not src_ip_match:
+            logger.error("Could not parse route output")
+            return {"network_cidr": "192.168.1.0/24", "detected": False}
+        
+        interface = interface_match.group(1)
+        src_ip = src_ip_match.group(1)
+        
+        # Get network info for this interface
+        result = await asyncio.create_subprocess_exec(
+            'ip', 'addr', 'show', interface,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await result.communicate()
+        
+        if result.returncode != 0:
+            logger.error(f"Failed to get interface {interface} info")
+            return {"network_cidr": "192.168.1.0/24", "detected": False}
+        
+        # Find the network CIDR for our source IP
+        output = stdout.decode()
+        for line in output.split('\n'):
+            if 'inet ' in line and src_ip in line:
+                # Extract CIDR notation
+                cidr_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+/\d+)', line)
+                if cidr_match:
+                    ip_cidr = cidr_match.group(1)
+                    # Convert to network CIDR
+                    network = ipaddress.IPv4Network(ip_cidr, strict=False)
+                    network_cidr = str(network)
+                    
+                    logger.info(f"Detected network CIDR: {network_cidr} on interface {interface}")
+                    return {
+                        "network_cidr": network_cidr,
+                        "interface": interface,
+                        "ip_address": src_ip,
+                        "detected": True
+                    }
+        
+        # Fallback
+        logger.warning("Could not detect network CIDR, using default")
+        return {"network_cidr": "192.168.1.0/24", "detected": False}
+        
+    except Exception as e:
+        logger.error(f"Error detecting network: {e}")
+        return {"network_cidr": "192.168.1.0/24", "detected": False, "error": str(e)}
+
+
+@router.get("/check-installation-state")
+async def check_installation_state():
+    """Check what parts of thinkube are already installed"""
+    state = {
+        "environment_setup": False,
+        "ansible_installed": False,
+        "thinkube_repo_cloned": False,
+        "ssh_keys_configured": False,
+        "lxd_installed": False,
+        "microk8s_installed": False,
+        "kubernetes_running": False,
+        "services_deployed": [],
+        "installation_complete": False
+    }
+    
+    try:
+        # Check if thinkube repo is cloned
+        thinkube_path = Path.home() / "thinkube"
+        if thinkube_path.exists() and (thinkube_path / "ansible").exists():
+            state["thinkube_repo_cloned"] = True
+        
+        # Check if ansible is installed in user virtual environment (as per install script)
+        user_venv = Path.home() / ".venv"
+        if user_venv.exists():
+            ansible_bin = user_venv / "bin" / "ansible-playbook"
+            if ansible_bin.exists():
+                state["ansible_installed"] = True
+        else:
+            # Fallback: check if ansible is installed system-wide
+            result = await asyncio.create_subprocess_exec(
+                'which', 'ansible-playbook',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await result.communicate()
+            if result.returncode == 0:
+                state["ansible_installed"] = True
+        
+        # Check if SSH keys are configured
+        ssh_key_path = Path.home() / ".ssh" / "id_rsa.pub"
+        if ssh_key_path.exists():
+            state["ssh_keys_configured"] = True
+        
+        # Check environment setup
+        env_file = Path.home() / ".env"
+        inventory_file = thinkube_path / "inventory" / "inventory.yaml"
+        if env_file.exists() and inventory_file.exists():
+            state["environment_setup"] = True
+        
+        # Check if LXD is installed and configured
+        result = await asyncio.create_subprocess_exec(
+            'which', 'lxc',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await result.communicate()
+        if result.returncode == 0:
+            # Check if LXD is actually configured
+            result = await asyncio.create_subprocess_exec(
+                'lxc', 'list',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await result.communicate()
+            if result.returncode == 0:
+                state["lxd_installed"] = True
+        
+        # Check if MicroK8s is installed
+        result = await asyncio.create_subprocess_exec(
+            'which', 'microk8s',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await result.communicate()
+        if result.returncode == 0:
+            state["microk8s_installed"] = True
+            
+            # Check if Kubernetes is running
+            result = await asyncio.create_subprocess_exec(
+                'microk8s', 'status', '--wait-ready', '--timeout', '5',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await result.communicate()
+            if result.returncode == 0:
+                state["kubernetes_running"] = True
+                
+                # Check deployed services
+                result = await asyncio.create_subprocess_exec(
+                    'microk8s', 'kubectl', 'get', 'namespaces', '-o', 'json',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await result.communicate()
+                if result.returncode == 0:
+                    import json
+                    namespaces_data = json.loads(stdout.decode())
+                    namespaces = [ns['metadata']['name'] for ns in namespaces_data['items']]
+                    
+                    # Check for thinkube services
+                    thinkube_services = ['keycloak', 'harbor', 'postgresql', 'argocd', 'argo-workflows']
+                    for service in thinkube_services:
+                        if service in namespaces:
+                            state["services_deployed"].append(service)
+        
+        # Determine if installation is complete
+        state["installation_complete"] = (
+            state["environment_setup"] and
+            state["ansible_installed"] and
+            state["thinkube_repo_cloned"] and
+            state["ssh_keys_configured"] and
+            state["lxd_installed"] and
+            state["kubernetes_running"] and
+            len(state["services_deployed"]) >= 3  # At least 3 core services
+        )
+        
+    except Exception as e:
+        logger.error(f"Error checking installation state: {e}")
+    
+    return state
+
+
+@router.get("/check-requirements")
+async def check_requirements():
+    """Check system requirements based on REQUIREMENTS.md"""
+    requirements = []
+    
+    # HARD REQUIREMENTS (must pass)
+    
+    # 1. Check Ubuntu version (must be 24.04.x)
+    try:
+        # First try reading /etc/os-release directly (more reliable)
+        with open('/etc/os-release', 'r') as f:
+            os_release = f.read()
+            
+        # Parse the file
+        os_info = {}
+        for line in os_release.strip().split('\n'):
+            if '=' in line:
+                key, value = line.split('=', 1)
+                os_info[key] = value.strip('"')
+        
+        dist_id = os_info.get('ID', '').lower()
+        version_id = os_info.get('VERSION_ID', '')
+        version_full = os_info.get('VERSION', '')
+        
+        if dist_id == 'ubuntu' and version_id.startswith('24.04'):
+            requirements.append({
+                "name": "Ubuntu 24.04.x LTS",
+                "category": "system",
+                "required": True,
+                "status": "pass",
+                "details": f"{version_full} detected"
+            })
+        else:
+            # Fallback to distro module
+            import distro
+            dist_info = distro.info()
+            dist_name = dist_info.get('id', '')
+            dist_version = dist_info.get('version', '')
+            
+            if dist_name == 'ubuntu' and dist_version.startswith('24.04'):
+                requirements.append({
+                    "name": "Ubuntu 24.04.x LTS",
+                    "category": "system",
+                    "required": True,
+                    "status": "pass",
+                    "details": f"Ubuntu {dist_version} LTS detected"
+                })
+            else:
+                requirements.append({
+                    "name": "Ubuntu 24.04.x LTS",
+                    "category": "system", 
+                    "required": True,
+                    "status": "fail",
+                    "details": f"Found {dist_id or dist_name} {version_id or dist_version}. This installer requires Ubuntu 24.04.x"
+                })
+    except Exception as e:
+        requirements.append({
+            "name": "Ubuntu 24.04.x LTS",
+            "category": "system",
+            "required": True,
+            "status": "fail",
+            "details": f"Could not detect OS version: {str(e)}"
+        })
+    
+    # 2. Check user is not root and has sudo
+    try:
+        is_root = os.geteuid() == 0
+        if is_root:
+            requirements.append({
+                "name": "Non-root user with sudo",
+                "category": "system",
+                "required": True,
+                "status": "fail",
+                "details": "Running as root. Please run as normal user with sudo access"
+            })
+        else:
+            # Check sudo access
+            result = await asyncio.create_subprocess_exec(
+                'sudo', '-n', 'true',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await result.communicate()
+            
+            current_user = os.environ.get('USER', 'unknown')
+            requirements.append({
+                "name": "Non-root user with sudo",
+                "category": "system",
+                "required": True,
+                "status": "pass",
+                "details": f"User '{current_user}' has sudo access"
+            })
+    except:
+        requirements.append({
+            "name": "Non-root user with sudo",
+            "category": "system",
+            "required": True,
+            "status": "fail",
+            "details": "Could not verify user and sudo access"
+        })
+    
+    # 3. Check network connectivity
+    try:
+        # Try to reach Ubuntu package servers
+        import socket
+        socket.create_connection(("archive.ubuntu.com", 80), timeout=3)
+        requirements.append({
+            "name": "Network connectivity",
+            "category": "system",
+            "required": True,
+            "status": "pass",
+            "details": "Internet access confirmed"
+        })
+    except:
+        requirements.append({
+            "name": "Network connectivity",
+            "category": "system",
+            "required": True,
+            "status": "fail",
+            "details": "Cannot reach Ubuntu package servers"
+        })
+    
+    # 4. Check disk space (10GB minimum for control node)
+    try:
+        import shutil
+        free_gb = shutil.disk_usage(os.path.expanduser("~")).free / (1024**3)
+        
+        if free_gb >= 10:
+            requirements.append({
+                "name": "Disk space",
+                "category": "system",
+                "required": True,
+                "status": "pass",
+                "details": f"{free_gb:.1f}GB free in home directory"
+            })
+        else:
+            requirements.append({
+                "name": "Disk space",
+                "category": "system",
+                "required": True,
+                "status": "fail",
+                "details": f"Only {free_gb:.1f}GB free. Need at least 10GB"
+            })
+    except:
+        requirements.append({
+            "name": "Disk space",
+            "category": "system",
+            "required": True,
+            "status": "fail",
+            "details": "Could not check disk space"
+        })
+    
+    # SOFT REQUIREMENTS (will be installed if missing)
+    
+    # 1. Git
+    try:
+        result = await asyncio.create_subprocess_exec(
+            'which', 'git',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await result.communicate()
+        if stdout:
+            # Check git version
+            version_result = await asyncio.create_subprocess_exec(
+                'git', '--version',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            version_stdout, _ = await version_result.communicate()
+            version = version_stdout.decode().strip() if version_result.returncode == 0 else "unknown"
+            
+            requirements.append({
+                "name": "Git",
+                "category": "tools",
+                "required": False,
+                "status": "pass",
+                "details": f"Git is installed ({version})"
+            })
+        else:
+            requirements.append({
+                "name": "Git",
+                "category": "tools",
+                "required": False,
+                "status": "missing",
+                "details": "Will be installed during setup",
+                "action": "install"
+            })
+    except:
+        requirements.append({
+            "name": "Git",
+            "category": "tools",
+            "required": False,
+            "status": "missing",
+            "details": "Will be installed during setup",
+            "action": "install"
+        })
+    
+    # 2. OpenSSH Client
+    try:
+        result = await asyncio.create_subprocess_exec(
+            'which', 'ssh',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await result.communicate()
+        if stdout:
+            requirements.append({
+                "name": "OpenSSH Client",
+                "category": "tools",
+                "required": False,
+                "status": "pass",
+                "details": "SSH client is installed"
+            })
+        else:
+            requirements.append({
+                "name": "OpenSSH Client",
+                "category": "tools",
+                "required": False,
+                "status": "missing",
+                "details": "Will be installed",
+                "action": "install"
+            })
+    except:
+        requirements.append({
+            "name": "OpenSSH Client",
+            "category": "tools",
+            "required": False,
+            "status": "missing",
+            "details": "Will be installed",
+            "action": "install"
+        })
+    
+    # 3. Python Virtual Environment (user-level as per install script)
+    user_venv = Path.home() / ".venv"
+    if user_venv.exists() and (user_venv / "bin" / "python").exists():
+        requirements.append({
+            "name": "Python Virtual Environment",
+            "category": "tools",
+            "required": False,
+            "status": "pass",
+            "details": f"Virtual environment exists at {user_venv}"
+        })
+    else:
+        requirements.append({
+            "name": "Python Virtual Environment",
+            "category": "tools",
+            "required": False,
+            "status": "missing",
+            "details": "Will be created in ~/.venv",
+            "action": "install"
+        })
+    
+    # 4. Ansible (must be in user virtual environment as per install script)
+    venv_ansible_installed = False
+    
+    # Only check in user virtual environment - this is required
+    if user_venv.exists():
+        ansible_bin = user_venv / "bin" / "ansible-playbook"
+        if ansible_bin.exists():
+            try:
+                # Check ansible version in venv
+                version_result = await asyncio.create_subprocess_exec(
+                    str(ansible_bin), '--version',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                version_stdout, _ = await version_result.communicate()
+                if version_result.returncode == 0:
+                    version_line = version_stdout.decode().split('\n')[0]
+                    venv_ansible_installed = True
+                    ansible_details = f"Ansible installed in user venv ({version_line})"
+            except:
+                pass
+    
+    if venv_ansible_installed:
+        requirements.append({
+            "name": "Ansible (in venv)",
+            "category": "tools",
+            "required": False,
+            "status": "pass",
+            "details": ansible_details
+        })
+    else:
+        # Check if system ansible exists (for informational purposes)
+        system_ansible_note = ""
+        try:
+            result = await asyncio.create_subprocess_exec(
+                'which', 'ansible-playbook',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await result.communicate()
+            if stdout:
+                system_ansible_note = " (system-wide Ansible detected, but thinkube needs user venv)"
+        except:
+            pass
+        
+        requirements.append({
+            "name": "Ansible (in venv)",
+            "category": "tools", 
+            "required": False,
+            "status": "missing",
+            "details": f"Will be installed in user virtual environment{system_ansible_note}",
+            "action": "install"
+        })
+    
+    return {"requirements": requirements}
+
+
+@router.post("/verify-sudo")
+async def verify_sudo_password(request: Dict[str, Any]):
+    """Verify if the provided sudo password is correct"""
+    try:
+        password = request.get('password', '')
+        if not password:
+            return {"valid": False, "message": "No password provided"}
+        
+        # Clear any cached sudo credentials first
+        logger.info("Clearing sudo cache before verification")
+        await asyncio.create_subprocess_exec('sudo', '-k')
+        
+        # Test sudo with the provided password
+        logger.info(f"Testing sudo with password (length: {len(password)})")
+        process = await asyncio.create_subprocess_exec(
+            'sudo', '-S', 'true',
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        # Send password to stdin
+        stdout, stderr = await process.communicate(input=f"{password}\n".encode())
+        
+        logger.info(f"Sudo test result: returncode={process.returncode}, stdout={stdout.decode()}, stderr={stderr.decode()}")
+        
+        if process.returncode == 0:
+            logger.info("Password verification successful")
+            return {"valid": True, "message": "Password verified successfully"}
+        else:
+            logger.info(f"Password verification failed with code {process.returncode}")
+            return {"valid": False, "message": "Invalid password"}
+            
+    except Exception as e:
+        logger.error(f"Failed to verify sudo password: {e}")
+        return {"valid": False, "message": f"Verification error: {str(e)}"}
+
+
+@router.post("/run-setup")
+async def run_setup(background_tasks: BackgroundTasks, request: Dict[str, Any] = {}):
+    """Run the thinkube setup script"""
+    try:
+        # Check if thinkube is already installed by looking for actual installation markers
+        installation_markers = await check_thinkube_installation()
+        
+        if installation_markers["installed"]:
+            return {
+                "status": "exists", 
+                "message": "thinkube appears to be already installed", 
+                "details": installation_markers["details"]
+            }
+        
+        # Get sudo password if provided
+        sudo_password = request.get('sudo_password', '')
+        
+        # Verify sudo password before proceeding
+        if sudo_password:
+            try:
+                logger.info(f"Verifying sudo password for run-setup")
+                # Clear any cached sudo credentials first
+                await asyncio.create_subprocess_exec('sudo', '-k')
+                
+                process = await asyncio.create_subprocess_exec(
+                    'sudo', '-S', 'true',
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await process.communicate(input=f"{sudo_password}\n".encode())
+                
+                logger.info(f"Sudo verification result: returncode={process.returncode}, stderr={stderr.decode()}")
+                
+                if process.returncode != 0:
+                    logger.error(f"Invalid sudo password provided to run-setup")
+                    raise HTTPException(status_code=400, detail="Invalid sudo password")
+                    
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Sudo password verification failed: {e}")
+                raise HTTPException(status_code=400, detail="Failed to verify sudo password")
+        else:
+            logger.warning("No sudo password provided to run-setup")
+        
+        # Start the setup process in the background
+        background_tasks.add_task(run_setup_script, sudo_password)
+        return {"status": "started", "message": "Setup process started"}
+        
+    except Exception as e:
+        logger.error(f"Failed to start setup: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def check_thinkube_installation():
+    """Check for actual thinkube installation markers"""
+    markers = {
+        "installed": False,
+        "details": []
+    }
+    
+    # Check for LXD VMs (tkc, tkw1, etc)
+    try:
+        result = await asyncio.create_subprocess_exec(
+            'lxc', 'list', '--format=json',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await result.communicate()
+        if stdout:
+            vms = json.loads(stdout.decode())
+            thinkube_vms = [vm['name'] for vm in vms if vm['name'] in ['tkc', 'tkw1', 'dns1']]
+            if thinkube_vms:
+                markers["installed"] = True
+                markers["details"].append(f"Found LXD VMs: {', '.join(thinkube_vms)}")
+    except:
+        pass
+    
+    # Check for MicroK8s
+    try:
+        result = await asyncio.create_subprocess_exec(
+            'microk8s', 'status',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await result.communicate()
+        if result.returncode == 0 and stdout:
+            markers["installed"] = True
+            markers["details"].append("MicroK8s is installed")
+    except:
+        pass
+    
+    # Check for thinkube namespace in kubernetes
+    try:
+        result = await asyncio.create_subprocess_exec(
+            'microk8s', 'kubectl', 'get', 'namespace', 'thinkube',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        if result.returncode == 0:
+            markers["installed"] = True
+            markers["details"].append("thinkube namespace exists in Kubernetes")
+    except:
+        pass
+    
+    return markers
+
+
+async def run_setup_script(sudo_password: str):
+    """Background task to run the setup script"""
+    try:
+        logger.info("Starting thinkube setup script in background")
+        
+        # Find the setup script
+        script_path = Path.home() / "thinkube" / "scripts" / "setup.sh"
+        if not script_path.exists():
+            # Try alternative location
+            script_path = Path("/opt/thinkube/scripts/setup.sh")
+            if not script_path.exists():
+                logger.error(f"Setup script not found at {script_path}")
+                return
+        
+        # Set up environment
+        env = os.environ.copy()
+        if sudo_password:
+            env["SUDO_PASSWORD"] = sudo_password
+        
+        # Run the setup script
+        process = await asyncio.create_subprocess_exec(
+            str(script_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            logger.info("Setup script completed successfully")
+        else:
+            logger.error(f"Setup script failed with return code {process.returncode}")
+            logger.error(f"stderr: {stderr.decode()}")
+        
+    except Exception as e:
+        logger.error(f"Error running setup script: {e}")
+
+
+@router.post("/verify-zerotier")
+async def verify_zerotier(request: Dict[str, Any]):
+    """Verify ZeroTier API token and network access"""
+    try:
+        api_token = request.get('api_token', '')
+        network_id = request.get('network_id', '')
+        
+        if not api_token or not network_id:
+            return {"valid": False, "message": "API token and network ID are required"}
+        
+        # Validate network ID format (16 hex characters)
+        if len(network_id) != 16 or not all(c in '0123456789abcdef' for c in network_id.lower()):
+            return {"valid": False, "message": "Network ID must be 16 hexadecimal characters"}
+        
+        # Test API token by getting network info
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                'Authorization': f'Bearer {api_token}'
+            }
+            
+            # Try to get network details
+            url = f'https://api.zerotier.com/api/v1/network/{network_id}'
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    network_name = data.get('config', {}).get('name', 'Unnamed Network')
+                    return {
+                        "valid": True, 
+                        "message": f"Successfully verified access to network: {network_name}",
+                        "network_name": network_name
+                    }
+                elif response.status == 401:
+                    return {"valid": False, "message": "Invalid API token"}
+                elif response.status == 404:
+                    return {"valid": False, "message": "Network not found or no access"}
+                else:
+                    return {"valid": False, "message": f"API error: {response.status}"}
+                    
+    except Exception as e:
+        logger.error(f"Failed to verify ZeroTier credentials: {e}")
+        return {"valid": False, "message": f"Verification error: {str(e)}"}

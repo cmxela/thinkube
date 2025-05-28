@@ -359,9 +359,6 @@
           # Prevent snd_hda_intel from binding to NVIDIA GPU audio devices
           # This ensures the audio components of passthrough GPUs stay bound to vfio-pci
           
-          # Make snd_hda_intel load after vfio-pci to ensure vfio-pci claims the devices first
-          softdep snd_hda_intel pre: vfio-pci
-          
           # Specific no_bind configuration for assigned audio devices
           {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
           {% for slot in assigned_pci_slots %}
@@ -459,6 +456,22 @@
         - "vfio_iommu_type1"
         - "vfio_pci"
         - "vfio_virqfd"
+    
+    # Ensure audio module loads at boot to prevent loss of system audio
+    - name: Check if system uses HD Audio
+      ansible.builtin.shell: |
+        lspci -k | grep -i "audio" | grep -E "snd_hda_intel|hda" || true
+      register: hda_audio_check
+      changed_when: false
+      
+    - name: Ensure snd_hda_intel module loads at boot (if HD Audio is present)
+      ansible.builtin.lineinfile:
+        path: /etc/modules
+        line: "snd_hda_intel"
+        create: yes
+      when: 
+        - nvidia_gpus | length > 0
+        - hda_audio_check.stdout | length > 0
     
     # Phase 5: Configure GPU drivers for passthrough devices
     # Only blacklist nouveau (for all systems)

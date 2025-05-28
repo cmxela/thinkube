@@ -4,10 +4,6 @@
 
 /* Custom styles for thinkube installer */
 @layer base {
-  h1, h2, h3, h4, h5, h6 {
-    @apply font-alata;
-  }
-  
   body {
     @apply font-roboto-slab;
   }
@@ -15,6 +11,19 @@
   code, pre {
     @apply font-mono;
   }
+}
+
+@layer components {
+  /* Use Alata only for main section headers and card titles */
+  h1 {
+    @apply font-alata;
+  }
+  
+  .card-title {
+    @apply font-alata;
+  }
+  
+  /* Everything else inherits Roboto Slab from body */
 }
 
 /* Custom animations */

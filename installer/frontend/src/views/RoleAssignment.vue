@@ -7,14 +7,14 @@
       <div class="card-body">
         <h2 class="card-title mb-4">Role Requirements</h2>
         
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <h3 class="font-semibold mb-2">Control Plane Nodes</h3>
+            <h3 class="font-semibold mb-2">Control Plane Node</h3>
             <ul class="text-sm space-y-1 text-base-content/70">
-              <li>• Manage Kubernetes API and cluster state</li>
-              <li>• Require at least 4 CPU cores and 8GB RAM</li>
-              <li>• Recommend 1 or 3 nodes for HA</li>
-              <li>• Usually run on VMs for isolation</li>
+              <li>• Manages Kubernetes API and cluster state</li>
+              <li>• Requires at least 4 CPU cores and 8GB RAM</li>
+              <li>• Single node setup for homelab use</li>
+              <li>• Can run on baremetal or VM</li>
             </ul>
           </div>
           
@@ -25,6 +25,16 @@
               <li>• Can be baremetal or VMs</li>
               <li>• GPU nodes for AI workloads</li>
               <li>• More resources = more capacity</li>
+            </ul>
+          </div>
+          
+          <div>
+            <h3 class="font-semibold mb-2">DNS Server</h3>
+            <ul class="text-sm space-y-1 text-base-content/70">
+              <li>• Provides internal DNS resolution</li>
+              <li>• Can run on baremetal or VM</li>
+              <li>• Requires at least 2 CPU cores and 2GB RAM</li>
+              <li>• Only one DNS server needed</li>
             </ul>
           </div>
         </div>
@@ -51,7 +61,9 @@
                     <p class="font-medium">{{ node.hostname }}</p>
                     <p class="text-sm text-base-content/70">
                       {{ node.cpu }} CPU, {{ node.memory }} GB RAM
-                      <span v-if="node.gpu" class="badge badge-success badge-sm ml-2">GPU</span>
+                      <span v-if="getNodeGPUStatus(node)" class="badge badge-success badge-sm ml-2">
+                        {{ getNodeGPUStatus(node) }}
+                      </span>
                     </p>
                   </div>
                 </div>
@@ -60,10 +72,11 @@
                   v-model="node.role" 
                   class="select select-bordered select-sm"
                   @change="validateRoles"
+                  :disabled="controlPlaneNodes.length > 0 && node.role !== 'control_plane'"
                 >
                   <option value="">No Role</option>
                   <option value="worker">Worker</option>
-                  <option value="control_plane" :disabled="!canBeControlPlane(node)">Control Plane</option>
+                  <option value="control_plane" :disabled="!canBeControlPlane(node) || (controlPlaneNodes.length > 0 && node.role !== 'control_plane')">Control Plane</option>
                 </select>
               </div>
             </div>
@@ -73,8 +86,9 @@
           <div v-if="vmNodes.length > 0">
             <h3 class="font-semibold mb-2">Virtual Machines</h3>
             <div class="space-y-2">
+              <!-- DNS VM Special Case -->
               <div 
-                v-for="node in vmNodes" 
+                v-for="node in vmNodes.filter(n => n.hostname === 'dns')" 
                 :key="node.id"
                 class="flex items-center justify-between p-3 rounded-lg bg-base-200"
               >
@@ -88,15 +102,42 @@
                   </div>
                 </div>
                 
-                <select 
-                  v-model="node.role" 
-                  class="select select-bordered select-sm"
-                  @change="validateRoles"
-                >
-                  <option value="">No Role</option>
-                  <option value="worker">Worker</option>
-                  <option value="control_plane" :disabled="!canBeControlPlane(node)">Control Plane</option>
-                </select>
+                <div class="text-sm font-semibold">
+                  DNS Server (Fixed Role)
+                </div>
+              </div>
+              
+              <!-- Other VMs -->
+              <div 
+                v-for="node in vmNodes.filter(n => n.hostname !== 'dns')" 
+                :key="node.id"
+                class="flex items-center justify-between p-3 rounded-lg bg-base-200"
+              >
+                <div class="flex items-center gap-3">
+                  <div>
+                    <p class="font-medium">{{ node.hostname }}</p>
+                    <p class="text-sm text-base-content/70">
+                      {{ node.cpu }} CPU, {{ node.memory }} GB RAM
+                      <span class="badge badge-info badge-sm ml-2">VM on {{ node.host }}</span>
+                      <span v-if="canVMHaveGPU(node)" class="badge badge-warning badge-sm ml-2">
+                        GPU Available
+                      </span>
+                    </p>
+                  </div>
+                </div>
+                
+                <div class="flex items-center gap-3">
+                  <select 
+                    v-model="node.role" 
+                    class="select select-bordered select-sm"
+                    @change="validateRoles"
+                    :disabled="controlPlaneNodes.length > 0 && node.role !== 'control_plane'"
+                  >
+                    <option value="">No Role</option>
+                    <option value="worker">Worker</option>
+                    <option value="control_plane" :disabled="!canBeControlPlane(node) || (controlPlaneNodes.length > 0 && node.role !== 'control_plane')">Control Plane</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
@@ -164,6 +205,10 @@ const workerNodes = computed(() => {
   return allNodes.value.filter(n => n.role === 'worker')
 })
 
+const dnsNodes = computed(() => {
+  return allNodes.value.filter(n => n.role === 'dns')
+})
+
 const isValid = computed(() => {
   return validationErrors.value.length === 0 &&
          controlPlaneNodes.value.length > 0 &&
@@ -175,16 +220,56 @@ const canBeControlPlane = (node) => {
   return node.cpu >= 4 && node.memory >= 8
 }
 
+// Get GPU status for baremetal nodes
+const getNodeGPUStatus = (node) => {
+  if (!node.hasGPU || !node.gpuInfo) return null
+  
+  // Get passthrough info for this node
+  const passthroughInfo = node.gpuInfo.gpu_passthrough_info || []
+  const totalGPUs = node.gpuInfo.gpu_count || 0
+  const passthroughEligible = passthroughInfo.filter(g => g.passthrough_eligible).length
+  
+  // Check if this node hosts VMs (other than DNS)
+  const hostedVMs = allNodes.value.filter(n => 
+    n.type === 'vm' && 
+    n.host === node.hostname && 
+    n.hostname !== 'dns'
+  )
+  
+  if (hostedVMs.length === 0) {
+    // No VMs, all GPUs assigned to this node
+    return `${totalGPUs} GPU${totalGPUs > 1 ? 's' : ''}`
+  } else {
+    // Has VMs, only non-passthrough-eligible GPUs assigned
+    const assignedGPUs = totalGPUs - passthroughEligible
+    return assignedGPUs > 0 ? `${assignedGPUs} GPU${assignedGPUs > 1 ? 's' : ''}` : null
+  }
+}
+
+// Check if VM can have GPU passthrough
+const canVMHaveGPU = (vm) => {
+  // Find the host server
+  const host = allNodes.value.find(n => n.type === 'baremetal' && n.hostname === vm.host)
+  if (!host || !host.hasGPU || !host.gpuInfo) return false
+  
+  // Check if host has passthrough-eligible GPUs
+  const passthroughInfo = host.gpuInfo.gpu_passthrough_info || []
+  const eligibleGPUs = passthroughInfo.filter(g => g.passthrough_eligible)
+  
+  // VM can have GPU if host has at least one passthrough-eligible GPU
+  return eligibleGPUs.length > 0
+}
+
 // Validate role assignment
 const validateRoles = () => {
   validationErrors.value = []
   
-  // Check control plane count
+  // Check control plane count (only allow ONE)
   const cpCount = controlPlaneNodes.value.length
   if (cpCount === 0) {
-    validationErrors.value.push('At least one control plane node is required')
-  } else if (cpCount === 2) {
-    validationErrors.value.push('Control plane should have 1 or 3+ nodes for proper quorum')
+    validationErrors.value.push('Exactly one control plane node is required')
+  } else if (cpCount > 1) {
+    validationErrors.value.push('Only one control plane node is allowed for Thinkube')
   }
   
   // Check worker count
@@ -192,8 +277,14 @@ const validateRoles = () => {
     validationErrors.value.push('At least one worker node is required')
   }
   
-  // Check unassigned nodes
-  const unassignedCount = allNodes.value.filter(n => !n.role).length
+  // Check DNS server exists (either as dedicated node or VM)
+  const hasDnsServer = allNodes.value.some(n => n.hostname === 'dns' || n.role === 'dns')
+  if (!hasDnsServer) {
+    validationErrors.value.push('DNS server is required (either as VM or dedicated node)')
+  }
+  
+  // Check unassigned nodes (excluding DNS VM which has fixed role)
+  const unassignedCount = allNodes.value.filter(n => !n.role && n.hostname !== 'dns').length
   if (unassignedCount > 0) {
     validationErrors.value.push(`${unassignedCount} nodes have no role assigned`)
   }
@@ -207,12 +298,13 @@ const saveAndContinue = () => {
     ip: n.ip,
     role: n.role,
     type: n.type,
-    resources: {
-      cpu: n.cpu,
-      memory: n.memory,
-      disk: n.disk,
-      gpu: n.gpu
-    }
+    host: n.host,  // Important for VMs
+    cpu: n.cpu,
+    memory: n.memory,
+    disk: n.disk,
+    gpu: n.gpu,
+    hasGPU: n.hasGPU,
+    gpuInfo: n.gpuInfo
   }))
   
   sessionStorage.setItem('clusterNodes', JSON.stringify(clusterNodes))
@@ -231,7 +323,13 @@ onMounted(() => {
     cpu: s.hardware?.cpu_cores || 0,
     memory: s.hardware?.memory_gb || 0,
     disk: s.hardware?.disk_gb || 0,
-    gpu: s.hardware?.gpu_detected || false,
+    hasGPU: s.hardware?.gpu_detected || false,
+    gpuInfo: {
+      gpu_count: s.hardware?.gpu_count || 0,
+      gpu_model: s.hardware?.gpu_model || '',
+      gpu_passthrough_info: s.hardware?.gpu_passthrough_info || [],
+      iommu_enabled: s.hardware?.iommu_enabled || false
+    },
     role: ''
   }))
   
@@ -253,16 +351,26 @@ onMounted(() => {
   allNodes.value = [...baremetalList, ...vmList]
   
   // Auto-assign recommended roles
-  // First 1-3 VMs as control plane
-  const vms = allNodes.value.filter(n => n.type === 'vm' && canBeControlPlane(n))
-  const numControlPlanes = Math.min(3, vms.length)
-  for (let i = 0; i < numControlPlanes; i++) {
-    vms[i].role = 'control_plane'
+  // DNS VM has fixed role (not changeable)
+  const dnsVm = allNodes.value.find(n => n.type === 'vm' && n.hostname === 'dns')
+  if (dnsVm) {
+    dnsVm.role = 'dns'
+  }
+  
+  // Only ONE control plane allowed - prefer VM if available
+  const eligibleForCP = allNodes.value.filter(n => canBeControlPlane(n) && n.hostname !== 'dns')
+  const vmCandidates = eligibleForCP.filter(n => n.type === 'vm')
+  const baremetalCandidates = eligibleForCP.filter(n => n.type === 'baremetal')
+  
+  if (vmCandidates.length > 0) {
+    vmCandidates[0].role = 'control_plane'
+  } else if (baremetalCandidates.length > 0) {
+    baremetalCandidates[0].role = 'control_plane'
   }
   
   // Everything else as workers
   allNodes.value.forEach(node => {
-    if (!node.role && (node.type === 'baremetal' || node.cpu >= 2)) {
+    if (!node.role && node.hostname !== 'dns' && (node.type === 'baremetal' || node.cpu >= 2)) {
       node.role = 'worker'
     }
   })

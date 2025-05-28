@@ -202,6 +202,23 @@ Before considering a migration complete:
 6. **Create PR**: Link to issue, include test results
 7. **Merge to Main**: After review and approval
 
+### GitHub Issue Retrieval
+
+To retrieve GitHub issues for implementation:
+
+```bash
+# View a specific issue
+gh issue view <issue-number> --repo cmxela/thinkube
+
+# List all open issues
+gh issue list --repo cmxela/thinkube
+
+# Search for specific issues
+gh issue list --repo cmxela/thinkube --search "CORE"
+```
+
+**ALWAYS** use the GitHub CLI (`gh`) to retrieve issue details rather than searching files or using web searches, as this repository is private.
+
 **CRITICAL: Never Commit Without Testing**
 - **NEVER commit without successfully RUNNING 10_deploy.yaml and 18_test.yaml**
 - Syntax checking (--syntax-check) is NOT sufficient

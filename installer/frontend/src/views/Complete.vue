@@ -1,16 +1,34 @@
 <template>
   <div class="max-w-4xl mx-auto">
-    <div class="text-center mb-8">
-      <div class="inline-flex items-center justify-center w-24 h-24 bg-success/20 rounded-full mb-6">
-        <svg class="w-16 h-16 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+    <!-- Error state if no data -->
+    <div v-if="!dataLoaded" class="text-center mb-8">
+      <div class="inline-flex items-center justify-center w-24 h-24 bg-error/20 rounded-full mb-6">
+        <svg class="w-16 h-16 text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
         </svg>
       </div>
-      <h1 class="text-4xl font-bold mb-4">Cluster Deployment Complete!</h1>
-      <p class="text-xl text-base-content/70">
-        Your thinkube platform has been successfully deployed and is ready for AI workloads.
+      <h1 class="text-4xl font-bold mb-4">Configuration Not Found</h1>
+      <p class="text-xl text-base-content/70 mb-8">
+        The deployment configuration could not be loaded. Please ensure you've completed all previous steps.
       </p>
+      <button class="btn btn-primary" @click="$router.push('/')">
+        Start Over
+      </button>
     </div>
+    
+    <!-- Success state with data -->
+    <div v-else>
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-24 h-24 bg-success/20 rounded-full mb-6">
+          <svg class="w-16 h-16 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+        <h1 class="text-4xl font-bold mb-4">Cluster Deployment Complete!</h1>
+        <p class="text-xl text-base-content/70">
+          Your thinkube platform has been successfully deployed and is ready for AI workloads.
+        </p>
+      </div>
 
     <!-- Access Information -->
     <div class="card bg-base-100 shadow-xl mb-6">
@@ -157,17 +175,18 @@
       </div>
     </div>
 
-    <!-- Actions -->
-    <div class="text-center">
-      <div v-if="isElectron">
-        <button class="btn btn-ghost" @click="closeInstaller">
-          Close Installer
-        </button>
-      </div>
-      <div v-else>
-        <button class="btn btn-primary" @click="$router.push('/dashboard')">
-          Go to Dashboard
-        </button>
+      <!-- Actions -->
+      <div class="text-center">
+        <div v-if="isElectron">
+          <button class="btn btn-ghost" @click="closeInstaller">
+            Close Installer
+          </button>
+        </div>
+        <div v-else>
+          <button class="btn btn-primary" @click="$router.push('/dashboard')">
+            Go to Dashboard
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -181,39 +200,60 @@ import axios from 'axios'
 const router = useRouter()
 
 // State
-const domainName = ref('thinkube.local')
-const adminUsername = ref('tkadmin')
+const domainName = ref('')
+const adminUsername = ref('')
 const adminPassword = ref('')
-const systemUsername = ref('thinkube')
+const systemUsername = ref('')
 const controlPlaneIP = ref('')
 const showPassword = ref(false)
 const isElectron = computed(() => !!window.electronAPI)
+const dataLoaded = ref(false)
 
 // Load configuration
 onMounted(() => {
   const config = JSON.parse(localStorage.getItem('thinkube-config') || '{}')
   const clusterConfig = JSON.parse(sessionStorage.getItem('clusterConfig') || '{}')
   
+  console.log('Config loaded:', config)
+  console.log('Cluster config:', clusterConfig)
+  
   domainName.value = config.domainName || 'thinkube.local'
   adminUsername.value = config.adminUsername || 'tkadmin'
   adminPassword.value = config.adminPassword || 'ChangeMeNow123!'
   
-  // Get control plane IP from cluster config
-  if (clusterConfig.servers) {
-    // Find control plane node
+  // Try to get current user
+  const currentUser = sessionStorage.getItem('currentUser') || 'thinkube'
+  systemUsername.value = currentUser
+  
+  // Get control plane IP from cluster config or role assignments
+  const roleAssignments = JSON.parse(sessionStorage.getItem('roleAssignments') || '{}')
+  
+  if (roleAssignments.servers) {
+    const controlNode = roleAssignments.servers.find(s => s.role === 'control-plane')
+    if (controlNode) {
+      controlPlaneIP.value = controlNode.ip
+    }
+  } else if (clusterConfig.servers) {
+    // Fallback to old method
     for (const server of clusterConfig.servers) {
-      if (server.k8s_role === 'control_plane') {
-        controlPlaneIP.value = server.ip_address
+      if (server.k8s_role === 'control_plane' || server.role === 'control-plane') {
+        controlPlaneIP.value = server.ip_address || server.ip
         break
       }
-      // Check containers
-      for (const container of server.containers || []) {
-        if (container.k8s_role === 'control_plane') {
-          controlPlaneIP.value = server.ip_address
-          break
-        }
-      }
     }
+  }
+  
+  // If still no control plane IP, try to get from discovered servers
+  if (!controlPlaneIP.value) {
+    const servers = JSON.parse(sessionStorage.getItem('discoveredServers') || '[]')
+    if (servers.length > 0) {
+      controlPlaneIP.value = servers[0].ip_address || servers[0].ip
+    }
+  }
+  
+  // Check if we have the minimum required data
+  if (domainName.value && adminUsername.value) {
+    dataLoaded.value = true
   }
 })
 

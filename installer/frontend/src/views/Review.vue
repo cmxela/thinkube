@@ -1,152 +1,340 @@
 <template>
-  <v-container>
-    <v-row>
-      <v-col cols="12">
-        <h1 class="mb-4">Review Configuration</h1>
+  <div class="max-w-6xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">Review Configuration</h1>
+    
+    <!-- Cluster Settings -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+      <div class="card-body">
+        <h2 class="card-title mb-4">Cluster Settings</h2>
         
-        <v-alert type="info" variant="tonal" class="mb-4">
-          Please review your configuration before proceeding with the installation.
-        </v-alert>
-
-        <v-card class="mb-4">
-          <v-card-title>Cluster Settings</v-card-title>
-          <v-card-text>
-            <v-simple-table>
-              <template v-slot:default>
-                <tbody>
-                  <tr>
-                    <td><strong>Cluster Name</strong></td>
-                    <td>{{ config.clusterName }}</td>
-                  </tr>
-                  <tr>
-                    <td><strong>Domain Name</strong></td>
-                    <td>{{ config.domainName }}</td>
-                  </tr>
-                  <tr>
-                    <td><strong>Admin Username</strong></td>
-                    <td>{{ config.adminUsername }}</td>
-                  </tr>
-                  <tr>
-                    <td><strong>Deployment Type</strong></td>
-                    <td>{{ config.deploymentType }}</td>
-                  </tr>
-                </tbody>
-              </template>
-            </v-simple-table>
-          </v-card-text>
-        </v-card>
-
-        <v-card class="mb-4">
-          <v-card-title>Nodes ({{ config.nodes.length }})</v-card-title>
-          <v-card-text>
-            <v-simple-table>
-              <template v-slot:default>
-                <thead>
-                  <tr>
-                    <th>Hostname</th>
-                    <th>IP Address</th>
-                    <th>Role</th>
-                    <th>GPU</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="node in config.nodes" :key="node.hostname">
-                    <td>{{ node.hostname }}</td>
-                    <td>{{ node.ipAddress }}</td>
-                    <td>
-                      <v-chip size="small" :color="node.role === 'control_plane' ? 'primary' : 'secondary'">
-                        {{ node.role }}
-                      </v-chip>
-                    </td>
-                    <td>
-                      <v-icon :color="node.hasGpu ? 'success' : 'grey'">
-                        {{ node.hasGpu ? 'mdi-check' : 'mdi-close' }}
-                      </v-icon>
-                    </td>
-                  </tr>
-                </tbody>
-              </template>
-            </v-simple-table>
-          </v-card-text>
-        </v-card>
-
-        <v-card class="mb-4">
-          <v-card-title>Generated Inventory Preview</v-card-title>
-          <v-card-text>
-            <pre class="inventory-preview">{{ inventoryPreview }}</pre>
-          </v-card-text>
-        </v-card>
-
-        <div class="d-flex justify-space-between">
-          <v-btn @click="$router.push('/configuration')" variant="text">
-            <v-icon start>mdi-arrow-left</v-icon>
-            Back
-          </v-btn>
-          <v-btn 
-            color="primary" 
-            @click="startInstallation"
-            size="large"
-          >
-            Start Installation
-            <v-icon end>mdi-rocket-launch</v-icon>
-          </v-btn>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <p class="text-sm text-base-content/70">Cluster Name</p>
+            <p class="font-semibold">{{ config.clusterName }}</p>
+          </div>
+          <div>
+            <p class="text-sm text-base-content/70">Domain Name</p>
+            <p class="font-semibold">{{ config.domainName }}</p>
+          </div>
+          <div>
+            <p class="text-sm text-base-content/70">Admin Username</p>
+            <p class="font-semibold">{{ config.adminUsername || 'tkadmin' }}</p>
+          </div>
+          <div>
+            <p class="text-sm text-base-content/70">Deployment Type</p>
+            <p class="font-semibold">{{ deploymentType }}</p>
+          </div>
         </div>
-      </v-col>
-    </v-row>
-  </v-container>
+      </div>
+    </div>
+
+    <!-- Node Assignments -->
+    <div class="card bg-base-100 shadow-xl mb-6">
+      <div class="card-body">
+        <h2 class="card-title mb-4">Node Assignments</h2>
+        
+        <div class="space-y-3">
+          <div v-for="node in allNodes" :key="node.id" class="border rounded-lg p-4">
+            <div class="flex justify-between items-start">
+              <div class="flex-1">
+                <h3 class="font-semibold text-lg">{{ node.hostname }}</h3>
+                <p class="text-sm text-base-content/70">
+                  {{ node.type === 'baremetal' ? 'Baremetal Server' : `VM on ${node.host}` }}
+                </p>
+                <p class="text-sm mt-1">
+                  {{ node.cpu }} CPU, {{ node.memory }} GB RAM
+                  <span v-if="node.ip" class="ml-2">• {{ node.ip }}</span>
+                </p>
+                
+                <!-- GPU assignments for this node -->
+                <div v-if="getNodeGPUs(node.hostname).length > 0" class="mt-2">
+                  <p class="text-sm font-medium text-base-content/80 mb-1">GPU:</p>
+                  <div class="space-y-1">
+                    <div v-for="gpu in getNodeGPUs(node.hostname)" :key="gpu.address" class="text-sm text-base-content/70 ml-2">
+                      {{ gpu.name }} • PCI: {{ gpu.address }}
+                      <span v-if="gpu.assignment !== 'baremetal'" class="ml-2 text-primary">
+                        (passed from {{ gpu.hostname }})
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="badge badge-lg" :class="getRoleBadgeClass(node.role)">
+                {{ getRoleDisplay(node.role) }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- Generated Inventory -->
+    <div v-if="generatedInventory" class="card bg-base-100 shadow-xl mb-6">
+      <div class="card-body">
+        <h2 class="card-title mb-4">Generated Ansible Inventory</h2>
+        <p class="text-sm text-base-content/70 mb-4">
+          Your configuration has been converted to an Ansible inventory file. You can download this for manual playbook execution.
+        </p>
+        
+        <div class="flex gap-3">
+          <button class="btn btn-outline btn-sm" @click="copyInventory">
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+            </svg>
+            Copy
+          </button>
+          
+          <button class="btn btn-outline btn-sm" @click="downloadInventory">
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            Download inventory.yaml
+          </button>
+          
+          <button class="btn btn-outline btn-sm" @click="viewInventory">
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+            View
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex justify-between">
+      <button class="btn btn-ghost gap-2" @click="$router.push('/gpu-assignment')">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+        </svg>
+        Back to GPU Assignment
+      </button>
+      
+      <button 
+        class="btn btn-primary gap-2"
+        @click="startDeployment"
+      >
+        Start Deployment
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Inventory View Modal -->
+    <dialog ref="inventoryModal" class="modal">
+      <div class="modal-box w-11/12 max-w-5xl">
+        <h3 class="font-bold text-lg mb-4">Ansible Inventory</h3>
+        
+        <div class="mockup-code bg-base-200 text-sm max-h-96 overflow-auto">
+          <pre><code>{{ generatedInventory }}</code></pre>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="closeInventoryModal">Close</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+      </form>
+    </dialog>
+  </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
 
 const router = useRouter()
+
+// State
 const config = ref({})
-const inventoryPreview = ref('')
+const allNodes = ref([])
+const deploymentType = ref('')
+const gpuAssignments = ref({})
+const generatedInventory = ref('')
+const inventoryModal = ref(null)
 
-const backendUrl = computed(() => {
-  if (window.electronAPI) {
-    return window.electronAPI.getBackendURL()
-  }
-  return '/api'
+// Computed
+const hasGPUs = computed(() => {
+  // Check if there are any GPU assignments that are not 'baremetal'
+  return Object.keys(gpuAssignments.value).some(key => gpuAssignments.value[key] !== 'baremetal')
 })
 
-onMounted(async () => {
-  // Load config from localStorage
-  const savedConfig = localStorage.getItem('thinkube-config')
-  if (savedConfig) {
-    config.value = JSON.parse(savedConfig)
-    
-    // Get inventory preview from backend
-    try {
-      const response = await axios.post(`${backendUrl.value}/generate-inventory`, config.value)
-      inventoryPreview.value = response.data.inventory
-    } catch (error) {
-      console.error('Failed to generate inventory preview:', error)
+// Get role display text
+const getRoleDisplay = (role) => {
+  const roleMap = {
+    'control_plane': 'Control Plane',
+    'worker': 'Worker',
+    'dns': 'DNS Server'
+  }
+  return roleMap[role] || role
+}
+
+// Get role badge class
+const getRoleBadgeClass = (role) => {
+  const classMap = {
+    'control_plane': 'badge-primary',
+    'worker': 'badge-secondary',
+    'dns': 'badge-accent'
+  }
+  return classMap[role] || 'badge-ghost'
+}
+
+// Get GPUs assigned to a specific node
+const getNodeGPUs = (nodename) => {
+  const nodeGPUs = []
+  const serverHardware = JSON.parse(sessionStorage.getItem('serverHardware') || '[]')
+  
+  // Check for GPUs physically on this node (baremetal only)
+  if (allNodes.value.find(n => n.hostname === nodename && n.type === 'baremetal')) {
+    const server = serverHardware.find(s => s.hostname === nodename)
+    if (server?.hardware?.gpu_passthrough_info) {
+      server.hardware.gpu_passthrough_info.forEach(gpu => {
+        // Only show GPUs that remain on this host or are not assigned to VMs
+        const assignment = gpuAssignments.value[gpu.pci_address]
+        if (!assignment || assignment === 'baremetal') {
+          nodeGPUs.push({
+            address: gpu.pci_address,
+            name: server.hardware.gpu_model?.replace(/^\d+x\s*/, '') || 'Unknown GPU',
+            hostname: nodename,
+            assignment: 'baremetal'
+          })
+        }
+      })
     }
-  } else {
-    router.push('/configuration')
   }
-})
+  
+  // Check for GPUs passed through to this node (VMs)
+  Object.entries(gpuAssignments.value).forEach(([pciAddress, assignment]) => {
+    if (assignment === nodename) {
+      // Find the GPU info
+      let foundServer = null
+      for (const server of serverHardware) {
+        if (server.hardware?.gpu_passthrough_info) {
+          const gpu = server.hardware.gpu_passthrough_info.find(g => g.pci_address === pciAddress)
+          if (gpu) {
+            foundServer = server
+            break
+          }
+        }
+      }
+      
+      if (foundServer) {
+        nodeGPUs.push({
+          address: pciAddress,
+          name: foundServer.hardware.gpu_model?.replace(/^\d+x\s*/, '') || 'Unknown GPU',
+          hostname: foundServer.hostname,
+          assignment: assignment
+        })
+      }
+    }
+  })
+  
+  return nodeGPUs
+}
 
-const startInstallation = async () => {
+// Inventory methods
+const copyInventory = async () => {
   try {
-    await axios.post(`${backendUrl.value}/install`, config.value)
-    router.push('/deploy')
+    await navigator.clipboard.writeText(generatedInventory.value)
+    alert('Inventory copied to clipboard!')
   } catch (error) {
-    console.error('Failed to start installation:', error)
+    alert('Failed to copy to clipboard: ' + error.message)
   }
 }
+
+const downloadInventory = () => {
+  const blob = new Blob([generatedInventory.value], { type: 'text/yaml' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'inventory.yaml'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+const viewInventory = () => {
+  inventoryModal.value.showModal()
+}
+
+const closeInventoryModal = () => {
+  inventoryModal.value.close()
+}
+
+// Start deployment
+const startDeployment = () => {
+  // Navigate to deployment
+  router.push('/deploy')
+}
+
+// Load configuration
+onMounted(() => {
+  // Load saved configuration
+  config.value = JSON.parse(localStorage.getItem('thinkube-config') || '{}')
+  
+  // Load deployment type
+  deploymentType.value = sessionStorage.getItem('deploymentType') || 'mixed'
+  
+  // Load nodes from role assignment
+  const clusterNodes = JSON.parse(sessionStorage.getItem('clusterNodes') || '[]')
+  
+  // Load hardware info for baremetal nodes
+  const serverHardware = JSON.parse(sessionStorage.getItem('serverHardware') || '[]')
+  
+  // Merge hardware info with cluster nodes
+  allNodes.value = clusterNodes.map(node => {
+    if (node.type === 'baremetal') {
+      const hwInfo = serverHardware.find(s => s.hostname === node.hostname)
+      if (hwInfo && hwInfo.hardware) {
+        return {
+          ...node,
+          cpu: node.cpu || hwInfo.hardware.cpu_cores,
+          memory: node.memory || hwInfo.hardware.memory_gb,
+          disk: node.disk || hwInfo.hardware.disk_gb,
+          hasGPU: hwInfo.hardware.gpu_detected,
+          gpuInfo: {
+            gpu_count: hwInfo.hardware.gpu_count || 0,
+            gpu_model: hwInfo.hardware.gpu_model || '',
+            gpu_passthrough_info: hwInfo.hardware.gpu_passthrough_info || [],
+            iommu_enabled: hwInfo.hardware.iommu_enabled || false,
+            gpu_passthrough_eligible_count: hwInfo.hardware.gpu_passthrough_eligible_count || 0
+          }
+        }
+      }
+    }
+    return node
+  })
+  
+  // Load GPU assignments from previous step
+  const savedAssignments = JSON.parse(sessionStorage.getItem('gpuAssignments') || '{}')
+  gpuAssignments.value = savedAssignments
+  
+  // Update nodes with GPU data from nodeConfiguration
+  const nodeConfig = JSON.parse(sessionStorage.getItem('nodeConfiguration') || '[]')
+  allNodes.value = allNodes.value.map(node => {
+    const configNode = nodeConfig.find(n => n.hostname === node.hostname)
+    if (configNode?.gpus) {
+      return { ...node, gpus: configNode.gpus }
+    }
+    return node
+  })
+  
+  // Load generated inventory if available
+  generatedInventory.value = sessionStorage.getItem('generatedInventory') || ''
+})
 </script>
 
 <style scoped>
 .inventory-preview {
+  font-family: monospace;
+  font-size: 0.875rem;
   background-color: #f5f5f5;
-  padding: 16px;
-  border-radius: 4px;
+  padding: 1rem;
+  border-radius: 0.5rem;
   overflow-x: auto;
-  font-family: 'Roboto Mono', monospace;
-  font-size: 0.9rem;
 }
 </style>

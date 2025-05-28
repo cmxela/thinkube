@@ -11,7 +11,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
           <div>
-            <p>The installer needs to install system packages and configure your environment.</p>
+            <p>The installer needs administrator access for SSH configuration and server setup.</p>
             <p class="text-sm mt-1">Your password will be used to run commands with sudo and will not be stored.</p>
           </div>
         </div>
@@ -78,10 +78,10 @@
           <div class="text-sm text-base-content/70">
             <p class="mb-2">The installer will use sudo to:</p>
             <ul class="list-disc list-inside space-y-1 ml-2">
-              <li>Update package lists (apt-get update)</li>
-              <li>Install Python, Git, and development tools</li>
-              <li>Install Zsh and Fish shells</li>
+              <li>Configure SSH access between servers</li>
+              <li>Install missing tools (if needed)</li>
               <li>Configure your environment</li>
+              <li>Set up system services</li>
             </ul>
           </div>
         </form>
@@ -126,22 +126,34 @@ const verifyAndContinue = async () => {
     console.log('Verification response:', response.data)
     
     if (response.data.valid) {
-      // Store the password temporarily for the installation
+      // Store the password temporarily for SSH setup and other operations
       sessionStorage.setItem('sudoPassword', sudoPassword.value)
       
-      // Start the installation
-      console.log('Starting setup with password...')
-      const setupResponse = await axios.post('/api/run-setup', {
-        sudo_password: sudoPassword.value
-      })
-      console.log('Setup response:', setupResponse.data)
+      // Check if tools need installation
+      console.log('Checking if tools need installation...')
+      const requirementsResponse = await axios.get('/api/check-requirements')
+      const toolRequirements = requirementsResponse.data.requirements.filter(req => req.category === 'tools')
+      const hasToolsToInstall = toolRequirements.some(req => req.status === 'missing')
       
-      if (setupResponse.data.status === 'exists') {
-        alert('thinkube tools are already installed: ' + setupResponse.data.details.join(', '))
-        router.push('/configuration')
+      if (hasToolsToInstall) {
+        // Tools need installation - start the installation process
+        console.log('Starting setup with password...')
+        const setupResponse = await axios.post('/api/run-setup', {
+          sudo_password: sudoPassword.value
+        })
+        console.log('Setup response:', setupResponse.data)
+        
+        if (setupResponse.data.status === 'exists') {
+          // Tools were already installed, proceed to server discovery
+          router.push('/server-discovery')
+        } else {
+          // Redirect to installation progress page
+          router.push('/installation')
+        }
       } else {
-        // Redirect to installation progress page
-        router.push('/installation')
+        // All tools are already installed, proceed directly to server discovery
+        console.log('All tools already installed, proceeding to server discovery...')
+        router.push('/server-discovery')
       }
     } else {
       error.value = 'Invalid password. Please try again.'

@@ -20,10 +20,10 @@
       >
         <div class="card-body">
           <div class="flex items-center justify-between mb-4">
-            <h2 class="card-title">
-              {{ server.hostname }}
+            <div class="flex items-center gap-2">
+              <h2 class="text-xl font-bold">{{ server.hostname }}</h2>
               <div class="badge badge-ghost">{{ server.ip }}</div>
-            </h2>
+            </div>
             <div v-if="server.canHostVMs" class="badge badge-success">Can Host VMs</div>
           </div>
           
@@ -37,7 +37,7 @@
             
             <div class="stat place-items-center">
               <div class="stat-title">RAM</div>
-              <div class="stat-value text-primary">{{ server.hardware.memory_gb }}</div>
+              <div class="stat-value text-primary">{{ Math.round(server.hardware.memory_gb) }}</div>
               <div class="stat-desc">GB</div>
             </div>
             
@@ -70,25 +70,14 @@
       <div class="card-body">
         <h2 class="card-title mb-4">Cluster Capacity Summary</h2>
         
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <h3 class="font-semibold mb-2">Total Resources</h3>
-            <ul class="space-y-1 text-sm">
-              <li>CPU Cores: {{ totalResources.cpu }}</li>
-              <li>Memory: {{ totalResources.memory }} GB</li>
-              <li>Storage: {{ totalResources.storage }} GB</li>
-              <li v-if="totalResources.gpus > 0">GPUs: {{ totalResources.gpus }}</li>
-            </ul>
-          </div>
-          
-          <div>
-            <h3 class="font-semibold mb-2">VM Hosting Capability</h3>
-            <ul class="space-y-1 text-sm">
-              <li>Servers that can host VMs: {{ vmCapableServers }}</li>
-              <li>Recommended control plane VMs: {{ recommendedControlPlanes }}</li>
-              <li>Maximum worker VMs: {{ maxWorkerVMs }}</li>
-            </ul>
-          </div>
+        <div>
+          <h3 class="font-semibold mb-2">Total Resources</h3>
+          <ul class="space-y-1 text-sm">
+            <li>CPU Cores: {{ totalResources.cpu }}</li>
+            <li>Memory: {{ Math.round(totalResources.memory) }} GB</li>
+            <li>Storage: {{ Math.round(totalResources.storage) }} GB</li>
+            <li v-if="totalResources.gpus > 0">GPUs: {{ totalResources.gpus }}</li>
+          </ul>
         </div>
       </div>
     </div>

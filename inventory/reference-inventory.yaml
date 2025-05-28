@@ -1,0 +1,212 @@
+---
+# Main inventory file for Thinkube infrastructure
+all:
+  vars:
+    domain_name: thinkube.com
+    admin_username: tkadmin  # Application admin (including Keycloak)
+    system_username: thinkube  # OS-level user
+    auth_realm_username: thinkube  # Username for user in thinkube realm
+    ansible_python_interpreter: /home/thinkube/.venv/bin/python3
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    home: "{{ lookup('env', 'HOME') }}"
+    
+    # Network configuration
+    network_cidr: "192.168.1.0/24"  # LAN subnet
+    network_gateway: "192.168.1.1"  # Default gateway for LAN
+    internal_gateway: "192.168.100.1"  # Internal network gateway (lxdbr0)
+    zerotier_network_id: "{{ lookup('env', 'ZEROTIER_NETWORK_ID') }}"
+    zerotier_cidr: "192.168.191.0/24"  # ZeroTier subnet
+    dns_servers: ["8.8.8.8", "8.8.4.4"]  # Default DNS servers
+    dns_search_domains: []  # No custom DNS search domains to prevent wildcard matching with external domains
+
+  children:
+    # Hardware architecture groups
+    arch:
+      children:
+        x86_64:
+          hosts:
+            bcn1:
+            bcn2:
+            tkc:
+            tkw1:
+            dns1:
+        arm64:
+          hosts: {}
+            # Will be added when DGX server is available
+            # dgx1:
+            # tkw3:  # Future ARM-based worker
+
+    # Physical servers (baremetal)
+    baremetal:
+      vars:
+        configure_gpu_passthrough: true
+      children:
+        headless:
+          hosts:
+            bcn2:  # AMD 16 cores, 64GB RAM, 1TB disk, GTX 1080Ti
+              ansible_host: 192.168.1.102
+              lan_ip: 192.168.1.102
+              zerotier_ip: 192.168.191.102
+              server_type: headless
+              arch: x86_64
+              gpu_type: nvidia
+              gpu_model: "GTX 1080Ti"
+              zerotier_enabled: true
+        
+        desktops:
+          hosts:
+            bcn1:  # AMD 32 cores, 128GB RAM, 2TB disk, 2× RTX 3090
+              ansible_host: 192.168.1.101
+              lan_ip: 192.168.1.101
+              zerotier_ip: 192.168.191.101
+              ansible_connection: local  # This is the Ansible controller
+              server_type: desktop
+              arch: x86_64
+              gpu_type: nvidia
+              gpu_model: "RTX 3090"
+              zerotier_enabled: true
+              
+        dgx:  # Group for future DGX Spark server
+          hosts: {}
+            # Will be added in the future
+            # dgx1:
+            #   ansible_host: TBD
+            #   zerotier_ip: 192.168.191.103
+            #   server_type: headless
+            #   arch: arm64
+            #   gpu_type: nvidia
+            #   gpu_model: "A100"
+            #   zerotier_enabled: true
+
+    # LXD cluster configuration
+    lxd_cluster:
+      children:
+        lxd_primary:
+          hosts:
+            bcn1:  # Primary LXD node (most resources)
+        
+        lxd_secondary:
+          hosts:
+            bcn2:  # Secondary LXD node
+    
+    # Groups used for ZeroTier setup
+    zerotier_nodes:
+      hosts:
+        bcn1:
+        bcn2:
+        tkc:  # We want the controller accessible via ZeroTier
+        tkw1: # Worker nodes need ZeroTier too for cluster communication
+        dns1:  # DNS server needs ZeroTier access
+
+    # LXD Containers - these will be created by the playbooks
+    lxd_containers:
+      vars:
+        lxd_image: "ubuntu:24.04"  # Using Ubuntu 24.04 Noble
+        ansible_python_interpreter: "/home/thinkube/.venv/bin/python3"
+      children:
+        dns_containers:
+          hosts:
+            dns1:
+              parent_host: bcn2
+              memory: "2GB"
+              cpu_cores: 1
+              disk_size: "20GB"
+              arch: x86_64
+              lan_ip: 192.168.1.100
+              internal_ip: 192.168.100.50
+              zerotier_ip: 192.168.191.1
+              zerotier_enabled: true
+              gpu_passthrough: false
+        
+        microk8s_containers:
+          children:
+            controllers:
+              hosts:
+                tkc:
+                  parent_host: bcn2
+                  memory: "48GB"
+                  cpu_cores: 12
+                  disk_size: "700GB"
+                  arch: x86_64
+                  lan_ip: 192.168.1.110  # External IP (br0)
+                  internal_ip: 192.168.100.10  # Internal IP (lxdbr0)
+                  zerotier_ip: 192.168.191.110
+                  gpu_passthrough: true
+                  gpu_type: "GTX 1080Ti"
+                  zerotier_enabled: true
+            
+            workers:
+              hosts:
+                tkw1:
+                  parent_host: bcn1
+                  memory: "48GB"
+                  cpu_cores: 12
+                  disk_size: "700GB"
+                  arch: x86_64
+                  lan_ip: 192.168.1.111  # External IP (br0)
+                  internal_ip: 192.168.100.11  # Internal IP (lxdbr0)
+                  zerotier_ip: 192.168.191.111
+                  gpu_passthrough: true
+                  gpu_type: "RTX 3090"
+                  pci_slot: "01:00.0"  # Using PCI slot format for RTX 3090
+                
+                # Future ARM worker (commented out)
+                # tkw3:
+                #   parent_host: dgx1
+                #   memory: "48GB"
+                #   cpu_cores: 12
+                #   arch: arm64
+                #   lan_ip: 192.168.1.113  # External IP (br0)
+                #   internal_ip: 192.168.100.13  # Internal IP (lxdbr0)
+                #   zerotier_ip: 192.168.191.113
+                #   gpu_passthrough: true
+                #   gpu_type: "A100"
+                #   pci_slot: "TBD"
+    
+    # Groups for MicroK8s setup
+    microk8s:
+      children:
+        microk8s_control_plane:
+          hosts:
+            tkc:
+        
+        microk8s_workers:
+          hosts:
+            tkw1:
+            bcn1:  # Baremetal worker with direct GPU access
+            
+    # Group for VMs that need GPU passthrough
+    gpu_passthrough_vms:
+      hosts:
+        tkc:
+        tkw1:
+    
+    # DNS servers
+    dns:
+      hosts:
+        dns1:
+    
+    # Management (where Ansible runs)
+    management:
+      hosts:
+        bcn1:
+        
+    # Container configurations for GPU passthrough
+    container_configs:
+      vars:
+        bcn2:
+          - name: tkc
+            gpu_type: "GTX 1080Ti"
+          - name: dns1
+            gpu_passthrough: false
+        bcn1:
+          - name: tkw1
+            gpu_type: "RTX 3090"
+            pci_slot: "01:00.0"  
+        
+    # Baremetal node GPU configuration
+    baremetal_gpus:
+      vars:
+        bcn1:
+          gpu_type: "RTX 3090"
+          gpu_device: "/dev/nvidia0"

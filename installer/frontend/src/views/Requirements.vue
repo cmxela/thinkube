@@ -102,7 +102,7 @@
       <button 
         v-if="allRequirementsMet"
         class="btn btn-primary gap-2" 
-        @click="$router.push('/configuration')"
+        @click="$router.push('/sudo-password')"
       >
         Continue
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

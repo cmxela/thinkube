@@ -102,9 +102,10 @@
         destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-minimal-notebook:latest"
         description: "Jupyter Minimal Notebook from Quay.io"
         
-      - source: "{{ quay_registry }}/jupyter/scipy-notebook:latest"
-        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-scipy-notebook:latest"
-        description: "Jupyter SciPy Notebook from Quay.io"
+      # Temporarily commented out due to corrupted image layers
+      # - source: "{{ quay_registry }}/jupyter/scipy-notebook:latest"
+      #   destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-scipy-notebook:latest"
+      #   description: "Jupyter SciPy Notebook from Quay.io"
         
       - source: "{{ quay_registry }}/jupyter/datascience-notebook:latest"
         destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-datascience-notebook:latest"

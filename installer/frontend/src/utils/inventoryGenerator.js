@@ -66,8 +66,8 @@ export function generateDynamicInventory() {
         admin_username: 'tkadmin',
         system_username: 'thinkube',
         auth_realm_username: 'thinkube',
-        ansible_python_interpreter: '/home/thinkube/.venv/bin/python3',
-        ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}",
+        ansible_python_interpreter: '/usr/bin/python3',
+        ansible_become_pass: "{{ lookup('env', 'ANSIBLE_BECOME_PASSWORD') }}",
         home: "{{ lookup('env', 'HOME') }}",
         
         // Network configuration (user-provided values only)
@@ -77,11 +77,15 @@ export function generateDynamicInventory() {
         zerotier_api_token: config.zerotierApiToken,
         zerotier_cidr: networkConfig.zerotierCIDR,
         dns_servers: ["8.8.8.8", "8.8.4.4"],
+        dns_search_domains: [],  // No custom DNS search domains to prevent wildcard matching
         
         // LXD configuration (hardcoded bridge name, auto-generated IPv4 network)
         lxd_network_name: "lxdbr0",  // Hardcoded in playbooks
         lxd_network_ipv4_address: networkConfig.lxdIPv4Address || "192.168.100.1/24",
         lxd_network_ipv6_address: "none",  // No IPv6 since we don't assign IPv6 to VMs
+        
+        // Internal gateway - extract from LXD network address
+        internal_gateway: (networkConfig.lxdIPv4Address || "192.168.100.1/24").split('/')[0],
         
         // Kubernetes configuration (will be configured later with MicroK8s)
         
@@ -89,9 +93,32 @@ export function generateDynamicInventory() {
         cloudflare_token: config.cloudflareToken
       },
       children: {
+        // Architecture groups
+        arch: {
+          children: {
+            x86_64: {
+              hosts: {}
+            },
+            arm64: {
+              hosts: {}
+            }
+          }
+        },
+        
         // Physical servers (baremetal)
         baremetal: {
-          hosts: {}
+          hosts: {},
+          children: {
+            headless: {
+              hosts: {}
+            },
+            desktops: {
+              hosts: {}
+            },
+            dgx: {
+              hosts: {}
+            }
+          }
         },
         
         // LXD cluster configuration
@@ -144,6 +171,31 @@ export function generateDynamicInventory() {
               }
             }
           }
+        },
+        
+        // ZeroTier nodes - all nodes that need ZeroTier
+        zerotier_nodes: {
+          hosts: {}
+        },
+        
+        // Management group - where Ansible runs from
+        management: {
+          hosts: {}
+        },
+        
+        // GPU passthrough VMs
+        gpu_passthrough_vms: {
+          hosts: {}
+        },
+        
+        // Container configurations for GPU passthrough
+        container_configs: {
+          vars: {}
+        },
+        
+        // Baremetal node GPU configuration
+        baremetal_gpus: {
+          vars: {}
         }
       }
     }
@@ -161,7 +213,17 @@ export function generateDynamicInventory() {
     }
     
     // Special handling for local connection
-    if (hostname === 'bcn1') {
+    // The server discovery process should have marked which server is local
+    // First check if this server was marked as local during discovery
+    const discoveredServers = JSON.parse(sessionStorage.getItem('discoveredServers') || '[]')
+    const discoveredServer = discoveredServers.find(s => 
+      (s.hostname === hostname || s.host === hostname) && s.is_local
+    )
+    
+    // Also check if this is the first server in the list (common pattern)
+    const isFirstServer = configuredPhysicalServers[0]?.hostname === hostname
+    
+    if (discoveredServer?.is_local || (isFirstServer && !discoveredServer)) {
       serverDef.ansible_connection = 'local'
     }
     
@@ -187,6 +249,24 @@ export function generateDynamicInventory() {
     
     // Add to inventory
     inventory.all.children.baremetal.hosts[hostname] = serverDef
+    
+    // Add to architecture group
+    inventory.all.children.arch.children[serverDef.arch].hosts[hostname] = {}
+    
+    // Add to management group if it has local connection (is the installer host)
+    if (serverDef.ansible_connection === 'local') {
+      inventory.all.children.management.hosts[hostname] = {}
+      // Assume the local host is a desktop (since we're running the installer GUI on it)
+      inventory.all.children.baremetal.children.desktops.hosts[hostname] = {}
+    } else {
+      // Other servers are headless
+      inventory.all.children.baremetal.children.headless.hosts[hostname] = {}
+    }
+    
+    // Add to zerotier_nodes if zerotier is enabled
+    if (serverDef.zerotier_enabled) {
+      inventory.all.children.zerotier_nodes.hosts[hostname] = {}
+    }
   })
   
   // Configure LXD cluster groups
@@ -253,6 +333,15 @@ export function generateDynamicInventory() {
             zerotier_enabled: true,
             gpu_passthrough: vmHasGPUPassthrough(node.hostname)
           }
+          
+          // Add PCI slot if GPU is assigned to this VM
+          Object.entries(gpuAssignments).forEach(([pciAddress, assignment]) => {
+            if (assignment === node.hostname) {
+              // Add the 0000: prefix to the PCI address
+              vmDef.pci_slot = `0000:${pciAddress}`
+            }
+          })
+          
           inventory.all.children.lxd_containers.children.microk8s_containers.children.controllers.hosts[node.hostname] = vmDef
         }
       }
@@ -277,11 +366,42 @@ export function generateDynamicInventory() {
             zerotier_enabled: true,
             gpu_passthrough: vmHasGPUPassthrough(node.hostname)
           }
+          
+          // Add PCI slot if GPU is assigned to this VM
+          Object.entries(gpuAssignments).forEach(([pciAddress, assignment]) => {
+            if (assignment === node.hostname) {
+              // Add the 0000: prefix to the PCI address
+              vmDef.pci_slot = `0000:${pciAddress}`
+            }
+          })
+          
           inventory.all.children.lxd_containers.children.microk8s_containers.children.workers.hosts[node.hostname] = vmDef
         }
       }
     }
   })
+  
+  // Populate additional groups for VMs
+  configuredVirtualMachines.forEach(vm => {
+    // Add to zerotier_nodes
+    if (vm.zerotierIP) {
+      inventory.all.children.zerotier_nodes.hosts[vm.name] = {}
+    }
+    
+    // Add to architecture group (all VMs are x86_64 for now)
+    inventory.all.children.arch.children.x86_64.hosts[vm.name] = {}
+    
+    // Add to gpu_passthrough_vms if it has GPU
+    if (vmHasGPUPassthrough(vm.name)) {
+      inventory.all.children.gpu_passthrough_vms.hosts[vm.name] = {}
+    }
+  })
+  
+  // Add DNS VM to zerotier_nodes if it exists
+  if (inventory.all.children.dns.hosts.dns1) {
+    inventory.all.children.zerotier_nodes.hosts.dns1 = {}
+    inventory.all.children.arch.children.x86_64.hosts.dns1 = {}
+  }
   
   return inventory
 }
@@ -310,7 +430,14 @@ export function inventoryToYAML(inventory) {
       } else if (Array.isArray(value)) {
         yaml.push(`${indent(level)}${key}:`)
         value.forEach(item => {
-          yaml.push(`${indent(level + 1)}- ${item}`)
+          // Quote strings that could be misinterpreted as numbers (like PCI addresses)
+          if (typeof item === 'string' && item.match(/^\d+:\d+\.\d+$/)) {
+            yaml.push(`${indent(level + 1)}- "${item}"`)
+          } else if (typeof item === 'string') {
+            yaml.push(`${indent(level + 1)}- "${item}"`)
+          } else {
+            yaml.push(`${indent(level + 1)}- ${item}`)
+          }
         })
       } else if (typeof value === 'string' && value.includes('{{')) {
         // Quote Jinja2 variables for proper YAML parsing

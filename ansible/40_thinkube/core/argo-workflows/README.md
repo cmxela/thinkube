@@ -20,12 +20,14 @@ This component deploys [Argo Workflows](https://argoproj.github.io/workflows/) a
 
 ## Deployment
 
-The deployment process consists of multiple stages:
+**IMPORTANT**: The playbooks MUST be executed in the numbered order. Each playbook depends on the successful completion of the previous ones.
 
-1. **Configure Keycloak Client**: Set up the OAuth2/OIDC client in Keycloak
-2. **Deploy Argo Workflows & Events**: Deploy the main services with Helm
-3. **Set Up CLI & Token Authentication**: Configure service account token
-4. **Configure Artifact Storage**: Set up MinIO integration
+The deployment process consists of four sequential stages:
+
+1. **10_configure_keycloak.yaml** - Configure Keycloak Client (MUST be run first)
+2. **11_deploy.yaml** - Deploy Argo Workflows & Events (requires Keycloak client from step 1)
+3. **12_setup_token.yaml** - Set Up CLI & Token Authentication (requires Argo deployment from step 2)
+4. **13_setup_artifacts.yaml** - Configure Artifact Storage (requires Argo deployment from step 2)
 
 ### 1. Configure Keycloak Client
 

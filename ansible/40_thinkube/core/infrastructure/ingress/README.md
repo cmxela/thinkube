@@ -28,9 +28,11 @@ Both controllers use NGINX Ingress Controller deployed via Helm with MetalLB for
 ## Prerequisites
 
 1. MicroK8s cluster deployed and running
-2. Control plane and worker nodes joined
-3. MetalLB addon available
-4. Network connectivity between nodes
+2. Control plane and worker nodes joined  
+3. CoreDNS configured for proper DNS resolution
+4. Cert-manager installed (required for TLS certificate creation)
+5. MetalLB addon available
+6. Network connectivity between nodes
 
 ## Playbooks
 

@@ -16,7 +16,7 @@
   gather_facts: true
   vars:
     network_bridge_name: "br0"
-    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_BECOME_PASSWORD') }}"
 
   tasks:
     - name: Display preparation message
@@ -53,6 +53,16 @@
           - Add missing variables to your inventory file at inventory/inventory.yaml
           - Or define them in inventory/group_vars/all.yml
 
+    - name: Wait for automatic package management to complete
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for dpkg lock to be released..."
+          sleep 5
+        done
+      register: wait_result
+      changed_when: false
+      timeout: 300  # Wait up to 5 minutes
+
     - name: Install bridge-utils and related packages
       ansible.builtin.apt:
         name:
@@ -60,6 +70,10 @@
           - ifupdown
         state: present
         update_cache: yes
+      retries: 3
+      delay: 10
+      register: apt_result
+      until: apt_result is success
 
     - name: Check if bridge interface exists
       ansible.builtin.shell: |

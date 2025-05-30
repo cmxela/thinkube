@@ -180,7 +180,7 @@ For example, to set Ansible credentials:
 
 ```bash
 # Add to ~/.env
-echo 'ANSIBLE_SUDO_PASS=mypassword' >> ~/.env
+echo 'ANSIBLE_BECOME_PASSWORD=mypassword' >> ~/.env
 ```
 
 ## Directory Structure

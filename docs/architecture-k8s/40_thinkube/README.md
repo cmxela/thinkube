@@ -25,7 +25,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - Kubernetes configuration available
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/10_setup_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/10_setup_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 11_configure_microk8s_addons.yaml
@@ -42,7 +42,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - Addon settings customized
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/11_configure_microk8s_addons.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/11_configure_microk8s_addons.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 20_join_workers.yaml
@@ -62,7 +62,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - Cluster status updated
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/20_join_workers.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/20_join_workers.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 21_configure_worker_roles.yaml
@@ -80,7 +80,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - Labels applied for workload targeting
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/21_configure_worker_roles.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/21_configure_worker_roles.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 30_setup_coredns.yaml
@@ -100,7 +100,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - Internal service discovery working
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/30_setup_coredns.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/30_setup_coredns.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 40_setup_ingress.yaml
@@ -122,7 +122,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - Ingress classes defined
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/40_setup_ingress.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/40_setup_ingress.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 50_setup_metallb.yaml
@@ -141,7 +141,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - BGP configuration (if applicable)
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/50_setup_metallb.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/50_setup_metallb.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 60_setup_cert_manager.yaml
@@ -162,7 +162,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - Default certificate challenges set up
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/60_setup_cert_manager.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/60_setup_cert_manager.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 18_test_microk8s.yaml
@@ -196,7 +196,7 @@ The Thinkube component deploys and configures MicroK8s Kubernetes cluster and es
   - Addon settings
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/19_reset_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/19_reset_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 28_test_workers.yaml

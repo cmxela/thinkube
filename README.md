@@ -299,7 +299,7 @@ cd ~/thinkube
 ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/10_setup_ssh_keys.yaml --ask-pass --ask-become-pass
 
 # Option 2: Using environment variables (more convenient for automation)
-export ANSIBLE_SUDO_PASS='your_sudo_password'
+export ANSIBLE_BECOME_PASSWORD='your_sudo_password'
 ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/10_setup_ssh_keys.yaml --ask-pass
 ```
 

@@ -269,8 +269,12 @@ const startDiscovery = async () => {
 
 const verifyServer = async (server) => {
   try {
+    // Get password from sessionStorage
+    const sudoPassword = sessionStorage.getItem('sudoPassword')
+    
     const response = await axios.post('/api/verify-server-ssh', {
       ip_address: server.ip,
+      password: sudoPassword,
       test_mode: testMode.value
     })
     
@@ -330,10 +334,13 @@ const addManualServerConfirm = () => {
 }
 
 const proceedToNodeConfig = () => {
+  // Debug log to see what we're storing
+  console.log('Selected servers:', selectedServers.value)
+  
   // Store selected servers in a shared store or pass via router
   sessionStorage.setItem('selectedServers', JSON.stringify(selectedServers.value))
   sessionStorage.setItem('testMode', testMode.value)
-  // Store discovered servers
+  // Store discovered servers - these should have full server objects with hostnames
   sessionStorage.setItem('discoveredServers', JSON.stringify(selectedServers.value))
   // Store network CIDR for inventory generation
   sessionStorage.setItem('networkCIDR', networkCIDR.value)

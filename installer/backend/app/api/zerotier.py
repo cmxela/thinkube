@@ -18,6 +18,12 @@ class ZeroTierNetworkResponse(BaseModel):
     cidr: str = ""
     message: str = ""
 
+class ZeroTierMembersResponse(BaseModel):
+    success: bool
+    members: list = []
+    used_ips: list = []
+    message: str = ""
+
 @router.post("/fetch-zerotier-network", response_model=ZeroTierNetworkResponse)
 async def fetch_zerotier_network(request: ZeroTierNetworkRequest):
     """
@@ -103,4 +109,84 @@ async def fetch_zerotier_network(request: ZeroTierNetworkRequest):
         return ZeroTierNetworkResponse(
             success=False,
             message=f"Error fetching network details: {str(e)}"
+        )
+
+@router.post("/fetch-zerotier-members", response_model=ZeroTierMembersResponse)
+async def fetch_zerotier_members(request: ZeroTierNetworkRequest):
+    """
+    Fetch ZeroTier network members and their assigned IPs
+    """
+    print(f"Fetching ZeroTier members for network: {request.network_id}")
+    try:
+        url = f"https://api.zerotier.com/api/v1/network/{request.network_id}/member"
+        print(f"ZeroTier Members API URL: {url}")
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {request.api_token}",
+                    "Content-Type": "application/json"
+                },
+                timeout=10.0
+            )
+            
+            print(f"ZeroTier Members API response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                members_data = response.json()
+                print(f"Found {len(members_data)} members")
+                
+                members = []
+                used_ips = []
+                
+                for member in members_data:
+                    member_info = {
+                        "nodeId": member.get("nodeId"),
+                        "name": member.get("name", ""),
+                        "online": member.get("online", False),
+                        "authorized": member.get("config", {}).get("authorized", False),
+                        "ipAssignments": member.get("config", {}).get("ipAssignments", [])
+                    }
+                    members.append(member_info)
+                    
+                    # Collect all assigned IPs
+                    for ip in member_info["ipAssignments"]:
+                        if ip and ip not in used_ips:
+                            used_ips.append(ip)
+                
+                print(f"Used IPs: {used_ips}")
+                
+                return ZeroTierMembersResponse(
+                    success=True,
+                    members=members,
+                    used_ips=sorted(used_ips),
+                    message=f"Found {len(members)} members with {len(used_ips)} assigned IPs"
+                )
+                
+            elif response.status_code == 401:
+                return ZeroTierMembersResponse(
+                    success=False,
+                    message="Invalid API token"
+                )
+            elif response.status_code == 404:
+                return ZeroTierMembersResponse(
+                    success=False,
+                    message="Network not found or no access"
+                )
+            else:
+                return ZeroTierMembersResponse(
+                    success=False,
+                    message=f"ZeroTier API error: {response.status_code}"
+                )
+                
+    except httpx.TimeoutException:
+        return ZeroTierMembersResponse(
+            success=False,
+            message="Request timeout - check network connection"
+        )
+    except Exception as e:
+        return ZeroTierMembersResponse(
+            success=False,
+            message=f"Error fetching members: {str(e)}"
         )

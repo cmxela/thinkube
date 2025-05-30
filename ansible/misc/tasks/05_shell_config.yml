@@ -75,9 +75,20 @@
     marker: "# {mark} THINKUBE SHELL FUNCTIONS"
     insertafter: EOF
     block: |
-      # Initialize Starship prompt
-      if command -v starship >/dev/null 2>&1
-          starship init fish | source
+      # Prevent infinite recursion in case of misconfiguration
+      if set -q __THINKUBE_FISH_LOADING
+          return 0
+      end
+      set -g __THINKUBE_FISH_LOADING 1
+      
+      # Initialize Starship prompt (only if installed and not already initialized)
+      if not set -q STARSHIP_SHELL
+          if type -q starship
+              # Additional safety check - ensure starship command actually works
+              if starship --version >/dev/null 2>&1
+                  starship init fish | source
+              end
+          end
       end
       
       # Load Thinkube shared functions
@@ -87,4 +98,7 @@
       
       # NOTE: Aliases are now loaded by the functions loader
       # Do not load aliases separately to avoid recursive loading
+      
+      # Clear loading flag
+      set -e __THINKUBE_FISH_LOADING
   tags: [fish, thinkube]

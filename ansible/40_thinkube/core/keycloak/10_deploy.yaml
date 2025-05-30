@@ -81,13 +81,31 @@
           - cert_check.resources | length > 0
         fail_msg: "Failed to copy wildcard certificate"
         
+    - name: Ensure PostgreSQL client is installed
+      ansible.builtin.package:
+        name: postgresql-client
+        state: present
+      become: true
+      
+    - name: Check if keycloak database exists
+      ansible.builtin.shell: |
+        PGPASSWORD='{{ admin_password }}' psql -h postgres.{{ domain_name }} -U {{ admin_username }} -d postgres -t -c "SELECT 1 FROM pg_database WHERE datname='keycloak';"
+      register: db_exists
+      changed_when: false
+      
+    - name: Create Keycloak database in PostgreSQL
+      ansible.builtin.shell: |
+        PGPASSWORD='{{ admin_password }}' psql -h postgres.{{ domain_name }} -U {{ admin_username }} -d postgres -c "CREATE DATABASE keycloak;"
+      when: db_exists.stdout | trim == ""
+      register: create_db
+      
     - name: Debug important variables
       ansible.builtin.debug:
         msg: |
           keycloak_hostname: {{ keycloak_hostname }} 
           keycloak_namespace: {{ keycloak_namespace }}
           domain_name: {{ domain_name }}
-          zerotier_dns_server: {{ hostvars['dns1'].zerotier_ip }}
+          zerotier_dns_server: {{ hostvars['dns'].zerotier_ip }}
 
     - name: Create Keycloak service
       kubernetes.core.k8s:
@@ -142,7 +160,7 @@
                 containers:
                   - name: keycloak
                     image: quay.io/keycloak/keycloak:26.1.0
-                    args: ["start-dev"]
+                    args: ["start"]
                     env:
                       - name: KC_BOOTSTRAP_ADMIN_USERNAME
                         value: "admin"
@@ -162,6 +180,15 @@
                         value: "true"
                       - name: QUARKUS_HTTP_PROXY_ADDRESS_FORWARDING
                         value: "true"
+                      # PostgreSQL database configuration
+                      - name: KC_DB
+                        value: "postgres"
+                      - name: KC_DB_URL
+                        value: "jdbc:postgresql://postgresql-official.postgres.svc.cluster.local:5432/keycloak"
+                      - name: KC_DB_USERNAME
+                        value: "{{ admin_username }}"
+                      - name: KC_DB_PASSWORD
+                        value: "{{ admin_password }}"
                     ports:
                       - name: http
                         containerPort: 8080

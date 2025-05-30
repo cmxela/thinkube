@@ -31,7 +31,7 @@
   gather_facts: true
   become: false
   vars:
-    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_BECOME_PASSWORD') }}"
     # Collect LXD VM hostnames for testing
     vms_to_test: "{{ groups['lxd_containers'] | default([]) }}"
     # List of essential packages that should be installed on all VMs

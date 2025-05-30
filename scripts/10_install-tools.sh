@@ -277,7 +277,7 @@ NETWORK_CIDR=192.168.1.0/24
 ZEROTIER_NETWORK_ID=your_zerotier_network_id
 
 # Authentication
-ANSIBLE_SUDO_PASS=your_sudo_password
+ANSIBLE_BECOME_PASSWORD=your_sudo_password
 # GITHUB_TOKEN=your_github_token  # Uncomment and set if needed
 
 # Server Configuration

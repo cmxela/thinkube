@@ -15,7 +15,7 @@ Brief description of this component's purpose and role in the Thinkube deploymen
 - **Outputs**: Expected state after successful execution
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/path/to/playbook.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/path/to/playbook.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### X1_configuration_playbook.yaml
@@ -27,7 +27,7 @@ Brief description of this component's purpose and role in the Thinkube deploymen
 - **Outputs**: Expected state after successful execution 
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/path/to/playbook.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/path/to/playbook.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### X8_test_playbook.yaml
@@ -38,7 +38,7 @@ Brief description of this component's purpose and role in the Thinkube deploymen
 - **What it Tests**: List of specific tests performed
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/path/to/playbook.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/path/to/playbook.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### X9_rollback_playbook.yaml
@@ -49,7 +49,7 @@ Brief description of this component's purpose and role in the Thinkube deploymen
 - **What it Removes**: List of changes that will be reverted
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/path/to/playbook.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/path/to/playbook.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ## Dependencies

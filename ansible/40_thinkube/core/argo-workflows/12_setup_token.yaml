@@ -141,6 +141,7 @@
       ansible.builtin.shell: |
         set -eu
         echo "Listing workflows in '{{ argo_namespace }}' with token via gRPC domain..."
+        export KUBECONFIG={{ kubeconfig }}
         {{ argo_list_cmd }}
       register: argo_cli_test
       changed_when: false

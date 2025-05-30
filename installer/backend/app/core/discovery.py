@@ -174,7 +174,7 @@ async def verify_local_server() -> Dict[str, Any]:
         }
 
 
-async def verify_ssh_connectivity(ip_address: str, username: str = "thinkube") -> Dict[str, Any]:
+async def verify_ssh_connectivity(ip_address: str, username: str = "thinkube", password: str = None) -> Dict[str, Any]:
     """Verify SSH connectivity to a server"""
     # Check if this is the local machine using multiple methods
     local_ips = await get_local_ip_addresses()
@@ -201,16 +201,29 @@ async def verify_ssh_connectivity(ip_address: str, username: str = "thinkube") -
         logger.info(f"IP {ip_address} is not local, proceeding with SSH verification")
     
     try:
-        # Try SSH connection with key-based auth for remote servers
-        result = await asyncio.create_subprocess_exec(
-            'ssh', '-o', 'ConnectTimeout=5',
-            '-o', 'StrictHostKeyChecking=no',
-            '-o', 'UserKnownHostsFile=/dev/null',
-            '-o', 'BatchMode=yes',  # Don't prompt for password
-            f'{username}@{ip_address}', 'echo "SSH OK"; lsb_release -d 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME',
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
+        # Try SSH connection - use password if provided, otherwise try key-based
+        if password:
+            # Use sshpass for password authentication
+            result = await asyncio.create_subprocess_exec(
+                'sshpass', '-p', password,
+                'ssh', '-o', 'ConnectTimeout=5',
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                f'{username}@{ip_address}', 'echo "SSH OK"; lsb_release -d 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+        else:
+            # Fall back to key-based auth
+            result = await asyncio.create_subprocess_exec(
+                'ssh', '-o', 'ConnectTimeout=5',
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                '-o', 'BatchMode=yes',  # Don't prompt for password
+                f'{username}@{ip_address}', 'echo "SSH OK"; lsb_release -d 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
         stdout, stderr = await result.communicate()
         
         if result.returncode == 0:
@@ -218,15 +231,26 @@ async def verify_ssh_connectivity(ip_address: str, username: str = "thinkube") -
             lines = output.split('\n')
             
             # Get hostname
-            hostname_result = await asyncio.create_subprocess_exec(
-                'ssh', '-o', 'ConnectTimeout=5',
-                '-o', 'StrictHostKeyChecking=no',
-                '-o', 'UserKnownHostsFile=/dev/null',
-                '-o', 'BatchMode=yes',
-                f'{username}@{ip_address}', 'hostname',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            if password:
+                hostname_result = await asyncio.create_subprocess_exec(
+                    'sshpass', '-p', password,
+                    'ssh', '-o', 'ConnectTimeout=5',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'UserKnownHostsFile=/dev/null',
+                    f'{username}@{ip_address}', 'hostname',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+            else:
+                hostname_result = await asyncio.create_subprocess_exec(
+                    'ssh', '-o', 'ConnectTimeout=5',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'UserKnownHostsFile=/dev/null',
+                    '-o', 'BatchMode=yes',
+                    f'{username}@{ip_address}', 'hostname',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
             hostname_stdout, _ = await hostname_result.communicate()
             hostname = hostname_stdout.decode().strip() if hostname_result.returncode == 0 else None
             

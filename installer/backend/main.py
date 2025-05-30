@@ -100,7 +100,7 @@ async def get_current_user():
 
 
 # WebSocket for real-time updates
-@app.websocket("/ws")
+@app.websocket("/api/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.append(websocket)

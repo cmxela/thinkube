@@ -21,7 +21,7 @@ The Baremetal Infrastructure component configures the physical servers that will
   - System configured for hosting VMs
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/10_install_dependencies.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/10_install_dependencies.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 11_configure_system_settings.yaml
@@ -39,7 +39,7 @@ The Baremetal Infrastructure component configures the physical servers that will
   - Kernel parameters properly configured
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/11_configure_system_settings.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/11_configure_system_settings.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 20_configure_network_bridge.yaml
@@ -59,7 +59,7 @@ The Baremetal Infrastructure component configures the physical servers that will
   - Bridge configured with static IP
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/20_configure_network_bridge.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 18_test_system_readiness.yaml
@@ -75,7 +75,7 @@ The Baremetal Infrastructure component configures the physical servers that will
   - Network bridge is working correctly
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/18_test_system_readiness.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/18_test_system_readiness.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 19_rollback_system_changes.yaml
@@ -91,7 +91,7 @@ The Baremetal Infrastructure component configures the physical servers that will
   - System settings changes
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/19_rollback_system_changes.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/10_baremetal_infra/19_rollback_system_changes.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ## Dependencies

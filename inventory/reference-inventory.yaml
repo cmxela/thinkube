@@ -7,7 +7,7 @@ all:
     system_username: thinkube  # OS-level user
     auth_realm_username: thinkube  # Username for user in thinkube realm
     ansible_python_interpreter: /home/thinkube/.venv/bin/python3
-    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_BECOME_PASSWORD') }}"
     home: "{{ lookup('env', 'HOME') }}"
     
     # Network configuration

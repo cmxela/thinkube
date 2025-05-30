@@ -24,7 +24,7 @@ The Networking component configures the network infrastructure for the Thinkube 
   - Routing configured for overlay network
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/30_networking/10_setup_zerotier.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/30_networking/10_setup_zerotier.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 # Note: This playbook has been consolidated into 10_setup_zerotier.yaml
@@ -60,7 +60,7 @@ The Networking component configures the network infrastructure for the Thinkube 
   - Forwarding configured for external domains
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/30_networking/20_setup_dns.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/30_networking/20_setup_dns.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 # Note: This playbook has been consolidated into 20_setup_dns.yaml
@@ -116,7 +116,7 @@ The Networking component configures the network infrastructure for the Thinkube 
   - Allows safe node-specific removal without affecting other nodes
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/30_networking/19_reset_zerotier.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/30_networking/19_reset_zerotier.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 28_test_dns.yaml
@@ -163,7 +163,7 @@ The Networking component configures the network infrastructure for the Thinkube 
   - Optionally reinstalls bind9 with clean configuration
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/30_networking/29_reset_dns.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/30_networking/29_reset_dns.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ## Dependencies

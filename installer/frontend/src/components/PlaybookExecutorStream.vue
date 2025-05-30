@@ -234,12 +234,19 @@ const connectWebSocket = (params: any) => {
   websocket.value.onopen = async () => {
     console.log('WebSocket connected')
     
-    // Import inventory generator
-    const { generateDynamicInventory, inventoryToYAML } = await import('../utils/inventoryGenerator.js')
+    let inventoryYAML = ''
     
-    // Generate dynamic inventory
-    const dynamicInventory = generateDynamicInventory()
-    const inventoryYAML = inventoryToYAML(dynamicInventory)
+    // Check if this is SSH-related playbook - use minimal inventory
+    if (props.playbookName === 'setup-ssh-keys' || props.playbookName === 'test-ssh-connectivity') {
+      const { generateMinimalInventory, minimalInventoryToYAML } = await import('../utils/minimalInventory.js')
+      const minimalInventory = generateMinimalInventory()
+      inventoryYAML = minimalInventoryToYAML(minimalInventory)
+    } else {
+      // Use full inventory for other playbooks
+      const { generateDynamicInventory, inventoryToYAML } = await import('../utils/inventoryGenerator.js')
+      const dynamicInventory = generateDynamicInventory()
+      inventoryYAML = inventoryToYAML(dynamicInventory)
+    }
     
     // Add inventory to parameters
     const paramsWithInventory = {

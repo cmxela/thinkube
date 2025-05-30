@@ -70,7 +70,7 @@ The Initial Setup component establishes the foundation for the Thinkube deployme
   - SSH configuration in ~/.ssh/config
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/19_reset_ssh_config.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/19_reset_ssh_config.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ## Dependencies

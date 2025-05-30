@@ -10,17 +10,18 @@ $TTL    604800
 @       IN      NS      dns.{{ domain_name }}.
 
 ; A records for main services
-@               IN      A       {{ hostvars['tkc']['zerotier_ip'] }}
-dns             IN      A       {{ hostvars['dns1']['zerotier_ip'] }}
+@               IN      A       {{ ingress_ip }}
+dns             IN      A       {{ hostvars['dns']['zerotier_ip'] }}
 
 ; Controller and worker nodes
-tkc             IN      A       {{ hostvars['tkc']['zerotier_ip'] }}
-{% if 'tkw1' in hostvars %}
-tkw1            IN      A       {{ hostvars['tkw1']['zerotier_ip'] }}
+{% for host in groups['microk8s_control_plane'] %}
+{{ host }}      IN      A       {{ hostvars[host]['zerotier_ip'] }}
+{% endfor %}
+{% for host in groups['microk8s_workers'] %}
+{% if hostvars[host].get('zerotier_ip') %}
+{{ host }}      IN      A       {{ hostvars[host]['zerotier_ip'] }}
 {% endif %}
-{% if 'tkw2' in hostvars %}
-tkw2            IN      A       {{ hostvars['tkw2']['zerotier_ip'] }}
-{% endif %}
+{% endfor %}
 
 ; Baremetal hosts
 {% if 'bcn1' in hostvars %}

@@ -35,10 +35,10 @@ First set up your sudo password securely:
 
 ```bash
 # Option 1: Export password for current session only
-export ANSIBLE_SUDO_PASS='your_sudo_password'
+export ANSIBLE_BECOME_PASSWORD='your_sudo_password'
 
 # Option 2: Add to .env file and create symbolic link in project root
-echo 'ANSIBLE_SUDO_PASS=your_sudo_password' >> ~/.env
+echo 'ANSIBLE_BECOME_PASSWORD=your_sudo_password' >> ~/.env
 ln -sf ~/.env /home/thinkube/thinkube/.env  # Create symbolic link in project root
 
 # Option 3: Provide password interactively when prompted
@@ -55,22 +55,22 @@ All commands use environment variables for security:
 
 ```bash
 # Basic command with sudo password from environment variable
-ansible-playbook -i inventory/inventory.yaml ansible/[path/to/playbook].yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+ansible-playbook -i inventory/inventory.yaml ansible/[path/to/playbook].yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
 
 # Alternative: prompt for password interactively (more secure for shared systems)
 ansible-playbook -i inventory/inventory.yaml ansible/[path/to/playbook].yaml --ask-become-pass
 
 # Run with specific tags
-ansible-playbook -i inventory/inventory.yaml ansible/[path/to/playbook].yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS" --tags "tag1,tag2"
+ansible-playbook -i inventory/inventory.yaml ansible/[path/to/playbook].yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD" --tags "tag1,tag2"
 
 # Run MicroK8s setup
-ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/10_setup_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/10_setup_microk8s.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
 
 # Join worker nodes
-ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/20_join_workers.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+ansible-playbook -i inventory/inventory.yaml ansible/40_core_services/20_join_workers.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
 
 # Additional variables
-ansible-playbook -i inventory/inventory.yaml ansible/[path/to/playbook].yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS domain_name=example.org admin_username=user"
+ansible-playbook -i inventory/inventory.yaml ansible/[path/to/playbook].yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD domain_name=example.org admin_username=user"
 ```
 
 ### Playbook Execution Policy

@@ -8,7 +8,7 @@
   become: true
   
   vars:
-    zerotier_dns_server: "{{ hostvars['dns1'].zerotier_ip }}"  # 192.168.191.1
+    zerotier_dns_server: "{{ hostvars['dns'].zerotier_ip }}"  # 192.168.191.1
     k8s_cluster_domain: "cluster.local"
     coredns_cluster_ip: "10.152.183.10"  # Standard CoreDNS cluster IP
     

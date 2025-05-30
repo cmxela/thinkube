@@ -108,10 +108,16 @@ async def stream_playbook_execution(websocket: WebSocket, playbook_name: str):
         # Use dynamic inventory if provided, otherwise use default
         inventory_to_use = temp_inventory_path if temp_inventory_path else str(inventory_path)
         
+        # Find ansible-playbook in user venv or system
+        ansible_playbook_path = "ansible-playbook"
+        user_venv_ansible = Path.home() / ".venv" / "bin" / "ansible-playbook"
+        if user_venv_ansible.exists():
+            ansible_playbook_path = str(user_venv_ansible)
+        
         # Build command to run ansible-playbook directly
         cmd = [
             "stdbuf", "-oL", "-eL",  # Force line buffering
-            "ansible-playbook",
+            ansible_playbook_path,
             "-i", inventory_to_use,
             str(playbook_path),
             "-e", f"@{temp_vars_path}",
@@ -121,6 +127,14 @@ async def stream_playbook_execution(websocket: WebSocket, playbook_name: str):
         # Set up environment with Ansible specific settings for real-time output
         env = os.environ.copy()
         env.update(environment)
+        
+        # Add venv to PATH if it exists
+        user_venv = Path.home() / ".venv"
+        if user_venv.exists():
+            venv_bin = str(user_venv / "bin")
+            current_path = env.get('PATH', '')
+            env['PATH'] = f"{venv_bin}:{current_path}"
+        
         # Force unbuffered output and disable color codes
         env['PYTHONUNBUFFERED'] = '1'
         env['ANSIBLE_FORCE_COLOR'] = '0'  # Disable color codes for cleaner parsing

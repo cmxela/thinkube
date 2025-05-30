@@ -14,22 +14,22 @@ else
 fi
 
 # Check for required environment variables
-if [ -z "$ANSIBLE_SUDO_PASS" ]; then
-  echo "ERROR: ANSIBLE_SUDO_PASS environment variable not set!"
+if [ -z "$ANSIBLE_BECOME_PASSWORD" ]; then
+  echo "ERROR: ANSIBLE_BECOME_PASSWORD environment variable not set!"
   exit 1
 fi
 
 # Export environment variables for Ansible
-export ANSIBLE_BECOME_PASSWORD="$ANSIBLE_SUDO_PASS"
-export ANSIBLE_SUDO_PASS
+export ANSIBLE_BECOME_PASSWORD="$ANSIBLE_BECOME_PASSWORD"
+export ANSIBLE_BECOME_PASSWORD
 
 # Set up authentication - this is critical for remote access
 if [ -n "$ANSIBLE_SSH_PASS" ]; then
   echo "Using ANSIBLE_SSH_PASS for SSH authentication"
 else
-  # If ANSIBLE_SSH_PASS is not set, use ANSIBLE_SUDO_PASS as the SSH password
-  echo "ANSIBLE_SSH_PASS not set, using ANSIBLE_SUDO_PASS for SSH authentication"
-  export ANSIBLE_SSH_PASS="$ANSIBLE_SUDO_PASS"
+  # If ANSIBLE_SSH_PASS is not set, use ANSIBLE_BECOME_PASSWORD as the SSH password
+  echo "ANSIBLE_SSH_PASS not set, using ANSIBLE_BECOME_PASSWORD for SSH authentication"
+  export ANSIBLE_SSH_PASS="$ANSIBLE_BECOME_PASSWORD"
 fi
 
 # Make sure we have sshpass installed
@@ -60,14 +60,14 @@ shift  # Remove first argument
 TEMP_VARS="/tmp/ansible-vars-$$.yml"
 cat > "$TEMP_VARS" << EOF
 ---
-ansible_become_pass: "$ANSIBLE_SUDO_PASS" 
+ansible_become_pass: "$ANSIBLE_BECOME_PASSWORD" 
 ansible_ssh_pass: "$ANSIBLE_SSH_PASS"
 ansible_user: "thinkube"
 EOF
 
 # Display execution info
 echo "Running playbook: $PLAYBOOK"
-echo "With environment: ANSIBLE_SUDO_PASS=*** ANSIBLE_SSH_PASS=***"
+echo "With environment: ANSIBLE_BECOME_PASSWORD=*** ANSIBLE_SSH_PASS=***"
 echo "Additional options: $@"
 echo
 

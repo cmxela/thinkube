@@ -98,6 +98,35 @@ const router = createRouter({
   routes
 })
 
+// Check for ongoing deployment on every navigation
+router.beforeEach((to, from, next) => {
+  console.log('Router guard checking navigation to:', to.name)
+  
+  // Check if there's a saved deployment state
+  const deploymentState = localStorage.getItem('thinkube-deployment-state')
+  
+  if (deploymentState) {
+    const state = JSON.parse(deploymentState)
+    console.log('Found deployment state:', {
+      awaitingRestart: state.awaitingRestart,
+      currentPhase: state.currentPhase,
+      queueLength: state.queue?.length
+    })
+    
+    // If we're in the middle of a deployment and not already going to deploy page
+    if (state.awaitingRestart && to.name !== 'deploy') {
+      console.log('Redirecting to deployment page due to awaitingRestart flag')
+      next({ name: 'deploy' })
+      return
+    }
+  } else {
+    console.log('No deployment state found in localStorage')
+  }
+  
+  // Otherwise, proceed normally
+  next()
+})
+
 export default router
 
 // 🤖 AI-generated

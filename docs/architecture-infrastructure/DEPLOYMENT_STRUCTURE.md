@@ -81,9 +81,9 @@ This convention provides a clear structure where:
 │   ├── core/                       # Essential platform components
 │   │   ├── infrastructure/         # Basic Kubernetes infrastructure
 │   │   │   ├── microk8s/
-│   │   │   ├── ingress/
-│   │   │   ├── cert-manager/
-│   │   │   └── coredns/
+│   │   │   ├── coredns/
+│   │   │   ├── cert-manager/      # Must be installed before ingress
+│   │   │   └── ingress/           # Depends on cert-manager for certificates
 │   │   ├── keycloak/              # SSO and authentication
 │   │   ├── postgresql/            # Database services
 │   │   ├── minio/                 # Object storage
@@ -137,8 +137,18 @@ The deployment follows a sequential process through each directory, with each di
 - Ensure proper routing between components
 
 ### Phase 4: Thinkube Platform
-- Deploy core infrastructure (MicroK8s, ingress, cert-manager)
-- Deploy core services (Keycloak, PostgreSQL, Harbor, etc.)
+- Deploy core infrastructure in order:
+  1. MicroK8s cluster setup
+  2. CoreDNS configuration
+  3. Cert-manager (required for ingress certificates)
+  4. Ingress controllers (depends on cert-manager)
+- Deploy core services in dependency order:
+  1. **Keycloak** (uses embedded H2 database in dev mode)
+  2. **Harbor** (requires Keycloak for OIDC authentication)
+  3. **Mirror public images** to Harbor (including postgres:14.5-alpine)
+  4. **PostgreSQL** (uses postgres image from Harbor)
+  5. **MinIO** (object storage)
+  6. Other services that depend on the above
 - Deploy CI/CD stack (Argo Workflows, ArgoCD, DevPi)
 - Deploy AWX for optional component management
 - Deploy optional services via AWX (Prometheus, JupyterHub, etc.)

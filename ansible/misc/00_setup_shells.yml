@@ -70,6 +70,13 @@
       include_tasks: tasks/01_starship_setup.yml
       tags: [starship]
       
+    # Set default if starship task was skipped
+    - name: Set default starship availability
+      set_fact:
+        starship_available: false
+      when: starship_available is not defined
+      tags: [starship]
+      
     - name: Functions system - Create and configure shared functions
       include_tasks: tasks/02_functions_system.yml
       tags: [functions]

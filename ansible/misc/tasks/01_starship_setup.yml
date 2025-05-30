@@ -13,7 +13,7 @@
     mode: '0755'
   tags: [starship]
 
-- name: Install Starship
+- name: Install Starship (system-wide with become)
   shell: curl --connect-timeout 10 --max-time 60 -sS https://starship.rs/install.sh | sh -s -- -y
   args:
     executable: /bin/bash
@@ -21,8 +21,8 @@
   register: starship_install_result
   async: 120
   poll: 5
+  become: true
   tags: [starship]
-  ignore_errors: yes
 
 - name: Install Starship (fallback method - user install)
   block:
@@ -63,9 +63,21 @@
     - starship_install_result.failed
   tags: [starship, fallback]
 
+- name: Verify Starship installation
+  shell: which starship || echo "not found"
+  register: starship_final_check
+  changed_when: false
+  tags: [starship]
+
+- name: Set fact for Starship availability
+  set_fact:
+    starship_available: "{{ starship_final_check.stdout != 'not found' }}"
+  tags: [starship]
+
 - name: Configure Starship with Tokyo Night theme
   template:
     src: templates/starship.toml.j2
     dest: "{{ starship_config_dir }}/starship.toml"
     mode: '0644'
+  when: starship_available
   tags: [starship]

@@ -26,15 +26,15 @@ else
 fi
 
 # Check for required environment variables
-if [ -z "$ANSIBLE_SUDO_PASS" ]; then
-  echo "ERROR: ANSIBLE_SUDO_PASS environment variable not set!"
+if [ -z "$ANSIBLE_BECOME_PASSWORD" ]; then
+  echo "ERROR: ANSIBLE_BECOME_PASSWORD environment variable not set!"
   exit 1
 fi
 
-# If ANSIBLE_SSH_PASS is not set, use ANSIBLE_SUDO_PASS
+# If ANSIBLE_SSH_PASS is not set, use ANSIBLE_BECOME_PASSWORD
 if [ -z "$ANSIBLE_SSH_PASS" ]; then
-  echo "ANSIBLE_SSH_PASS not set, using ANSIBLE_SUDO_PASS for SSH authentication"
-  export ANSIBLE_SSH_PASS="$ANSIBLE_SUDO_PASS"
+  echo "ANSIBLE_SSH_PASS not set, using ANSIBLE_BECOME_PASSWORD for SSH authentication"
+  export ANSIBLE_SSH_PASS="$ANSIBLE_BECOME_PASSWORD"
 fi
 
 # Install sshpass if needed
@@ -59,7 +59,7 @@ echo "Executing command on $HOST..."
 
 if $needs_sudo; then
   # Prepare a command that pipes the sudo password to sudo
-  SUDO_COMMAND="echo '$ANSIBLE_SUDO_PASS' | sudo -S $COMMAND"
+  SUDO_COMMAND="echo '$ANSIBLE_BECOME_PASSWORD' | sudo -S $COMMAND"
   
   # Use sshpass to handle the SSH password
   sshpass -p "$ANSIBLE_SSH_PASS" ssh -o StrictHostKeyChecking=no "thinkube@$HOST" "$SUDO_COMMAND"

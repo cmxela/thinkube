@@ -21,12 +21,14 @@ These are Linux users at the operating system level:
 
 These are application-specific administrator accounts using basic authentication:
 
-- **Default Username**: `admin` (configurable in inventory)
+- **Default Username**: `tkadmin` (configurable in inventory)
 - **Scope**: Used for initial access to all deployed applications, including Keycloak
 - **Purpose**: Application administration before SSO is configured
-- **Configuration Point**: Defined in inventory as `app_admin_username`
+- **Configuration Point**: Defined in inventory as `admin_username`
 - **Authentication**: Basic auth (username/password)
 - **Creation**: During application deployment
+
+**Note**: We use `tkadmin` instead of `admin` because some services create temporary admin users that cannot be converted to permanent users. Using a distinct username avoids conflicts.
 
 ### 3. Keycloak Realm Users
 
@@ -50,8 +52,8 @@ all:
     system_username: "thinkube"          # OS-level user on all servers/VMs
     
     # Application admin configuration (used for all applications including Keycloak)
-    app_admin_username: "admin"          # Default application admin username
-    app_admin_password: "{{ lookup('env', 'APP_ADMIN_PASSWORD') }}"  # From environment
+    admin_username: "tkadmin"            # Default application admin username
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"      # From environment
     
     # Auth realm user configuration
     auth_realm_username: "thinkube"      # Username for primary user in authentication realm
@@ -82,8 +84,8 @@ Example task:
 ### Application Admin Setup
 
 1. Application admin credentials must be configured during application deployment
-2. Never use hardcoded "admin" string for username
-3. Always use `app_admin_username` from inventory
+2. Never use hardcoded "tkadmin" string for username
+3. Always use `admin_username` from inventory
 4. Store passwords in environment variables, never in inventory files
 5. Use the same admin credentials consistently across all applications (including Keycloak)
 
@@ -99,15 +101,15 @@ Example snippet:
         namespace: "{{ app_namespace }}"
       type: Opaque
       stringData:
-        username: "{{ app_admin_username }}"
-        password: "{{ app_admin_password }}"
+        username: "{{ admin_username }}"
+        password: "{{ admin_password }}"
 ```
 
 ### Keycloak Configuration
 
 #### Keycloak Admin User (Basic Auth)
 
-1. Keycloak's built-in admin user must be configured using the common `app_admin_username`
+1. Keycloak's built-in admin user must be configured using the common `admin_username`
 2. This maintains consistency across all applications
 3. This is for direct administration of Keycloak itself
 
@@ -123,8 +125,8 @@ Example snippet:
         namespace: keycloak
       type: Opaque
       stringData:
-        username: "{{ app_admin_username }}"
-        password: "{{ app_admin_password }}"
+        username: "{{ admin_username }}"
+        password: "{{ admin_password }}"
 ```
 
 #### Keycloak Realm User
@@ -140,8 +142,8 @@ Example snippet:
   community.general.keycloak_user:
     auth_keycloak_url: "https://keycloak.{{ domain_name }}/auth"
     auth_realm: "master"
-    auth_username: "{{ app_admin_username }}"
-    auth_password: "{{ app_admin_password }}"
+    auth_username: "{{ admin_username }}"
+    auth_password: "{{ admin_password }}"
     realm: "thinkube"
     username: "{{ auth_realm_username }}"
     password: "{{ auth_realm_password }}"
@@ -162,7 +164,7 @@ Example snippet:
 Example password handling in environment:
 ```bash
 # Add to ~/.env file (symlinked to project root)
-export APP_ADMIN_PASSWORD='secure_password'
+export ADMIN_PASSWORD='secure_password'
 export AUTH_REALM_PASSWORD='another_secure_password'
 ```
 
@@ -181,11 +183,11 @@ Example validation:
   ansible.builtin.assert:
     that:
       - system_username is defined and system_username != ""
-      - app_admin_username is defined and app_admin_username != ""
+      - admin_username is defined and admin_username != ""
       - auth_realm_username is defined and auth_realm_username != ""
     fail_msg: >
       ERROR: Required user variables not defined in inventory.
-      Please ensure system_username, app_admin_username, and auth_realm_username are set.
+      Please ensure system_username, admin_username, and auth_realm_username are set.
 ```
 
 ## SSH Configuration
@@ -212,7 +214,7 @@ Example SSH config setup:
 | Variable Name | Purpose | Default | Required |
 |---------------|---------|---------|----------|
 | `system_username` | OS-level user | "thinkube" | Yes |
-| `app_admin_username` | Application admin for all apps including Keycloak | "admin" | Yes |
-| `app_admin_password` | App admin password | From env | Yes |
+| `admin_username` | Application admin for all apps including Keycloak | "tkadmin" | Yes |
+| `admin_password` | App admin password | From env | Yes |
 | `auth_realm_username` | User in authentication realm | "thinkube" | Yes |
 | `auth_realm_password` | Realm user password | From env | Yes |

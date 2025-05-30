@@ -7,7 +7,7 @@
 # - VMs must have GPU devices configured by 60_configure_vm_gpu_passthrough.yaml
 #
 # Usage:
-# ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/69_rollback_vm_gpu_passthrough.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+# ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/69_rollback_vm_gpu_passthrough.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
 # Run for specific hosts: -l bcn1,bcn2
 # Run for specific VMs: -e "target_vms=vm1,vm2"
 

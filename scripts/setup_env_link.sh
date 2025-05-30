@@ -36,4 +36,4 @@ fi
 
 echo ""
 echo "To add environment variables, edit $PROJECT_ROOT/.env file:"
-echo "Example: echo 'ANSIBLE_SUDO_PASS=your_password' >> $PROJECT_ROOT/.env"
+echo "Example: echo 'ANSIBLE_BECOME_PASSWORD=your_password' >> $PROJECT_ROOT/.env"

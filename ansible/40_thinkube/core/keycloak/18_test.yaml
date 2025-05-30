@@ -8,8 +8,9 @@
 #   - Service is accessible
 #   - Ingress is configured correctly
 #   - Keycloak API is responsive
-#   - Kubernetes realm exists
-#   - Admin user can authenticate
+#   - Thinkube realm exists
+#   - Admin user can authenticate to master realm
+#   - Realm user exists in thinkube realm
 #
 # Usage:
 #   ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/core/keycloak/18_test.yaml
@@ -130,18 +131,18 @@
         status_code: 200
       register: master_realm_check
       
-    - name: Test Keycloak kubernetes realm endpoint
+    - name: Test Keycloak thinkube realm endpoint
       ansible.builtin.uri:
         url: "https://{{ keycloak_hostname }}/realms/{{ keycloak_realm }}"
         validate_certs: no  # Set to no temporarily due to wildcard certificate
         status_code: [200, 404]
-      register: kubernetes_realm_check
+      register: thinkube_realm_check
       failed_when: false
       
     - name: Display {{ keycloak_realm }} realm status
       ansible.builtin.debug:
-        msg: "{{ keycloak_realm | capitalize }} realm {% if kubernetes_realm_check.status == 200 %}exists{% else %}does not exist yet (this is expected if realm hasn't been created){% endif %}"
-      when: kubernetes_realm_check is defined
+        msg: "{{ keycloak_realm | capitalize }} realm {% if thinkube_realm_check.status == 200 %}exists{% else %}does not exist yet (this is expected if realm hasn't been created){% endif %}"
+      when: thinkube_realm_check is defined
       
     - name: Test admin authentication
       ansible.builtin.uri:
@@ -165,9 +166,9 @@
           - auth_test.json.access_token | length > 0
         fail_msg: "Admin authentication failed"
         
-    - name: Test admin user in kubernetes realm
+    - name: Test realm user in kubernetes realm
       ansible.builtin.uri:
-        url: "https://{{ keycloak_hostname }}/admin/realms/{{ keycloak_realm }}/users?username={{ admin_username }}&exact=true"
+        url: "https://{{ keycloak_hostname }}/admin/realms/{{ keycloak_realm }}/users?username={{ auth_realm_username }}&exact=true"
         method: GET
         headers:
           Authorization: "Bearer {{ auth_test.json.access_token }}"
@@ -175,16 +176,16 @@
         validate_certs: no  # Set to no temporarily due to wildcard certificate
       register: user_check
       failed_when: false
-      when: kubernetes_realm_check.status | default(0) == 200
+      when: thinkube_realm_check.status | default(0) == 200
       
-    - name: Verify admin user exists in kubernetes realm
+    - name: Verify realm user exists in kubernetes realm
       ansible.builtin.assert:
         that:
           - user_check.json | length > 0
-          - user_check.json[0].username == admin_username
-        fail_msg: "Admin user not found in kubernetes realm"
+          - user_check.json[0].username == auth_realm_username
+        fail_msg: "Realm user ({{ auth_realm_username }}) not found in kubernetes realm"
       when: 
-        - kubernetes_realm_check.status | default(0) == 200
+        - thinkube_realm_check.status | default(0) == 200
         - user_check is defined
         
     - name: Display test results
@@ -198,6 +199,6 @@
           - "Pod Status: {{ pod_info.resources[0].status.phase }} ✓"
           - "Keycloak Available: {{ keycloak_check.status }} ✓"
           - "Master Realm: {{ master_realm_check.status }} ✓"
-          - "{{ keycloak_realm | capitalize }} Realm: {{ kubernetes_realm_check.status | default('Not configured') }}"
+          - "{{ keycloak_realm | capitalize }} Realm: {{ thinkube_realm_check.status | default('Not configured') }}"
           - "Admin Authentication: {{ 'Successful' if auth_test.json.access_token is defined else 'Failed' }} ✓"
-          - "Admin User in {{ keycloak_realm }} realm: {{ 'Exists' if (user_check.json | default([]) | length > 0) else 'Not configured' }}"
+          - "Realm User ({{ auth_realm_username }}) in {{ keycloak_realm }} realm: {{ 'Exists' if (user_check.json | default([]) | length > 0) else 'Not configured' }}"

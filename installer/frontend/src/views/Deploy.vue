@@ -139,14 +139,21 @@ const loadDeploymentState = () => {
 }
 
 // Save deployment state
-const saveDeploymentState = () => {
+const saveDeploymentState = (forceAwaitingRestart = false) => {
   const state = {
     phases: deploymentPhases.value,
     queue: playbookQueue.value,
     currentPhase: currentPhase.value,
-    awaitingRestart: showRestartNotice.value,
+    awaitingRestart: forceAwaitingRestart || showRestartNotice.value,
     timestamp: new Date().toISOString()
   }
+  console.log('Saving deployment state:', {
+    currentPhase: state.currentPhase,
+    queueLength: state.queue.length,
+    awaitingRestart: state.awaitingRestart,
+    forceAwaitingRestart,
+    showRestartNotice: showRestartNotice.value
+  })
   localStorage.setItem('thinkube-deployment-state', JSON.stringify(state))
 }
 
@@ -295,12 +302,7 @@ const buildPlaybookQueue = () => {
         title: 'Configuring GPU Passthrough',
         name: 'ansible/20_lxd_setup/60_configure_vm_gpu_passthrough.yaml'
       })
-      queue.push({
-        id: 'vm-gpu-drivers',
-        phase: 'lxd',
-        title: 'Installing GPU Drivers in VMs',
-        name: 'ansible/20_lxd_setup/65_configure_vm_gpu_drivers.yaml'
-      })
+      // GPU driver installation moved to after networking setup
     }
   }
   
@@ -317,6 +319,21 @@ const buildPlaybookQueue = () => {
     title: 'Setting up DNS Server',
     name: 'ansible/30_networking/20_setup_dns.yaml'
   })
+  
+  // Phase 5: GPU Drivers (after networking is established)
+  // Move GPU driver installation here so VMs have internet access
+  if (deploymentType !== 'baremetal-only') {
+    const gpuAssignments = JSON.parse(sessionStorage.getItem('gpuAssignments') || '{}')
+    const hasVMGPUs = Object.values(gpuAssignments).some(v => v !== 'baremetal')
+    if (hasVMGPUs) {
+      queue.push({
+        id: 'vm-gpu-drivers-post-network',
+        phase: 'dns',  // Keep in same phase as networking
+        title: 'Installing GPU Drivers in VMs',
+        name: 'ansible/20_lxd_setup/65_configure_vm_gpu_drivers.yaml'
+      })
+    }
+  }
   
   playbookQueue.value = queue
   console.log('Final playbook queue:', queue.map(p => `${p.id}: ${p.title}`))
@@ -414,7 +431,7 @@ const handlePlaybookComplete = async (result) => {
   if (currentPlaybook.value.requiresRestart) {
     console.log('Restart required, saving state...')
     showRestartNotice.value = true
-    saveDeploymentState() // Save state before restart
+    saveDeploymentState(true) // Force awaitingRestart = true
     return
   }
   
@@ -432,7 +449,7 @@ const handlePlaybookContinue = () => {
     console.log('Playbook requires restart, showing restart notice...')
     currentPlaybook.value = null
     showRestartNotice.value = true
-    saveDeploymentState() // Save state before restart
+    saveDeploymentState(true) // Force awaitingRestart = true
     return
   }
   
@@ -441,11 +458,56 @@ const handlePlaybookContinue = () => {
   executeNextPlaybook()
 }
 
+// Save all critical session data to localStorage for recovery after restart
+const saveSessionDataForRestart = () => {
+  const criticalKeys = [
+    'networkConfiguration',
+    'clusterNodes',
+    'vmPlan',
+    'gpuAssignments',
+    'serverHardware',
+    'discoveredServers',
+    'deploymentType',
+    'lxdPrimary',
+    'dnsOption',
+    'currentUser',
+    'sudoPassword',
+    'generatedInventory'
+  ]
+  
+  const sessionBackup = {}
+  criticalKeys.forEach(key => {
+    const value = sessionStorage.getItem(key)
+    if (value) {
+      sessionBackup[key] = value
+    }
+  })
+  
+  localStorage.setItem('thinkube-session-backup', JSON.stringify(sessionBackup))
+}
+
+// Restore session data from localStorage after restart
+const restoreSessionDataAfterRestart = () => {
+  const backup = localStorage.getItem('thinkube-session-backup')
+  if (backup) {
+    const sessionBackup = JSON.parse(backup)
+    Object.entries(sessionBackup).forEach(([key, value]) => {
+      sessionStorage.setItem(key, value)
+    })
+    // Clear the backup after restoring
+    localStorage.removeItem('thinkube-session-backup')
+    return true
+  }
+  return false
+}
+
 // Automated restart of all servers in correct order
 const automatedRestart = async () => {
-  // Save state BEFORE restart with awaitingRestart flag
-  showRestartNotice.value = true  // Keep this true so it saves properly
-  saveDeploymentState()
+  // Save all session data before restart
+  saveSessionDataForRestart()
+  
+  // Save state BEFORE restart with awaitingRestart flag set to true
+  saveDeploymentState(true)  // Force awaitingRestart = true
   
   // Now hide the restart notice for UI
   showRestartNotice.value = false
@@ -542,27 +604,54 @@ const resetDeployment = () => {
 
 // Start deployment on mount
 onMounted(async () => {
-  // Check if we're resuming after restart
+  // Check if we're resuming from any saved state
   const savedState = loadDeploymentState()
   
-  if (savedState && savedState.awaitingRestart) {
-    // Only resume from saved state if we're coming back from a restart
+  if (savedState) {
+    console.log('Found saved deployment state:', savedState)
+    
+    // Check if we need to restore session data (after restart)
+    if (savedState.awaitingRestart) {
+      console.log('Detected restart recovery needed...')
+      // Restore session data from backup
+      const sessionRestored = restoreSessionDataAfterRestart()
+      if (!sessionRestored) {
+        console.error('Failed to restore session data after restart')
+        alert('Session data could not be restored. Please restart the installation.')
+        router.push('/')
+        return
+      }
+      console.log('Session data restored successfully')
+    }
+    
+    // Resume from saved state
     deploymentPhases.value = savedState.phases
     playbookQueue.value = savedState.queue
     currentPhase.value = savedState.currentPhase
     showRestartNotice.value = false  // Don't show notice again
     
-    console.log('Resuming deployment after system restart...')
-    // Clear the restart flag but keep the progress
-    savedState.awaitingRestart = false
-    localStorage.setItem('thinkube-deployment-state', JSON.stringify(savedState))
+    console.log('Resuming deployment from saved state...')
+    // Clear the restart flag if it was set
+    if (savedState.awaitingRestart) {
+      savedState.awaitingRestart = false
+      localStorage.setItem('thinkube-deployment-state', JSON.stringify(savedState))
+    }
     
-    // Automatically continue after a delay to ensure all services are ready
+    // If queue is empty, we're done
+    if (playbookQueue.value.length === 0) {
+      console.log('Deployment queue is empty, marking as complete')
+      deploymentComplete.value = true
+      clearDeploymentState()
+      return
+    }
+    
+    // Continue deployment after a delay to ensure all services are ready
     setTimeout(() => {
       executeNextPlaybook()
-    }, 5000)  // 5 second delay to ensure everything is ready
+    }, savedState.awaitingRestart ? 5000 : 500)  // Longer delay after restart
   } else {
-    // Any other case (fresh start or re-opening installer): start from beginning
+    // Fresh start - no saved state
+    console.log('No saved state found, starting fresh deployment')
     clearDeploymentState()
     buildPlaybookQueue()
     // Add small delay to ensure component is ready

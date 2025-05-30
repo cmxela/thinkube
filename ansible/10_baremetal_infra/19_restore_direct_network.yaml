@@ -16,7 +16,7 @@
   become: true
   vars:
     network_bridge_name: "br0"
-    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_BECOME_PASSWORD') }}"
     
   tasks:
     - name: Display critical warning message

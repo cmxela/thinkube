@@ -1,7 +1,7 @@
 ---
 # ansible/40_thinkube/core/postgresql/10_deploy.yaml
 # Description:
-#   Deploy PostgreSQL database using official container image with SSL support
+#   Deploy PostgreSQL database using Quay.io container image with SSL support
 #
 # Requirements:
 #   - Kubernetes cluster with MicroK8s
@@ -13,21 +13,20 @@
 #   ./scripts/run_ansible.sh ansible/40_thinkube/core/postgresql/10_deploy.yaml
 #
 # Variables from inventory:
-#   - admin_username: PostgreSQL admin user (previously postgres_user)
-#   - admin_password: PostgreSQL admin password (previously postgres_password)
+#   - admin_username: PostgreSQL admin user
+#   - admin_password: PostgreSQL admin password (via ADMIN_PASSWORD env var)
 #   - postgres_hostname: Hostname for PostgreSQL access
-#   - ssl_cert_dir, tls_crt_path, tls_key_path: Certificate paths
+#   - postgres_namespace: Namespace for PostgreSQL deployment
 #   - ingress_namespace: Namespace for ingress controller
 #   - primary_ingress_service: Ingress controller service name
 #   - kubectl_bin: Path to kubectl binary
-#   - registry_domain: Registry domain for container images
 #
 # Dependencies:
 #   - CORE-001: MicroK8s Control Node
 #   - CORE-002: MicroK8s Worker Nodes
 #   - Storage class available (microk8s-hostpath)
 
-- name: Deploy PostgreSQL using official container image
+- name: Deploy PostgreSQL using Quay.io container image
   hosts: microk8s_control_plane  # Use microk8s_control_plane (NOT k8s-control-node or gato-p)
   gather_facts: true
   vars:
@@ -41,11 +40,11 @@
     # Database config
     postgres_database: "mydatabase"
     
-    # User authentication using standard approach
+    # User authentication from environment variable
     admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
 
-    # Official Postgres image (choose a version)
-    postgres_image: "{{ harbor_registry }}/library/postgres:14.5-alpine"
+    # PostgreSQL image from AWS ECR (official PostgreSQL, no Docker Hub dependency)
+    postgres_image: "public.ecr.aws/docker/library/postgres:16-alpine"
 
     # We will store DB data in /var/lib/postgresql/data
     # The official image automatically initializes the DB if empty
@@ -81,7 +80,6 @@
         - ingress_namespace
         - primary_ingress_service
         - kubectl_bin
-        - harbor_registry
 
   tasks:
     ###########################################################################
@@ -202,6 +200,8 @@
                   - name: postgres
                     image: "{{ postgres_image }}"
                     env:
+                      # Standard PostgreSQL environment variables
+                      # The POSTGRES_USER will be created as a superuser by default
                       - name: POSTGRES_USER
                         value: "{{ admin_username }}"
                       - name: POSTGRES_PASSWORD
@@ -214,12 +214,6 @@
                     volumeMounts:
                       - name: data
                         mountPath: /var/lib/postgresql/data
-                    command:
-                      - "docker-entrypoint.sh"
-                    args:
-                      - "postgres"
-                      - "-c"
-                      - "listen_addresses=*"
                     resources:
                       requests:
                         cpu: "250m"
@@ -268,11 +262,29 @@
       ansible.builtin.shell: |
         attempt=1
         max_attempts=30
-        until {{ kubectl_bin }} get pods -n {{ postgres_namespace }} -l app=postgres-official \
-          | grep "Running" || [ $attempt -eq $max_attempts ]; do
-          sleep 2
+        while [ $attempt -le $max_attempts ]; do
+          # Get pod status
+          pod_status=$({{ kubectl_bin }} get pods -n {{ postgres_namespace }} -l app=postgres-official -o jsonpath='{.items[0].status.phase}')
+          ready_status=$({{ kubectl_bin }} get pods -n {{ postgres_namespace }} -l app=postgres-official -o jsonpath='{.items[0].status.containerStatuses[0].ready}')
+          
+          # Check for CrashLoopBackOff or Error states
+          if {{ kubectl_bin }} get pods -n {{ postgres_namespace }} -l app=postgres-official | grep -E "CrashLoopBackOff|Error|ErrImagePull|ImagePullBackOff"; then
+            echo "Pod is in error state"
+            exit 1
+          fi
+          
+          # Check if pod is truly ready
+          if [ "$pod_status" = "Running" ] && [ "$ready_status" = "true" ]; then
+            echo "Pod is ready"
+            exit 0
+          fi
+          
+          echo "Waiting for pod to be ready... (attempt $attempt/$max_attempts)"
+          sleep 5
           attempt=$((attempt + 1))
         done
+        echo "Timeout waiting for pod to be ready"
+        exit 1
       become: true
       register: wait_for_pg
       failed_when: wait_for_pg.rc != 0

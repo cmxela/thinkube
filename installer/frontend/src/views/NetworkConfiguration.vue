@@ -63,7 +63,7 @@
               type="text" 
               class="input input-bordered input-disabled"
               readonly
-              placeholder="Auto-configured by Thinkube"
+              placeholder="192.168.100.1/24"
             />
           </div>
         </div>
@@ -126,18 +126,26 @@
                   </div>
                 </td>
                 <td>
-                  <div class="flex items-center gap-1">
-                    <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
-                    <input 
-                      :value="getLastOctet(server.zerotierIP)"
-                      @input="server.zerotierIP = setLastOctet(getNetworkBase(networkConfig.zerotierCIDR), $event.target.value)"
-                      type="number" 
-                      min="1" 
-                      max="254"
-                      class="input input-bordered input-sm w-16"
-                      :class="{ 'input-error': !isValidIP(server.zerotierIP) }"
-                      :disabled="!networkConfig.zerotierCIDR"
-                    />
+                  <div>
+                    <div class="flex items-center gap-1">
+                      <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
+                      <input 
+                        :value="getLastOctet(server.zerotierIP)"
+                        @input="server.zerotierIP = setLastOctet(getNetworkBase(networkConfig.zerotierCIDR), $event.target.value)"
+                        type="number" 
+                        min="1" 
+                        max="254"
+                        class="input input-bordered input-sm w-16"
+                        :class="{ 
+                          'input-error': !isValidIP(server.zerotierIP) || isZeroTierIPInUse(server.zerotierIP),
+                          'input-warning': isZeroTierIPInUse(server.zerotierIP)
+                        }"
+                        :disabled="!networkConfig.zerotierCIDR"
+                      />
+                    </div>
+                    <div v-if="isZeroTierIPInUse(server.zerotierIP)" class="text-xs text-warning mt-1">
+                      {{ getZeroTierIPStatus(server.zerotierIP) }}
+                    </div>
                   </div>
                 </td>
                 <td>
@@ -200,18 +208,26 @@
                   </div>
                 </td>
                 <td>
-                  <div class="flex items-center gap-1">
-                    <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
-                    <input 
-                      :value="getLastOctet(vm.zerotierIP)"
-                      @input="vm.zerotierIP = setLastOctet(getNetworkBase(networkConfig.zerotierCIDR), $event.target.value)"
-                      type="number" 
-                      min="1" 
-                      max="254"
-                      class="input input-bordered input-sm w-16"
-                      :class="{ 'input-error': !isValidIP(vm.zerotierIP) }"
-                      :disabled="!networkConfig.zerotierCIDR"
-                    />
+                  <div>
+                    <div class="flex items-center gap-1">
+                      <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
+                      <input 
+                        :value="getLastOctet(vm.zerotierIP)"
+                        @input="vm.zerotierIP = setLastOctet(getNetworkBase(networkConfig.zerotierCIDR), $event.target.value)"
+                        type="number" 
+                        min="1" 
+                        max="254"
+                        class="input input-bordered input-sm w-16"
+                        :class="{ 
+                          'input-error': !isValidIP(vm.zerotierIP) || isZeroTierIPInUse(vm.zerotierIP),
+                          'input-warning': isZeroTierIPInUse(vm.zerotierIP)
+                        }"
+                        :disabled="!networkConfig.zerotierCIDR"
+                      />
+                    </div>
+                    <div v-if="isZeroTierIPInUse(vm.zerotierIP)" class="text-xs text-warning mt-1">
+                      {{ getZeroTierIPStatus(vm.zerotierIP) }}
+                    </div>
                   </div>
                 </td>
                 <td>
@@ -317,6 +333,8 @@ const virtualMachines = ref([])
 const zerotierLoading = ref(false)
 const zerotierError = ref('')
 const zerotierNetworkName = ref('')
+const zerotierUsedIPs = ref([])
+const zerotierMembers = ref([])
 
 // Computed
 const ipConflicts = computed(() => {
@@ -346,6 +364,16 @@ const ipConflicts = computed(() => {
   Object.entries(ipCounts).forEach(([ip, count]) => {
     if (count > 1) {
       conflicts.push(`IP ${ip} is assigned ${count} times`)
+    }
+  })
+  
+  // Check for ZeroTier conflicts
+  allIPs.forEach(ip => {
+    if (ip && isZeroTierIPInUse(ip) && ip.startsWith(getNetworkBase(networkConfig.value.zerotierCIDR))) {
+      const status = getZeroTierIPStatus(ip)
+      if (status) {
+        conflicts.push(`ZeroTier IP ${ip}: ${status}`)
+      }
     }
   })
   
@@ -399,6 +427,19 @@ const setLastOctet = (baseNetwork, octet) => {
   return `${baseNetwork}.${octet}`
 }
 
+const isZeroTierIPInUse = (ip) => {
+  return zerotierUsedIPs.value.includes(ip)
+}
+
+const getZeroTierIPStatus = (ip) => {
+  if (!ip) return ''
+  if (isZeroTierIPInUse(ip)) {
+    const member = zerotierMembers.value.find(m => m.ipAssignments.includes(ip))
+    return member ? `Used by ${member.name || member.nodeId.substring(0, 10)}` : 'Already in use'
+  }
+  return ''
+}
+
 const getLXDBase = () => {
   if (!networkConfig.value.cidr) return '192.168.100'
   const localBase = networkConfig.value.cidr.split('/')[0].split('.').slice(0, 2).join('.')
@@ -416,21 +457,64 @@ const assignZeroTierIPs = () => {
   
   // Extract base from ZeroTier CIDR (e.g., "192.168.191.0/24" -> "192.168.191")
   const zerotierBase = networkConfig.value.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.')
-  let counter = 10  // Start at .10 to avoid gateway (.1) and other reserved IPs
+  
+  // Create a set of used IPs for quick lookup
+  const usedIPSet = new Set(zerotierUsedIPs.value)
+  
+  // Function to find next available IP
+  const findNextAvailableIP = (startFrom = 10) => {
+    let counter = startFrom
+    while (counter < 254) {
+      const testIP = `${zerotierBase}.${counter}`
+      if (!usedIPSet.has(testIP)) {
+        usedIPSet.add(testIP) // Mark as used for next iteration
+        return testIP
+      }
+      counter++
+    }
+    return null // No available IPs
+  }
   
   // Assign to physical servers
   physicalServers.value.forEach(server => {
-    if (!server.zerotierIP) {
-      server.zerotierIP = `${zerotierBase}.${counter++}`
+    if (!server.zerotierIP || usedIPSet.has(server.zerotierIP)) {
+      const newIP = findNextAvailableIP()
+      if (newIP) {
+        server.zerotierIP = newIP
+      } else {
+        zerotierError.value = 'No available ZeroTier IPs'
+      }
     }
   })
   
   // Assign to VMs
   virtualMachines.value.forEach(vm => {
-    if (!vm.zerotierIP) {
-      vm.zerotierIP = `${zerotierBase}.${counter++}`
+    if (!vm.zerotierIP || usedIPSet.has(vm.zerotierIP)) {
+      const newIP = findNextAvailableIP()
+      if (newIP) {
+        vm.zerotierIP = newIP
+      } else {
+        zerotierError.value = 'No available ZeroTier IPs'
+      }
     }
   })
+}
+
+const fetchZeroTierMembers = async (config) => {
+  try {
+    const response = await axios.post('/api/fetch-zerotier-members', {
+      network_id: config.zerotierNetworkId,
+      api_token: config.zerotierApiToken
+    })
+    
+    if (response.data.success) {
+      zerotierMembers.value = response.data.members
+      zerotierUsedIPs.value = response.data.used_ips
+      console.log(`Found ${response.data.members.length} ZeroTier members with ${response.data.used_ips.length} used IPs`)
+    }
+  } catch (error) {
+    console.error('Failed to fetch ZeroTier members:', error)
+  }
 }
 
 const fetchZeroTierNetwork = async () => {
@@ -446,20 +530,24 @@ const fetchZeroTierNetwork = async () => {
   zerotierNetworkName.value = ''
   
   try {
-    const response = await axios.post('/api/fetch-zerotier-network', {
-      network_id: config.zerotierNetworkId,
-      api_token: config.zerotierApiToken
-    })
+    // Fetch network info and members in parallel
+    const [networkResponse] = await Promise.all([
+      axios.post('/api/fetch-zerotier-network', {
+        network_id: config.zerotierNetworkId,
+        api_token: config.zerotierApiToken
+      }),
+      fetchZeroTierMembers(config)
+    ])
     
-    if (response.data.success) {
-      networkConfig.value.zerotierCIDR = response.data.cidr
-      zerotierNetworkName.value = response.data.network_name
+    if (networkResponse.data.success) {
+      networkConfig.value.zerotierCIDR = networkResponse.data.cidr
+      zerotierNetworkName.value = networkResponse.data.network_name
       zerotierError.value = ''
       
-      // Now assign ZeroTier IPs using the actual CIDR
+      // Now assign ZeroTier IPs using the actual CIDR and avoiding used IPs
       assignZeroTierIPs()
     } else {
-      zerotierError.value = response.data.message
+      zerotierError.value = networkResponse.data.message
       networkConfig.value.zerotierCIDR = ''
     }
   } catch (error) {
@@ -499,8 +587,8 @@ const generateDefaultIPs = () => {
       }
     })
     
-    // Set display value for LXD network
-    networkConfig.value.lxdIPv4Address = `${lxdNetwork} (auto-configured)`
+    // Set value for LXD network (no comments in the value!)
+    networkConfig.value.lxdIPv4Address = lxdNetwork
   }
   
   // Ingress IP will be configured later with MicroK8s

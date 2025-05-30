@@ -19,7 +19,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - System ready for fresh deployment
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/00_cleanup.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/00_cleanup.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 10_setup_lxd_cluster.yaml
@@ -41,7 +41,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - Clustering configured (if multiple servers)
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/10_setup_lxd_cluster.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/10_setup_lxd_cluster.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 20_setup_lxd_profiles.yaml
@@ -58,7 +58,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - Profiles properly configured for VM creation
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/20_setup_lxd_profiles.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 30_create_vms.yaml
@@ -79,7 +79,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - VMs running and ready for further configuration
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30_create_vms.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/30_create_vms.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 40_configure_vm_ssh.yaml
@@ -109,7 +109,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - Tests SSH connectivity to confirm setup
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/40_configure_vm_ssh.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/40_configure_vm_ssh.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 50_configure_gpu_passthrough.yaml
@@ -136,7 +136,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - Tests GPU detection and functionality
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/50_configure_gpu_passthrough.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/50_configure_gpu_passthrough.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 60_configure_dns_server.yaml
@@ -168,7 +168,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - Tests DNS resolution
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/60_configure_dns_server.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/60_configure_dns_server.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 38_test_vm_creation.yaml
@@ -203,7 +203,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - SSH configuration for VMs
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/39_rollback_vm_creation.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/39_rollback_vm_creation.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ### 28_test_lxd_profiles.yaml
@@ -234,7 +234,7 @@ The LXD Setup component configures LXD on the baremetal servers, creates VM prof
   - LXD profiles (container, vm-base, vm-networks, gpu-passthrough)
 - **Run Command**:
   ```bash
-  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/29_rollback_lxd_profiles.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+  ansible-playbook -i inventory/inventory.yaml ansible/20_lxd_setup/29_rollback_lxd_profiles.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
   ```
 
 ## Implementation Specifications

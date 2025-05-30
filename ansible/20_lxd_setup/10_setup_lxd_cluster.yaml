@@ -247,6 +247,12 @@
     - name: Display token information (truncated)
       ansible.builtin.debug:
         msg: "Generated tokens for secondary nodes: {{ cluster_tokens.keys() | list }}"
+      when: cluster_tokens is defined and cluster_tokens | length > 0
+    
+    - name: Display single node cluster message
+      ansible.builtin.debug:
+        msg: "No secondary nodes found - LXD cluster will run on single node"
+      when: groups['lxd_secondary'] | default([]) | length == 0
 
 # PLAY 2: Join secondary nodes to the cluster
 - name: Join secondary nodes to LXD cluster
@@ -454,9 +460,14 @@
           sleep 5
         fi
         
-        # Check if secondary node is in cluster and online
+        # Check if we have secondary nodes and they are online
+        {% if groups['baremetal'] | length > 1 %}
         if lxc cluster list 2>/dev/null | grep -q "{{ groups['baremetal'][1] }}.*ONLINE"; then
           echo "Cluster appears to be fully formed, synchronizing network to all members"
+        {% else %}
+        if true; then
+          echo "Single node cluster, creating network..."
+        {% endif %}
           
           # Create network with target=all
           echo "Creating network with target=all parameter..."

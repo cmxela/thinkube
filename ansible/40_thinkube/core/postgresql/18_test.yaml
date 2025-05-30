@@ -44,7 +44,6 @@
         - admin_username
         - postgres_hostname
         - kubectl_bin
-        - harbor_registry
 
   tasks:
     ###########################################################################
@@ -87,17 +86,22 @@
     ###########################################################################
     # Task 3) TEST in-cluster connection using ephemeral Pod
     ###########################################################################
+    - name: Delete existing psql-test Pod if exists
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} delete pod psql-test -n {{ postgres_namespace }} --force --grace-period=0 2>/dev/null || true
+      become: true
+      changed_when: false
+
     - name: Create ephemeral psql-test Pod
       ansible.builtin.shell: |
         {{ kubectl_bin }} run psql-test \
-          --image={{ harbor_registry }}/library/postgres:14.5-alpine \
+          --image=quay.io/sclorg/postgresql-16-c9s:latest \
           --restart=Never \
           --namespace {{ postgres_namespace }} \
           --command -- \
             sh -c "sleep 5 && PGPASSWORD='{{ admin_password }}' psql -h {{ postgres_release_name }} -U {{ admin_username }} -d {{ postgres_database }} -c 'SELECT version();' || echo 'Connection failed'"
       become: true
       register: ephemeral_pod
-      ignore_errors: true
 
     - name: Wait for ephemeral psql-test Pod to complete
       ansible.builtin.shell: |
@@ -165,7 +169,40 @@
       failed_when: "'PostgreSQL' not in postgres_test.stdout"
 
     ###########################################################################
-    # Task 5) TEST data persistence
+    # Task 5) TEST admin privileges
+    ###########################################################################
+    - name: Test database creation privileges
+      ansible.builtin.shell: |
+        PGPASSWORD="{{ admin_password }}" \
+        psql -h "{{ postgres_hostname }}" \
+        -p {{ postgres_tcp_port }} \
+        -U "{{ admin_username }}" \
+        -d "{{ postgres_database }}" \
+        -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE test_privileges_db;"
+      become: true
+      register: create_test_db
+      failed_when: create_test_db.rc != 0
+      
+    - name: Drop test database
+      ansible.builtin.shell: |
+        PGPASSWORD="{{ admin_password }}" \
+        psql -h "{{ postgres_hostname }}" \
+        -p {{ postgres_tcp_port }} \
+        -U "{{ admin_username }}" \
+        -d "{{ postgres_database }}" \
+        -v ON_ERROR_STOP=1 \
+        -c "DROP DATABASE test_privileges_db;"
+      become: true
+      register: drop_test_db
+      failed_when: drop_test_db.rc != 0
+      
+    - name: Display admin privileges test results
+      ansible.builtin.debug:
+        msg: "✅ Admin privileges verified - user can create and drop databases"
+
+    ###########################################################################
+    # Task 6) TEST data persistence
     ###########################################################################
     - name: Create test table to verify persistence
       ansible.builtin.shell: |

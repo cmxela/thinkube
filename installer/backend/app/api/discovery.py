@@ -342,7 +342,12 @@ async def discover_servers(request: Dict[str, Any]):
 async def verify_server_ssh(server: Dict[str, Any]):
     """Verify SSH connectivity to a server"""
     ip_address = server.get("ip_address")
-    username = server.get("username", "thinkube")
+    password = server.get("password")
+    
+    # Get current system username as default
+    import pwd
+    current_username = pwd.getpwuid(os.getuid()).pw_name
+    username = server.get("username", current_username)
     
     if not ip_address:
         return {
@@ -352,7 +357,7 @@ async def verify_server_ssh(server: Dict[str, Any]):
             "hostname": None
         }
     
-    return await verify_ssh_connectivity(ip_address, username)
+    return await verify_ssh_connectivity(ip_address, username, password)
 
 
 @router.post("/verify-ssh")
@@ -360,8 +365,12 @@ async def verify_ssh(request: Dict[str, Any]):
     """Verify SSH connectivity - frontend compatibility endpoint"""
     # Extract parameters from frontend request format
     server_ip = request.get("server")
-    username = request.get("username", "thinkube")
-    password = request.get("password")  # Not used for SSH key auth
+    password = request.get("password")
+    
+    # Get current system username as default if not provided
+    import pwd
+    current_username = pwd.getpwuid(os.getuid()).pw_name
+    username = request.get("username", current_username)
     
     if not server_ip:
         return {
@@ -371,7 +380,7 @@ async def verify_ssh(request: Dict[str, Any]):
             "hostname": None
         }
     
-    return await verify_ssh_connectivity(server_ip, username)
+    return await verify_ssh_connectivity(server_ip, username, password)
 
 
 @router.get("/debug-local-ips")

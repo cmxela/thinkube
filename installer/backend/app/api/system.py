@@ -313,7 +313,7 @@ async def check_requirements():
     try:
         # Try to reach Ubuntu package servers
         import socket
-        socket.create_connection(("archive.ubuntu.com", 80), timeout=3)
+        socket.create_connection(("archive.ubuntu.com", 443), timeout=3)
         requirements.append({
             "name": "Network connectivity",
             "category": "system",
@@ -668,41 +668,126 @@ async def check_thinkube_installation():
 
 async def run_setup_script(sudo_password: str):
     """Background task to run the setup script"""
+    # Import main module to access installation_status and broadcast_status
+    import main
+    
     try:
         logger.info("Starting thinkube setup script in background")
         
-        # Find the setup script
-        script_path = Path.home() / "thinkube" / "scripts" / "setup.sh"
+        # Reset installation status
+        main.installation_status["phase"] = "starting"
+        main.installation_status["progress"] = 0
+        main.installation_status["current_task"] = "Initializing installation..."
+        main.installation_status["logs"] = []
+        main.installation_status["errors"] = []
+        await main.broadcast_status(main.installation_status)
+        
+        # Find the setup script - use 10_install-tools.sh directly
+        script_path = Path.home() / "thinkube" / "scripts" / "10_install-tools.sh"
         if not script_path.exists():
-            # Try alternative location
-            script_path = Path("/opt/thinkube/scripts/setup.sh")
-            if not script_path.exists():
-                logger.error(f"Setup script not found at {script_path}")
-                return
+            logger.error(f"Setup script not found at {script_path}")
+            main.installation_status["phase"] = "failed"
+            main.installation_status["errors"].append(f"Setup script not found at {script_path}")
+            await main.broadcast_status(main.installation_status)
+            return
         
         # Set up environment
         env = os.environ.copy()
         if sudo_password:
-            env["SUDO_PASSWORD"] = sudo_password
+            # Create a temporary askpass script for sudo
+            import tempfile
+            askpass_fd, askpass_path = tempfile.mkstemp()
+            try:
+                with os.fdopen(askpass_fd, 'w') as f:
+                    f.write(f'#!/bin/sh\necho "{sudo_password}"\n')
+                os.chmod(askpass_path, 0o700)
+                env["SUDO_ASKPASS"] = askpass_path
+            except:
+                os.close(askpass_fd)
+                raise
         
-        # Run the setup script
+        # Update status to running
+        main.installation_status["phase"] = "running"
+        main.installation_status["logs"].append("Starting installation script...")
+        await main.broadcast_status(main.installation_status)
+        
+        # Run the setup script with real-time output
         process = await asyncio.create_subprocess_exec(
             str(script_path),
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,  # Combine stderr into stdout
             env=env
         )
         
-        stdout, stderr = await process.communicate()
+        # Read output line by line
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+                
+            line_text = line.decode('utf-8', errors='replace').rstrip()
+            if not line_text:
+                continue
+            
+            # Log the line
+            logger.info(f"Setup output: {line_text}")
+            main.installation_status["logs"].append(line_text)
+            
+            # Parse [INSTALLER_STATUS] messages
+            if "[INSTALLER_STATUS]" in line_text:
+                status_part = line_text.split("[INSTALLER_STATUS]", 1)[1].strip()
+                
+                if status_part.startswith("PROGRESS:"):
+                    try:
+                        progress = int(status_part.split(":", 1)[1])
+                        main.installation_status["progress"] = progress
+                    except:
+                        pass
+                
+                elif status_part.startswith("COMPLETED:"):
+                    status = status_part.split(":", 1)[1]
+                    if status == "FAILED":
+                        main.installation_status["phase"] = "failed"
+                    elif status == "SUCCESS":
+                        main.installation_status["phase"] = "completed"
+                        main.installation_status["progress"] = 100
+                
+                else:
+                    # It's a status message
+                    main.installation_status["current_task"] = status_part
+            
+            # Broadcast the update
+            await main.broadcast_status(main.installation_status)
         
-        if process.returncode == 0:
+        # Wait for process to complete
+        return_code = await process.wait()
+        
+        # Clean up askpass script if created
+        if sudo_password and 'askpass_path' in locals():
+            try:
+                os.unlink(askpass_path)
+            except:
+                pass
+        
+        # Update final status
+        if return_code == 0:
+            if main.installation_status["phase"] != "completed":
+                main.installation_status["phase"] = "completed"
+                main.installation_status["progress"] = 100
+                main.installation_status["current_task"] = "Installation completed successfully"
             logger.info("Setup script completed successfully")
         else:
-            logger.error(f"Setup script failed with return code {process.returncode}")
-            logger.error(f"stderr: {stderr.decode()}")
+            main.installation_status["phase"] = "failed"
+            main.installation_status["errors"].append(f"Setup script failed with return code {return_code}")
+            logger.error(f"Setup script failed with return code {return_code}")
+        
+        await main.broadcast_status(main.installation_status)
         
     except Exception as e:
         logger.error(f"Error running setup script: {e}")
+        main.installation_status["phase"] = "failed"
+        main.installation_status["errors"].append(f"Error: {str(e)}")
+        await main.broadcast_status(main.installation_status)
 
 
 @router.post("/verify-zerotier")

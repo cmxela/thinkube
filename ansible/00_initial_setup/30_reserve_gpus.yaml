@@ -15,7 +15,7 @@
 #   - server_type: 'desktop' or 'headless' (determines X.org config needs)
 #
 # Run with:
-#   ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/30_reserve_gpus.yaml -e "ansible_become_pass=$ANSIBLE_SUDO_PASS"
+#   ansible-playbook -i inventory/inventory.yaml ansible/00_initial_setup/30_reserve_gpus.yaml -e "ansible_become_pass=$ANSIBLE_BECOME_PASSWORD"
 #
 # This should be the first playbook executed in systems with multiple GPUs
 
@@ -199,22 +199,20 @@
         
     # Find audio devices only for assigned GPU slots
     - name: Get associated audio devices for assigned GPUs
-      ansible.builtin.shell: |
-        # Find audio devices for assigned GPU slots only
-        {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
-        for slot in {{ assigned_pci_slots | join(' ') }}; do
-          # Convert slot format if needed (01:00.0 -> 01:00.1)
-          audio_slot="${slot%.0}.1"
-          # Check if audio device exists at this slot
-          if lspci -n -s "$audio_slot" 2>/dev/null | grep -q "0403"; then
-            # Get the vendor:device ID
-            lspci -n -s "$audio_slot" | awk '{print $3}' | tr -d .
+      ansible.builtin.shell:
+        cmd: |
+          slots='{{ assigned_pci_slots | default([]) | join(" ") }}'
+          if [ -n "$slots" ]; then
+            for slot in $slots; do
+              audio_slot="${slot%.0}.1"
+              if lspci -n -s "$audio_slot" 2>/dev/null | grep -q "0403"; then
+                lspci -n -s "$audio_slot" | awk '{print $3}' | tr ':' ' '
+              fi
+            done
+          else
+            echo ""
           fi
-        done
-        {% else %}
-        # No assigned slots - don't find any audio devices
-        echo ""
-        {% endif %}
+        executable: /bin/bash
       register: audio_devices_result
       changed_when: false
       when: can_configure_passthrough
@@ -227,35 +225,38 @@
       
     # Use a more direct approach for IOMMU group detection but only for GPUs in assigned slots
     - name: Find all devices in the same IOMMU groups as assigned GPUs
-      ansible.builtin.shell: |
-        # Get GPU PCI slots from assigned slots in inventory
-        {% if assigned_pci_slots is defined and assigned_pci_slots|length > 0 %}
-        gpu_slots="{{ assigned_pci_slots | join(' ') | replace(':', '\:') }}"
-        for gpu in $gpu_slots; do
-          # Find IOMMU group
-          for group_dir in /sys/kernel/iommu_groups/*/devices/0000:$gpu; do
-            if [ -e "$group_dir" ]; then
-              group=$(echo $group_dir | cut -d/ -f5)
-              echo "IOMMU Group $group for GPU $gpu:"
-              # List all devices in this group by vendor:device ID
-              for dev in /sys/kernel/iommu_groups/$group/devices/*; do
-                dev_addr=$(basename $dev)
-                vendor_device=$(lspci -n -s $dev_addr | awk '{print $3}')
-                if [ -n "$vendor_device" ]; then
-                  echo "$vendor_device"
+      ansible.builtin.shell: 
+        cmd: |
+          set -e
+          # Get GPU PCI slots from assigned slots in inventory
+          gpu_slots='{{ assigned_pci_slots | default([]) | join(" ") }}'
+          if [ -n "$gpu_slots" ]; then
+            for gpu in $gpu_slots; do
+              # Find IOMMU group
+              for group_dir in /sys/kernel/iommu_groups/*/devices/0000:$gpu; do
+                if [ -e "$group_dir" ]; then
+                  group=$(echo $group_dir | cut -d/ -f5)
+                  echo "IOMMU Group $group for GPU $gpu:"
+                  # List all devices in this group by vendor:device ID
+                  for dev in /sys/kernel/iommu_groups/$group/devices/*; do
+                    dev_addr=$(basename $dev)
+                    vendor_device=$(lspci -n -s $dev_addr | awk '{print $3}')
+                    if [ -n "$vendor_device" ]; then
+                      echo "$vendor_device"
+                    fi
+                  done
                 fi
               done
-            fi
-          done
-        done
-        {% else %}
-        # No assigned slots - don't process any IOMMU groups
-        echo ""
-        {% endif %}
-        
-        # Show PCI slot format for reference
-        echo "\nCurrent GPU PCI slots:"
-        lspci | grep -E "VGA|3D|Display"
+            done
+          else
+            # No assigned slots - don't process any IOMMU groups
+            echo ""
+          fi
+          
+          # Show PCI slot format for reference
+          echo -e "\nCurrent GPU PCI slots:"
+          lspci | grep -E "VGA|3D|Display"
+        executable: /bin/bash
       register: iommu_devices_result
       changed_when: false
       when: can_configure_passthrough and (gpu_pci_ids is defined and gpu_pci_ids | length > 0)
@@ -264,7 +265,12 @@
     - name: Add IOMMU devices to passthrough list
       ansible.builtin.set_fact:
         gpu_pci_ids: "{{ ((gpu_pci_ids + iommu_devices_result.stdout_lines | select('match', '^[0-9a-f]{4}:[0-9a-f]{4}$') | list) | unique | reject('equalto', host_gpu_pci_id) | list) }}"
-      when: can_configure_passthrough and (iommu_devices_result is defined and iommu_devices_result.stdout != "") and host_gpu_pci_id is defined
+      when: 
+        - can_configure_passthrough
+        - iommu_devices_result is defined
+        - iommu_devices_result.stdout is defined
+        - iommu_devices_result.stdout != ""
+        - host_gpu_pci_id is defined
       
     # Display complete list of PCI IDs for VFIO binding
     - name: Display complete list of PCI IDs for VFIO binding
@@ -283,11 +289,11 @@
     # Extract the BusID from host_gpu if it matches the pattern
     - name: Extract GPU BusID for X.org
       ansible.builtin.shell: |
-        {% if host_gpu is defined and host_gpu|string is match("^[0-9a-f]{2}:[0-9a-f]{2}\\.[0-9a-f]") %}
-        echo "{{ host_gpu|string }}" | grep -oE "^[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]"
-        {% else %}
-        echo ""
-        {% endif %}
+        if echo "{{ host_gpu|default('') }}" | grep -qE "^[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]"; then
+          echo "{{ host_gpu|string }}" | grep -oE "^[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]"
+        else
+          echo ""
+        fi
       register: gpu_busid_raw
       changed_when: false
       when: can_configure_passthrough and host_gpu is defined and host_gpu|string != ""

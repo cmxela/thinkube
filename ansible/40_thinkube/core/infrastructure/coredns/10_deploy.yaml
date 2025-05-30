@@ -15,7 +15,7 @@
 #
 # Variables from inventory:
 #   - domain_name: Base domain for all services
-#   - dns1: DNS server node (ZeroTier IP used as DNS server)
+#   - dns: DNS server node (ZeroTier IP used as DNS server)
 #   - zerotier_subnet_prefix: Prefix for ZeroTier network
 #   - secondary_ingress_ip_octet: Last octet for secondary ingress IP
 #   - microk8s_workers: Group containing worker nodes
@@ -39,7 +39,7 @@
     kubeconfig: /var/snap/microk8s/current/credentials/client.config
     kubectl_bin: microk8s kubectl
     knative_enabled: false  # Explicitly set to false for CoreDNS setup
-    zerotier_dns_server: "{{ hostvars['dns1'].zerotier_ip }}"  # Get ZeroTier IP from dns1 host
+    zerotier_dns_server: "{{ hostvars['dns'].zerotier_ip }}"  # Get ZeroTier IP from dns host
     kn_subdomain: "kn"  # Extract from dns_search_domains
     secondary_ingress_ip: "{{ zerotier_subnet_prefix }}{{ secondary_ingress_ip_octet }}"
 
@@ -48,7 +48,7 @@
       ansible.builtin.assert:
         that:
           - domain_name is defined
-          - hostvars['dns1'].zerotier_ip is defined
+          - hostvars['dns'].zerotier_ip is defined
           - zerotier_subnet_prefix is defined
           - secondary_ingress_ip_octet is defined
           - groups['microk8s_workers'] is defined

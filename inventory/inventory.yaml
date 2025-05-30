@@ -7,22 +7,36 @@ all:
     admin_username: "tkadmin"
     system_username: "thinkube"
     auth_realm_username: "thinkube"
-    ansible_python_interpreter: "/home/thinkube/.venv/bin/python3"
-    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_SUDO_PASS') }}"
+    ansible_python_interpreter: "/usr/bin/python3"
+    ansible_become_pass: "{{ lookup('env', 'ANSIBLE_BECOME_PASSWORD') }}"
     home: "{{ lookup('env', 'HOME') }}"
     network_cidr: "192.168.1.0/24"
     network_gateway: "192.168.1.1"
     zerotier_network_id: "93afae59634c1a70"
-    zerotier_api_token: "XusunDVtdaDF6BY4EDohb65H5UXi3isq"
+    zerotier_api_token: "X6jbboirhv4oCIOFM3WWUSBgM7qrI1z2"
     zerotier_cidr: "192.168.191.0/24"
+    zerotier_subnet_prefix: "192.168.191."
+    primary_ingress_ip_octet: "200"
+    secondary_ingress_ip_octet: "201"
     dns_servers:
-      - 8.8.8.8
-      - 8.8.4.4
+      - "8.8.8.8"
+      - "8.8.4.4"
+    dns_search_domains:
     lxd_network_name: "lxdbr0"
-    lxd_network_ipv4_address: "192.168.100.1/24 (auto-configured)"
+    lxd_network_ipv4_address: "192.168.100.1/24"
     lxd_network_ipv6_address: "none"
-    cloudflare_token: "3KA3H_ER9Yc7Jp2xr-ETKV7m8mOar4U5mCtdMibA"
+    internal_gateway: "192.168.100.1"
+    cloudflare_token: "w95KIVRILvb-srJkOLK_qMqlOVZMXBgT1oKsO_ue"
   children:
+    arch:
+      children:
+        x86_64:
+          hosts:
+            bcn1:
+            dns:
+            vm-2:
+        arm64:
+          hosts:
     baremetal:
       hosts:
         bcn1:
@@ -33,47 +47,48 @@ all:
           zerotier_enabled: true
           ansible_connection: "local"
           configure_gpu_passthrough: true
-        bcn2:
-          ansible_host: "192.168.1.102"
-          lan_ip: "192.168.1.102"
-          zerotier_ip: "192.168.191.11"
-          arch: "x86_64"
-          zerotier_enabled: true
-          configure_gpu_passthrough: false
+          assigned_pci_slots:
+            - "01:00.0"
+      children:
+        headless:
+          hosts:
+        desktops:
+          hosts:
+            bcn1:
+        dgx:
+          hosts:
     lxd_cluster:
       children:
         lxd_primary:
           hosts:
-            bcn2:
+            bcn1:
         lxd_secondary:
           hosts:
-            bcn1:
-    dns:
+    dns_servers:
       hosts:
-        dns1:
+        dns:
     microk8s:
       children:
         microk8s_control_plane:
           hosts:
-            bcn2:
+            vm-2:
         microk8s_workers:
           hosts:
             bcn1:
-            tkw1:
     lxd_containers:
       vars:
         lxd_image: "ubuntu:24.04"
         ansible_python_interpreter: "/home/thinkube/.venv/bin/python3"
       children:
-        dns_containers:
+        dns_vms:
           hosts:
-            dns1:
-              parent_host: "bcn2"
+            dns:
+              parent_host: "bcn1"
               memory: "2GB"
               cpu_cores: 2
               disk_size: "20GB"
               arch: "x86_64"
-              lan_ip: "192.168.1.112"
+              lan_ip: "192.168.1.111"
               internal_ip: "192.168.100.10"
               zerotier_ip: "192.168.191.1"
               zerotier_enabled: true
@@ -82,16 +97,32 @@ all:
           children:
             controllers:
               hosts:
-            workers:
-              hosts:
-                tkw1:
+                vm-2:
                   parent_host: "bcn1"
                   memory: "48GB"
                   cpu_cores: 12
                   disk_size: "500GB"
                   arch: "x86_64"
-                  lan_ip: "192.168.1.113"
+                  lan_ip: "192.168.1.112"
                   internal_ip: "192.168.100.11"
-                  zerotier_ip: "192.168.191.13"
+                  zerotier_ip: "192.168.191.12"
                   zerotier_enabled: true
                   gpu_passthrough: true
+                  pci_slot: "0000:01:00.0"
+            workers:
+              hosts:
+    zerotier_nodes:
+      hosts:
+        bcn1:
+        dns:
+        vm-2:
+    management:
+      hosts:
+        bcn1:
+    gpu_passthrough_vms:
+      hosts:
+        vm-2:
+    container_configs:
+      vars:
+    baremetal_gpus:
+      vars:

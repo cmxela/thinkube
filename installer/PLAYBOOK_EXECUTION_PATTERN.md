@@ -37,7 +37,7 @@ async def execute_your_playbook(request: Dict[str, Any]):
     # Set up environment variables (optional)
     environment = {}
     if password := request.get("password"):
-        environment["ANSIBLE_SUDO_PASS"] = password
+        environment["ANSIBLE_BECOME_PASSWORD"] = password
     
     # Execute the playbook
     result = await ansible_executor.execute_playbook(

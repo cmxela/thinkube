@@ -20,7 +20,8 @@ export default defineConfig({
       },
       '/api/ws': {
         target: 'ws://localhost:8000',
-        ws: true
+        ws: true,
+        rewrite: (path) => path.replace('/api/ws', '/ws')
       }
     }
   }

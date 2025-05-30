@@ -195,16 +195,7 @@
         status_code: [201, 409]
       register: group_creation
 
-    - name: Get user ID for '{{ admin_username }}'
-      ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username={{ admin_username }}&exact=true"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
-        status_code: 200
-      register: keycloak_user_response
-      no_log: false
-
+    # Get harbor-admins group for adding users
     - name: Get 'harbor-admins' group ID
       ansible.builtin.uri:
         url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/groups"
@@ -214,26 +205,8 @@
         status_code: 200
       register: groups_response
       no_log: false
-      
-    - name: Debug user and group information
-      ansible.builtin.debug:
-        msg: 
-          - "User found: {{ keycloak_user_response.json | length > 0 }}"
-          - "Group found: {{ groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0 }}"
-
-    - name: Add '{{ admin_username }}' to 'harbor-admins' group
-      ansible.builtin.uri:
-        url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users/{{ keycloak_user_response.json[0].id }}/groups/{{ groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | map(attribute='id') | first }}"
-        method: PUT
-        headers:
-          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
-          Content-Type: "application/json"
-        status_code: 204
-      when: 
-        - keycloak_user_response.json | length > 0
-        - groups_response.json | selectattr('name', 'equalto', oidc_admin_group) | list | length > 0
         
-    # Make sure thinkube user is also in harbor-admins group
+    # Add thinkube user to harbor-admins group
     - name: Get thinkube user info
       ansible.builtin.uri:
         url: "{{ keycloak_url }}/admin/realms/{{ keycloak_realm }}/users?username=thinkube&exact=true"
@@ -626,7 +599,16 @@
         validate_certs: false
         status_code: 200
       register: final_config
-      failed_when: final_config.json.auth_mode != 'oidc_auth'
+      until: final_config.status == 200
+      retries: 10
+      delay: 10
+      
+    - name: Verify auth mode is OIDC
+      ansible.builtin.assert:
+        that:
+          - final_config.json.auth_mode == 'oidc_auth'
+        fail_msg: "Harbor auth mode is not OIDC: {{ final_config.json.auth_mode | default('unknown') }}"
+        success_msg: "Harbor is configured for OIDC authentication"
       
     - name: Verify OIDC configuration
       ansible.builtin.uri:
@@ -637,6 +619,9 @@
         validate_certs: false
         status_code: 200
       register: harbor_config
+      until: harbor_config.status == 200
+      retries: 5
+      delay: 5
       
     - name: Display OIDC configuration
       ansible.builtin.debug:
@@ -653,4 +638,5 @@
           - "Registry URL: https://{{ harbor_registry }}"
           - "Authentication: OIDC via Keycloak"
           - "Admin group: {{ oidc_admin_group }}"
-          - "Admin user added: {{ admin_username }}"
+          - "Harbor admin password set to standard (user: admin)"
+          - "SSO user 'thinkube' added to harbor-admins group"

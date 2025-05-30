@@ -75,9 +75,9 @@
         destination: "{{ harbor_registry }}/{{ library_project }}/redis:7.0.9" 
         description: "Redis 7.0.9 from GCR mirror - identical to Docker Hub"
       
-      - source: "{{ gcr_mirror }}/postgres:14.5-alpine"
-        destination: "{{ harbor_registry }}/{{ library_project }}/postgres:14.5-alpine"
-        description: "PostgreSQL from GCR mirror - identical to Docker Hub"
+      - source: "{{ aws_ecr }}/postgres:16-alpine"
+        destination: "{{ harbor_registry }}/{{ library_project }}/postgres:16-alpine"
+        description: "PostgreSQL 16 Alpine from AWS ECR - used in PostgreSQL deployment"
       
       # Development tools 
       - source: "{{ github_registry }}/coder/code-server:latest"
@@ -102,10 +102,9 @@
         destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-minimal-notebook:latest"
         description: "Jupyter Minimal Notebook from Quay.io"
         
-      # Temporarily commented out due to corrupted image layers
-      # - source: "{{ quay_registry }}/jupyter/scipy-notebook:latest"
-      #   destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-scipy-notebook:latest"
-      #   description: "Jupyter SciPy Notebook from Quay.io"
+      - source: "{{ quay_registry }}/jupyter/scipy-notebook:latest"
+        destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-scipy-notebook:latest"
+        description: "Jupyter SciPy Notebook from Quay.io"
         
       - source: "{{ quay_registry }}/jupyter/datascience-notebook:latest"
         destination: "{{ harbor_registry }}/{{ library_project }}/jupyter-datascience-notebook:latest"

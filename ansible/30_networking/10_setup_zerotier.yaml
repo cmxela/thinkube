@@ -147,6 +147,7 @@
       changed_when: false
       failed_when: zerotier_info.rc != 0
       check_mode: false
+      become: true
     
     - name: Set default node ID for check mode
       ansible.builtin.set_fact:
@@ -164,6 +165,7 @@
       changed_when: false
       failed_when: false
       check_mode: false
+      become: true
     
     - name: Join ZeroTier network
       ansible.builtin.command: zerotier-cli join {{ zerotier_network_id }}
@@ -439,12 +441,14 @@
           register: zerotier_status
           changed_when: false
           failed_when: zerotier_status.rc != 0
+          become: true
         
         - name: Check ZeroTier networks
           ansible.builtin.command: zerotier-cli listnetworks
           register: zerotier_networks_status
           changed_when: false
           failed_when: zerotier_networks_status.rc != 0
+          become: true
         
         - name: Display ZeroTier info
           ansible.builtin.debug:

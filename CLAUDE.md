@@ -54,19 +54,19 @@ Thinkube is a home-based development platform built on Kubernetes, designed spec
 
 ## Command Execution Reference
 
-### Running Commands in Kubernetes Control Node (tkc)
+### Running Commands in Kubernetes Control Node (vm-2)
 
-To run commands in the Kubernetes control node (tkc), use the `run_ssh_command.sh` script:
+To run commands in the Kubernetes control node (vm-2), use the `run_ssh_command.sh` script:
 
 ```bash
 # General syntax
-./scripts/run_ssh_command.sh tkc "command_to_run"
+./scripts/run_ssh_command.sh vm-2 "command_to_run"
 
 # Example: Check pod status
-./scripts/run_ssh_command.sh tkc "microk8s.kubectl get pods -n registry"
+./scripts/run_ssh_command.sh vm-2 "microk8s.kubectl get pods -n registry"
 
 # Example: Check logs
-./scripts/run_ssh_command.sh tkc "microk8s.kubectl logs -n registry deploy/harbor-core -c harbor-core --tail 50"
+./scripts/run_ssh_command.sh vm-2 "microk8s.kubectl logs -n registry deploy/harbor-core -c harbor-core --tail 50"
 ```
 
 Key kubectl commands for troubleshooting:
@@ -123,8 +123,8 @@ When migrating playbooks from thinkube-core:
    - Replace `gato-w1` with `microk8s_workers` (NOT `k8s-worker-nodes`)
    
    **CRITICAL: Host Group Reference**
-   - `microk8s_control_plane`: Control plane node (host: tkc)
-   - `microk8s_workers`: Worker nodes (hosts: tkw1, bcn1)
+   - `microk8s_control_plane`: Control plane node (host: vm-2)
+   - `microk8s_workers`: Worker nodes (hosts: vm-3, bcn1)
    - `microk8s`: All Kubernetes nodes (both control plane and workers)
    
    **NEVER use incorrect group names like:**

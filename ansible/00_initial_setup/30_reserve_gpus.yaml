@@ -206,7 +206,7 @@
             for slot in $slots; do
               audio_slot="${slot%.0}.1"
               if lspci -n -s "$audio_slot" 2>/dev/null | grep -q "0403"; then
-                lspci -n -s "$audio_slot" | awk '{print $3}' | tr ':' ' '
+                lspci -n -s "$audio_slot" | awk '{print $3}'
               fi
             done
           else
@@ -332,13 +332,55 @@
       ansible.builtin.set_fact:
         is_amd_cpu: "{{ ansible_processor[0] is regex('AMD') }}"
     
-    - name: Enable IOMMU in GRUB
+    - name: Set IOMMU parameter based on CPU vendor
+      ansible.builtin.set_fact:
+        iommu_param: "{{ 'amd_iommu=on' if is_amd_cpu else 'intel_iommu=on' }}"
+    
+    - name: Check current GRUB configuration
+      ansible.builtin.slurp:
+        src: /etc/default/grub
+      register: grub_content
+    
+    - name: Parse current GRUB_CMDLINE_LINUX_DEFAULT
+      ansible.builtin.set_fact:
+        current_cmdline: "{{ (grub_content.content | b64decode | regex_search('GRUB_CMDLINE_LINUX_DEFAULT=\"([^\"]*)\"', '\\1')) | first | default('') }}"
+    
+    - name: Check if IOMMU is already configured
+      ansible.builtin.set_fact:
+        iommu_configured: "{{ current_cmdline is search('amd_iommu=on') or current_cmdline is search('intel_iommu=on') }}"
+        iommu_pt_configured: "{{ current_cmdline is search('iommu=pt') }}"
+    
+    - name: Remove incorrect IOMMU parameter if present
+      ansible.builtin.replace:
+        path: /etc/default/grub
+        regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT=".*?){{ "intel_iommu=on" if is_amd_cpu else "amd_iommu=on" }}(.*")'
+        replace: '\1\2'
+        backup: yes
+      when: iommu_configured and current_cmdline is search("intel_iommu=on" if is_amd_cpu else "amd_iommu=on")
+      register: grub_cleaned
+    
+    - name: Add correct IOMMU parameter to GRUB
       ansible.builtin.replace:
         path: /etc/default/grub
         regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)(")'
-        replace: '\1\2 {{ "amd_iommu=on" if is_amd_cpu else "intel_iommu=on" }} iommu=pt\3'
+        replace: '\1\2 {{ iommu_param }}\3'
         backup: yes
-      register: grub_updated
+      when: not iommu_configured or grub_cleaned.changed | default(false)
+      register: grub_iommu_updated
+    
+    - name: Add iommu=pt parameter to GRUB
+      ansible.builtin.replace:
+        path: /etc/default/grub
+        regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)(")'
+        replace: '\1\2 iommu=pt\3'
+        backup: yes
+      when: not iommu_pt_configured
+      register: grub_pt_updated
+    
+    - name: Set grub_updated fact
+      ansible.builtin.set_fact:
+        grub_updated:
+          changed: "{{ grub_iommu_updated.changed | default(false) or grub_pt_updated.changed | default(false) or grub_cleaned.changed | default(false) }}"
     
     # Phase 4: Configure VFIO modules
     # For hosts with specifically assigned PCI slots, create a base VFIO configuration
@@ -440,9 +482,10 @@
         content: |
           # VFIO configuration for specific GPU passthrough
           # Only bind GPUs that are explicitly assigned for passthrough
-          {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 %}
+          {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 and gpu_pci_ids is defined and gpu_pci_ids | length > 0 %}
           # Using PCI IDs from assigned slots only
-          options vfio-pci ids={{ gpu_pci_ids | join(',') }}
+          # PCI IDs: {{ gpu_pci_ids | join(', ') }}
+          options vfio-pci ids={{ gpu_pci_ids | select('match', '^[0-9a-f]{4}:[0-9a-f]{4}$') | list | join(',') }}
           {% else %}
           # No specific slots assigned - VFIO will not auto-bind any devices
           # Devices must be manually bound if needed
@@ -536,7 +579,7 @@
     # Phase 7: Update system
     - name: Update initramfs
       ansible.builtin.command: update-initramfs -u
-      when: grub_updated.changed | default(false)
+      when: grub_updated.changed | default(false) or (assigned_pci_slots is defined and assigned_pci_slots | length > 0)
     
     - name: Update GRUB
       ansible.builtin.command: update-grub

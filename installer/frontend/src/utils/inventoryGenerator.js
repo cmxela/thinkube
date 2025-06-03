@@ -91,15 +91,14 @@ export function generateDynamicInventory() {
         zerotier_subnet_prefix: networkConfig.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.') + '.',
         
         // Ingress IP configuration
-        primary_ingress_ip_octet: "200",  // Reserved for primary ingress
-        secondary_ingress_ip_octet: "201",  // Reserved for secondary ingress (Knative)
-        primary_ingress_ip: networkConfig.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.') + '.200',
-        secondary_ingress_ip: networkConfig.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.') + '.201',
+        primary_ingress_ip_octet: networkConfig.primaryIngressOctet || "200",  // Reserved for primary ingress
+        secondary_ingress_ip_octet: networkConfig.secondaryIngressOctet || "201",  // Reserved for secondary ingress (Knative)
+        primary_ingress_ip: networkConfig.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.') + '.' + (networkConfig.primaryIngressOctet || "200"),
+        secondary_ingress_ip: networkConfig.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.') + '.' + (networkConfig.secondaryIngressOctet || "201"),
         
         // Kubernetes configuration (will be configured later with MicroK8s)
         
-        // Cloudflare configuration
-        cloudflare_token: config.cloudflareToken
+        // Cloudflare configuration is stored securely in ~/.env
       },
       children: {
         // Architecture groups

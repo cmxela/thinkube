@@ -93,6 +93,85 @@
       </div>
     </div>
 
+    <!-- Ingress IP Configuration -->
+    <div v-if="networkConfig.zerotierCIDR" class="card bg-base-100 shadow-xl mb-6">
+      <div class="card-body">
+        <h2 class="card-title mb-4">Ingress IP Configuration</h2>
+        
+        <div class="alert alert-info mb-4">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <div>
+            <div class="font-bold">MetalLB Load Balancer IPs</div>
+            <div class="text-sm">These IPs will be reserved on the ZeroTier network for Kubernetes ingress services</div>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">Primary Ingress IP</span>
+              <span class="label-text-alt">For main services</span>
+            </label>
+            <div class="flex items-center gap-1">
+              <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
+              <input 
+                v-model="networkConfig.primaryIngressOctet"
+                type="number" 
+                min="1" 
+                max="254"
+                placeholder="200"
+                class="input input-bordered input-sm w-20"
+                :class="{ 
+                  'input-error': !isValidIngressOctet(networkConfig.primaryIngressOctet),
+                  'input-warning': isIngressIPInUse(networkConfig.primaryIngressOctet)
+                }"
+              />
+            </div>
+            <div v-if="isIngressIPInUse(networkConfig.primaryIngressOctet)" class="text-xs text-warning mt-1">
+              This IP is already assigned to a ZeroTier member
+            </div>
+          </div>
+          
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">Secondary Ingress IP</span>
+              <span class="label-text-alt">For Knative services</span>
+            </label>
+            <div class="flex items-center gap-1">
+              <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
+              <input 
+                v-model="networkConfig.secondaryIngressOctet"
+                type="number" 
+                min="1" 
+                max="254"
+                placeholder="201"
+                class="input input-bordered input-sm w-20"
+                :class="{ 
+                  'input-error': !isValidIngressOctet(networkConfig.secondaryIngressOctet),
+                  'input-warning': isIngressIPInUse(networkConfig.secondaryIngressOctet)
+                }"
+              />
+            </div>
+            <div v-if="isIngressIPInUse(networkConfig.secondaryIngressOctet)" class="text-xs text-warning mt-1">
+              This IP is already assigned to a ZeroTier member
+            </div>
+          </div>
+        </div>
+        
+        <div v-if="networkConfig.primaryIngressOctet && networkConfig.secondaryIngressOctet" class="mt-4">
+          <div class="text-sm text-base-content/70">
+            <p>Reserved IPs:</p>
+            <ul class="list-disc list-inside ml-2">
+              <li>Primary: {{ getNetworkBase(networkConfig.zerotierCIDR) }}.{{ networkConfig.primaryIngressOctet }}</li>
+              <li>Secondary: {{ getNetworkBase(networkConfig.zerotierCIDR) }}.{{ networkConfig.secondaryIngressOctet }}</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Baremetal Servers -->
     <div class="card bg-base-100 shadow-xl mb-6">
       <div class="card-body">
@@ -323,7 +402,9 @@ const networkConfig = ref({
   cidr: '192.168.1.0/24',
   gateway: '192.168.1.1',
   zerotierCIDR: '',  // Will be fetched from ZeroTier API
-  lxdIPv4Address: ''  // Auto-configured by LXD snap
+  lxdIPv4Address: '',  // Auto-configured by LXD snap
+  primaryIngressOctet: '200',  // Default primary ingress IP octet
+  secondaryIngressOctet: '201'  // Default secondary ingress IP octet
 })
 
 const physicalServers = ref([])
@@ -438,6 +519,18 @@ const getZeroTierIPStatus = (ip) => {
     return member ? `Used by ${member.name || member.nodeId.substring(0, 10)}` : 'Already in use'
   }
   return ''
+}
+
+const isValidIngressOctet = (octet) => {
+  if (!octet) return false
+  const num = parseInt(octet, 10)
+  return num >= 1 && num <= 254
+}
+
+const isIngressIPInUse = (octet) => {
+  if (!octet || !networkConfig.value.zerotierCIDR) return false
+  const fullIP = `${getNetworkBase(networkConfig.value.zerotierCIDR)}.${octet}`
+  return isZeroTierIPInUse(fullIP)
 }
 
 const getLXDBase = () => {

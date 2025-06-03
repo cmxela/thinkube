@@ -351,6 +351,191 @@ const buildPlaybookQueue = () => {
     }
   }
   
+  // Phase 6: Kubernetes Infrastructure (40_thinkube/core/infrastructure)
+  queue.push({
+    id: 'microk8s',
+    phase: 'kubernetes',
+    title: 'Installing MicroK8s',
+    name: 'ansible/40_thinkube/core/infrastructure/microk8s/10_install_microk8s.yaml'
+  })
+  
+  // Join worker nodes after control plane is set up
+  const clusterNodes = JSON.parse(sessionStorage.getItem('clusterNodes') || '[]')
+  const hasWorkers = clusterNodes.some(n => n.role === 'worker')
+  if (hasWorkers) {
+    queue.push({
+      id: 'microk8s-join-workers',
+      phase: 'kubernetes',
+      title: 'Joining Worker Nodes to Cluster',
+      name: 'ansible/40_thinkube/core/infrastructure/microk8s/20_join_workers.yaml'
+    })
+  }
+  
+  // GPU operator if needed
+  const needsGPUOperator = serverHardware.some(s => s.hardware?.gpu_detected) || 
+    (deploymentType !== 'baremetal-only' && Object.values(gpuAssignments || {}).some(v => v !== 'baremetal'))
+  if (needsGPUOperator) {
+    queue.push({
+      id: 'gpu-operator',
+      phase: 'kubernetes',
+      title: 'Installing NVIDIA GPU Operator',
+      name: 'ansible/40_thinkube/core/infrastructure/gpu_operator/10_deploy.yaml'
+    })
+  }
+  
+  // CoreDNS must come before cert-manager and ingress
+  queue.push({
+    id: 'coredns',
+    phase: 'kubernetes',
+    title: 'Deploying CoreDNS',
+    name: 'ansible/40_thinkube/core/infrastructure/coredns/10_deploy.yaml'
+  })
+  
+  // Fix cluster DNS if needed
+  queue.push({
+    id: 'fix-tkc-dns',
+    phase: 'kubernetes',
+    title: 'Configuring Cluster DNS',
+    name: 'ansible/40_thinkube/core/infrastructure/fix_tkc_dns.yaml'
+  })
+  
+  // Cert-manager before ingress
+  queue.push({
+    id: 'cert-manager',
+    phase: 'kubernetes',
+    title: 'Deploying Cert-Manager',
+    name: 'ansible/40_thinkube/core/infrastructure/cert-manager/10_deploy.yaml'
+  })
+  
+  // Ingress controller
+  queue.push({
+    id: 'ingress',
+    phase: 'kubernetes',
+    title: 'Deploying Ingress Controller',
+    name: 'ansible/40_thinkube/core/infrastructure/ingress/10_deploy.yaml'
+  })
+  
+  // Phase 7: Core Services (dependencies in correct order)
+  // PostgreSQL first (no Harbor dependency, provides storage for Keycloak)
+  queue.push({
+    id: 'postgresql',
+    phase: 'kubernetes',
+    title: 'Deploying PostgreSQL',
+    name: 'ansible/40_thinkube/core/postgresql/10_deploy.yaml'
+  })
+  
+  // Keycloak (requires PostgreSQL for persistent storage)
+  queue.push({
+    id: 'keycloak',
+    phase: 'kubernetes',
+    title: 'Deploying Keycloak',
+    name: 'ansible/40_thinkube/core/keycloak/10_deploy.yaml'
+  })
+  
+  queue.push({
+    id: 'keycloak-realm',
+    phase: 'kubernetes',
+    title: 'Configuring Keycloak Realm',
+    name: 'ansible/40_thinkube/core/keycloak/15_configure_realm.yaml'
+  })
+  
+  // Harbor (requires Keycloak for OIDC authentication)
+  queue.push({
+    id: 'harbor',
+    phase: 'kubernetes',
+    title: 'Deploying Harbor',
+    name: 'ansible/40_thinkube/core/harbor/10_deploy.yaml'
+  })
+  
+  queue.push({
+    id: 'harbor-configure',
+    phase: 'kubernetes',
+    title: 'Configuring Harbor',
+    name: 'ansible/40_thinkube/core/harbor/15_configure_thinkube.yaml'
+  })
+  
+  queue.push({
+    id: 'harbor-default-registry',
+    phase: 'kubernetes',
+    title: 'Configuring Default Registry',
+    name: 'ansible/40_thinkube/core/harbor/16_configure_default_registry.yaml'
+  })
+  
+  // Mirror public images to Harbor
+  queue.push({
+    id: 'mirror-images',
+    phase: 'kubernetes',
+    title: 'Mirroring Public Images',
+    name: 'ansible/40_thinkube/core/harbor/17_mirror_public_images.yaml'
+  })
+  
+  // SeaweedFS for object storage (replacing MinIO)
+  queue.push({
+    id: 'seaweedfs',
+    phase: 'kubernetes',
+    title: 'Deploying SeaweedFS',
+    name: 'ansible/40_thinkube/core/seaweedfs/10_deploy.yaml'
+  })
+  
+  queue.push({
+    id: 'seaweedfs-keycloak',
+    phase: 'kubernetes',
+    title: 'Configuring SeaweedFS Keycloak Integration',
+    name: 'ansible/40_thinkube/core/seaweedfs/11_configure_keycloak.yaml'
+  })
+  
+  queue.push({
+    id: 'seaweedfs-oidc',
+    phase: 'kubernetes',
+    title: 'Configuring SeaweedFS OIDC',
+    name: 'ansible/40_thinkube/core/seaweedfs/12_configure_oidc.yaml'
+  })
+  
+  // Argo Workflows
+  queue.push({
+    id: 'argo-workflows-keycloak',
+    phase: 'kubernetes',
+    title: 'Configuring Argo Workflows Keycloak',
+    name: 'ansible/40_thinkube/core/argo-workflows/10_configure_keycloak.yaml'
+  })
+  
+  queue.push({
+    id: 'argo-workflows',
+    phase: 'kubernetes',
+    title: 'Deploying Argo Workflows',
+    name: 'ansible/40_thinkube/core/argo-workflows/11_deploy.yaml'
+  })
+  
+  // ArgoCD
+  queue.push({
+    id: 'argocd-keycloak',
+    phase: 'kubernetes',
+    title: 'Configuring ArgoCD Keycloak',
+    name: 'ansible/40_thinkube/core/argocd/10_configure_keycloak.yaml'
+  })
+  
+  queue.push({
+    id: 'argocd',
+    phase: 'kubernetes',
+    title: 'Deploying ArgoCD',
+    name: 'ansible/40_thinkube/core/argocd/11_deploy.yaml'
+  })
+  
+  // DevPi (Python package index)
+  queue.push({
+    id: 'devpi',
+    phase: 'kubernetes',
+    title: 'Deploying DevPi',
+    name: 'ansible/40_thinkube/core/devpi/10_deploy.yaml'
+  })
+  
+  queue.push({
+    id: 'devpi-configure',
+    phase: 'kubernetes',
+    title: 'Configuring DevPi CLI',
+    name: 'ansible/40_thinkube/core/devpi/15_configure_cli.yaml'
+  })
+  
   playbookQueue.value = queue
   console.log('Final playbook queue:', queue.map(p => `${p.id}: ${p.title}`))
   console.log('Total playbooks in queue:', queue.length)

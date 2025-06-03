@@ -76,3 +76,12 @@ class NetworkDiscoveryRequest(BaseModel):
 class SSHVerificationRequest(BaseModel):
     ip_address: str
     username: str = "thinkube"
+
+
+class TokenRequest(BaseModel):
+    token: str
+
+
+class TokenResponse(BaseModel):
+    success: bool
+    message: str

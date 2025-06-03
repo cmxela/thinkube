@@ -176,6 +176,69 @@
         </div>
       </div>
 
+      <!-- GitHub Integration (Optional) -->
+      <div class="card bg-base-100 shadow-xl mb-6">
+        <div class="card-body">
+          <h2 class="card-title mb-4">GitHub Integration (Optional)</h2>
+          <p class="text-sm mb-4">
+            Provide a GitHub personal access token to enable repository operations and DevPi integration.
+            This is optional but recommended for full functionality.
+          </p>
+          
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">GitHub Personal Access Token</span>
+              <a href="https://github.com/settings/tokens/new?scopes=repo,workflow,packages:write" target="_blank" class="label-text-alt link link-primary">
+                Generate token →
+              </a>
+            </label>
+            <div class="relative">
+              <input 
+                v-model="config.githubToken" 
+                :type="showGithubToken ? 'text' : 'password'"
+                placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" 
+                class="input input-bordered pr-16 w-full font-mono"
+                :class="{ 'input-error': errors.githubToken }"
+              />
+              <div class="absolute inset-y-0 right-0 flex items-center pr-3 gap-2">
+                <button 
+                  v-if="config.githubToken"
+                  type="button"
+                  class="btn btn-xs btn-ghost"
+                  @click="verifyGithub"
+                  :disabled="verifyingGithub"
+                >
+                  <span v-if="verifyingGithub" class="loading loading-spinner loading-xs"></span>
+                  <span v-else-if="githubVerified" class="text-success">✓</span>
+                  <span v-else>Verify</span>
+                </button>
+                <button 
+                  type="button"
+                  class="flex items-center"
+                  @click="showGithubToken = !showGithubToken"
+                >
+                  <svg v-if="showGithubToken" class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21"></path>
+                  </svg>
+                  <svg v-else class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <label v-if="errors.githubToken" class="label">
+              <span class="label-text-alt text-error">{{ errors.githubToken }}</span>
+            </label>
+            <label v-else-if="githubVerified" class="label">
+              <span class="label-text-alt text-success">✓ Token verified with repository access</span>
+            </label>
+            <label class="label">
+              <span class="label-text-alt">Required scopes: repo, workflow, packages:write</span>
+            </label>
+          </div>
+        </div>
+      </div>
 
       <!-- Navigation -->
       <div class="flex justify-between">
@@ -212,7 +275,8 @@ const config = ref({
   domainName: 'my-homelab.com',
   cloudflareToken: '',
   zerotierNetworkId: '',
-  zerotierApiToken: ''
+  zerotierApiToken: '',
+  githubToken: ''
 })
 
 const errors = ref({
@@ -220,13 +284,17 @@ const errors = ref({
   domainName: '',
   cloudflareToken: '',
   zerotierNetworkId: '',
-  zerotierApiToken: ''
+  zerotierApiToken: '',
+  githubToken: ''
 })
 
 const showCloudflareToken = ref(false)
 const showZerotierToken = ref(false)
+const showGithubToken = ref(false)
 const verifyingCloudflare = ref(false)
 const cloudflareVerified = ref(false)
+const verifyingGithub = ref(false)
+const githubVerified = ref(false)
 
 // Load saved configuration on mount
 onMounted(() => {
@@ -319,6 +387,24 @@ watch([() => config.value.cloudflareToken, () => config.value.domainName], () =>
   errors.value.cloudflareToken = ''
 })
 
+// Store Cloudflare token securely
+const storeCloudflareToken = async () => {
+  try {
+    const response = await axios.post('/api/store-cloudflare-token', {
+      token: config.value.cloudflareToken
+    })
+    
+    if (response.data.success) {
+      console.log('Cloudflare token stored securely')
+      return true
+    }
+    return false
+  } catch (error) {
+    console.error('Failed to store Cloudflare token:', error)
+    return false
+  }
+}
+
 const zerotierVerified = ref(false)
 const verifyingZerotier = ref(false)
 
@@ -362,6 +448,76 @@ watch([() => config.value.zerotierApiToken, () => config.value.zerotierNetworkId
   errors.value.zerotierApiToken = ''
 })
 
+// GitHub token verification
+const verifyGithub = async () => {
+  if (!config.value.githubToken) {
+    errors.value.githubToken = 'GitHub token is required'
+    githubVerified.value = false
+    return false
+  }
+  
+  verifyingGithub.value = true
+  errors.value.githubToken = ''
+  
+  try {
+    // Simple verification - check if token can access user info
+    const response = await axios.get('https://api.github.com/user', {
+      headers: {
+        'Authorization': `token ${config.value.githubToken}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    })
+    
+    if (response.status === 200) {
+      githubVerified.value = true
+      errors.value.githubToken = ''
+      return true
+    } else {
+      errors.value.githubToken = 'Invalid GitHub token'
+      githubVerified.value = false
+      return false
+    }
+  } catch (error) {
+    if (error.response?.status === 401) {
+      errors.value.githubToken = 'Invalid or expired GitHub token'
+    } else {
+      errors.value.githubToken = 'Failed to verify GitHub token'
+    }
+    githubVerified.value = false
+    return false
+  } finally {
+    verifyingGithub.value = false
+  }
+}
+
+// Reset GitHub verification when token changes
+watch(() => config.value.githubToken, () => {
+  githubVerified.value = false
+  errors.value.githubToken = ''
+})
+
+// Store GitHub token securely
+const storeGithubToken = async () => {
+  if (!config.value.githubToken) {
+    return true  // Optional, so return true if not provided
+  }
+  
+  try {
+    const response = await axios.post('/api/store-github-token', {
+      token: config.value.githubToken
+    })
+    
+    if (response.data.success) {
+      console.log('GitHub token stored securely')
+      return true
+    }
+    return false
+  } catch (error) {
+    console.error('Failed to store GitHub token:', error)
+    return false
+  }
+}
+
 const saveAndContinue = async () => {
   if (!isValid.value) {
     alert('Please fix all validation errors before continuing')
@@ -396,15 +552,50 @@ const saveAndContinue = async () => {
     }
   }
   
+  // Verify GitHub token if provided
+  if (config.value.githubToken && !githubVerified.value) {
+    const githubValid = await verifyGithub()
+    if (!githubValid) {
+      alert('Please provide a valid GitHub token or leave it empty')
+      return
+    }
+  }
+  
+  // Store Cloudflare token securely in ~/.env
+  const cloudflareStored = await storeCloudflareToken()
+  if (!cloudflareStored) {
+    alert('Failed to store Cloudflare token securely. Please try again.')
+    return
+  }
+  
+  // Store GitHub token securely in ~/.env (if provided)
+  const githubStored = await storeGithubToken()
+  if (!githubStored) {
+    alert('Failed to store GitHub token securely. Please try again.')
+    return
+  }
+  
   // Get the already-verified sudo password from sessionStorage
   const sudoPassword = sessionStorage.getItem('sudoPassword')
   
-  // Save config including sudo password (will be used as ANSIBLE_SUDO_PASS)
+  // Save config WITHOUT the sensitive tokens (they're stored securely in ~/.env)
   const configToSave = {
-    ...config.value,
+    clusterName: config.value.clusterName,
+    domainName: config.value.domainName,
+    zerotierNetworkId: config.value.zerotierNetworkId,
+    zerotierApiToken: config.value.zerotierApiToken,
     sudoPassword: sudoPassword
   }
   localStorage.setItem('thinkube-config', JSON.stringify(configToSave))
+  
+  // Also save tokens to sessionStorage for immediate use in deployment
+  sessionStorage.setItem('cloudflareToken', config.value.cloudflareToken)
+  sessionStorage.setItem('zerotierApiToken', config.value.zerotierApiToken)
+  sessionStorage.setItem('zerotierNetworkId', config.value.zerotierNetworkId)
+  if (config.value.githubToken) {
+    sessionStorage.setItem('githubToken', config.value.githubToken)
+  }
+  
   router.push('/network-configuration')
 }
 </script>

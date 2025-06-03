@@ -24,6 +24,7 @@ from app.api.system import router as system_router
 from app.api.playbooks import router as playbooks_router
 from app.api.playbook_stream import router as playbook_stream_router
 from app.api.zerotier import router as zerotier_router
+from app.api.tokens import router as tokens_router
 
 # Configure logging
 logging.basicConfig(
@@ -66,6 +67,7 @@ app.include_router(system_router)
 app.include_router(playbooks_router)
 app.include_router(playbook_stream_router)
 app.include_router(zerotier_router)
+app.include_router(tokens_router)
 
 
 @app.get("/")

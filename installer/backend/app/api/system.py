@@ -309,7 +309,60 @@ async def check_requirements():
             "details": "Could not verify user and sudo access"
         })
     
-    # 3. Check network connectivity
+    # 3. Check OpenSSH server is installed (required for Ansible to connect to localhost)
+    try:
+        # Check if openssh-server package is installed
+        result = await asyncio.create_subprocess_exec(
+            'dpkg', '-l', 'openssh-server',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await result.communicate()
+        
+        if result.returncode == 0 and b'ii  openssh-server' in stdout:
+            # Check if SSH service is running
+            service_result = await asyncio.create_subprocess_exec(
+                'systemctl', 'is-active', 'ssh',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            service_stdout, _ = await service_result.communicate()
+            service_status = service_stdout.decode().strip()
+            
+            if service_status == 'active':
+                requirements.append({
+                    "name": "OpenSSH Server",
+                    "category": "system",
+                    "required": True,
+                    "status": "pass",
+                    "details": "OpenSSH server is installed and running"
+                })
+            else:
+                requirements.append({
+                    "name": "OpenSSH Server",
+                    "category": "system",
+                    "required": True,
+                    "status": "fail",
+                    "details": f"OpenSSH server is installed but not running (status: {service_status})"
+                })
+        else:
+            requirements.append({
+                "name": "OpenSSH Server",
+                "category": "system",
+                "required": True,
+                "status": "fail",
+                "details": "OpenSSH server is not installed. Run: sudo apt install openssh-server"
+            })
+    except Exception as e:
+        requirements.append({
+            "name": "OpenSSH Server",
+            "category": "system",
+            "required": True,
+            "status": "fail",
+            "details": f"Could not check OpenSSH server: {str(e)}"
+        })
+    
+    # 4. Check network connectivity
     try:
         # Try to reach Ubuntu package servers
         import socket
@@ -330,7 +383,7 @@ async def check_requirements():
             "details": "Cannot reach Ubuntu package servers"
         })
     
-    # 4. Check disk space (10GB minimum for control node)
+    # 5. Check disk space (10GB minimum for control node)
     try:
         import shutil
         free_gb = shutil.disk_usage(os.path.expanduser("~")).free / (1024**3)

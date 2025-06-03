@@ -210,6 +210,22 @@ const buildPlaybookQueue = () => {
     name: 'ansible/00_initial_setup/20_setup_env.yaml'
   })
   
+  // Add Python setup for all hosts (required for Ansible to work properly)
+  queue.push({
+    id: 'python-setup',
+    phase: 'initial',
+    title: 'Setting up Python Virtual Environments',
+    name: 'ansible/40_thinkube/core/infrastructure/00_setup_python_k8s.yaml'
+  })
+  
+  // Add shell configuration (required before MicroK8s installation)
+  queue.push({
+    id: 'shell-setup',
+    phase: 'initial',
+    title: 'Configuring Shell Environments',
+    name: 'ansible/misc/00_setup_shells.yml'
+  })
+  
   // Check if GPU reservation is needed
   const serverHardware = JSON.parse(sessionStorage.getItem('serverHardware') || '[]')
   const hasGPUs = serverHardware.some(s => s.hardware?.gpu_detected)

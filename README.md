@@ -240,6 +240,15 @@ echo "Setting fixed IP: $FIX_IP"
 ip addr show > /tmp/ip_addr_backup.txt
 echo "IP configuration backed up to /tmp/ip_addr_backup.txt"
 
+# First, disable any existing netplan configurations that might have DHCP enabled
+echo "Disabling existing netplan configurations..."
+for config in /etc/netplan/*.yaml; do
+  if [ -f "$config" ] && [ "$config" != "/etc/netplan/01-thinkube-config.yaml" ]; then
+    echo "Moving $config to $config.disabled"
+    sudo mv "$config" "$config.disabled"
+  fi
+done
+
 # Create netplan configuration with proper permissions
 NETPLAN_CONFIG="/etc/netplan/01-thinkube-config.yaml"
 
@@ -252,6 +261,7 @@ network:
   ethernets:
     $IFACE:
       dhcp4: no
+      dhcp6: no
       addresses:
         - $FIX_IP/24
       routes:

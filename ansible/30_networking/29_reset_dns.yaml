@@ -13,7 +13,7 @@
 #   ./scripts/run_ansible.sh ansible/30_networking/29_reset_dns.yaml
 
 - name: Reset DNS Server Configuration
-  hosts: dns
+  hosts: dns_servers
   gather_facts: true
   
   tasks:

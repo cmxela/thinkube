@@ -254,6 +254,47 @@ const connectWebSocket = (params: any) => {
       inventory: inventoryYAML
     }
     
+    // Add ZeroTier-specific environment variables if this is a ZeroTier playbook
+    if (props.playbookName.includes('zerotier')) {
+      const zerotierApiToken = sessionStorage.getItem('zerotierApiToken')
+      const zerotierNetworkId = sessionStorage.getItem('zerotierNetworkId')
+      
+      if (zerotierApiToken || zerotierNetworkId) {
+        paramsWithInventory.environment = {
+          ...paramsWithInventory.environment
+        }
+        
+        if (zerotierApiToken) {
+          paramsWithInventory.environment.ZEROTIER_API_TOKEN = zerotierApiToken
+        }
+        if (zerotierNetworkId) {
+          paramsWithInventory.environment.ZEROTIER_NETWORK_ID = zerotierNetworkId
+        }
+      }
+    }
+    
+    // Add Cloudflare token if needed
+    if (props.playbookName.includes('cert-manager') || props.playbookName.includes('dns')) {
+      const cloudflareToken = sessionStorage.getItem('cloudflareToken')
+      if (cloudflareToken) {
+        paramsWithInventory.environment = {
+          ...paramsWithInventory.environment,
+          CLOUDFLARE_TOKEN: cloudflareToken
+        }
+      }
+    }
+    
+    // Add GitHub token if needed
+    if (props.playbookName.includes('github') || props.playbookName.includes('devpi')) {
+      const githubToken = sessionStorage.getItem('githubToken')
+      if (githubToken) {
+        paramsWithInventory.environment = {
+          ...paramsWithInventory.environment,
+          GITHUB_TOKEN: githubToken
+        }
+      }
+    }
+    
     // Send execution parameters with dynamic inventory
     websocket.value?.send(JSON.stringify(paramsWithInventory))
   }

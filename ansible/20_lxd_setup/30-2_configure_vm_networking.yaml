@@ -234,6 +234,36 @@
           ansible.builtin.file:
             path: "/tmp/netplan_configs"
             state: absent
+    
+    # Update management host's /etc/hosts with VM entries
+    - name: Update management host /etc/hosts with VM entries
+      become: true
+      block:
+        - name: Check if VM entries already exist in /etc/hosts
+          ansible.builtin.lineinfile:
+            path: /etc/hosts
+            regexp: "^{{ hostvars[item]['lan_ip'] }}\\s+{{ item }}"
+            state: absent
+          check_mode: true
+          register: hosts_check
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          changed_when: false
+
+        - name: Add VM entries to management host /etc/hosts
+          ansible.builtin.lineinfile:
+            path: /etc/hosts
+            line: "{{ hostvars[item]['lan_ip'] }}   {{ item }} {{ item }}.{{ domain_name }}"
+            state: present
+            backup: true
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          when: item not in hosts_check.results | map(attribute='item') | select('match', item) | list
+          
+        - name: Also add DNS server entry if it's a VM
+          ansible.builtin.lineinfile:
+            path: /etc/hosts
+            line: "{{ hostvars['dns']['lan_ip'] }}   dns dns.{{ domain_name }} dns1"
+            state: present
+          when: "'dns' in groups['lxd_containers']"
       
     # Final completion message
     - name: Display networking configuration completion message

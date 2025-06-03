@@ -20,7 +20,7 @@
 #   ./scripts/run_ansible.sh ansible/30_networking/20_setup_dns.yaml
 
 - name: Configure DNS Server for Service Discovery
-  hosts: dns
+  hosts: dns_servers
   gather_facts: true
   
   vars:
@@ -28,8 +28,8 @@
     dns_interfaces: ["127.0.0.1", "{{ hostvars[inventory_hostname]['zerotier_ip'] }}", 
                      "{{ hostvars[inventory_hostname]['lan_ip'] }}", 
                      "{{ hostvars[inventory_hostname]['internal_ip'] }}"]
-    ingress_ip: "192.168.191.200"  # Main ingress IP for services
-    knative_ingress_ip: "192.168.191.201"  # Knative ingress IP
+    ingress_ip: "{{ primary_ingress_ip }}"  # Main ingress IP for services
+    knative_ingress_ip: "{{ secondary_ingress_ip }}"  # Knative ingress IP
   
   tasks:
     # Phase 1: Verify prerequisites

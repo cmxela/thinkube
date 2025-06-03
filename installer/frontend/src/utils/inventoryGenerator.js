@@ -87,6 +87,15 @@ export function generateDynamicInventory() {
         // Internal gateway - extract from LXD network address
         internal_gateway: (networkConfig.lxdIPv4Address || "192.168.100.1/24").split('/')[0],
         
+        // ZeroTier subnet prefix - extract from ZeroTier CIDR
+        zerotier_subnet_prefix: networkConfig.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.') + '.',
+        
+        // Ingress IP configuration
+        primary_ingress_ip_octet: "200",  // Reserved for primary ingress
+        secondary_ingress_ip_octet: "201",  // Reserved for secondary ingress (Knative)
+        primary_ingress_ip: networkConfig.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.') + '.200',
+        secondary_ingress_ip: networkConfig.zerotierCIDR.split('/')[0].split('.').slice(0, 3).join('.') + '.201',
+        
         // Kubernetes configuration (will be configured later with MicroK8s)
         
         // Cloudflare configuration
@@ -134,7 +143,7 @@ export function generateDynamicInventory() {
         },
         
         // DNS servers
-        dns: {
+        dns_servers: {
           hosts: {}
         },
         
@@ -157,7 +166,7 @@ export function generateDynamicInventory() {
             ansible_python_interpreter: "/home/thinkube/.venv/bin/python3"
           },
           children: {
-            dns_containers: {
+            dns_vms: {
               hosts: {}
             },
             microk8s_containers: {
@@ -286,7 +295,7 @@ export function generateDynamicInventory() {
     // Find baremetal DNS server from clusterNodes
     const dnsNode = clusterNodes.find(n => n.role === 'dns' && n.type === 'baremetal')
     if (dnsNode) {
-      inventory.all.children.dns.hosts[dnsNode.hostname] = {}
+      inventory.all.children.dns_servers.hosts[dnsNode.hostname] = {}
     }
   } else if (dnsOption === 'vm') {
     // VM-based DNS - merge original VM specs with network config
@@ -294,7 +303,7 @@ export function generateDynamicInventory() {
     const networkDnsVM = configuredVirtualMachines.find(vm => vm.name === 'dns')
     
     if (originalDnsVM && networkDnsVM) {
-      inventory.all.children.lxd_containers.children.dns_containers.hosts.dns1 = {
+      inventory.all.children.lxd_containers.children.dns_vms.hosts.dns = {
         parent_host: originalDnsVM.host,
         memory: `${originalDnsVM.memory}GB`,
         cpu_cores: originalDnsVM.cpu,
@@ -306,7 +315,7 @@ export function generateDynamicInventory() {
         zerotier_enabled: true,
         gpu_passthrough: false
       }
-      inventory.all.children.dns.hosts.dns1 = {}
+      inventory.all.children.dns_servers.hosts.dns = {}
     }
   }
   

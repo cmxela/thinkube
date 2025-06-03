@@ -40,18 +40,18 @@
             </div>
           </div>
           <div 
-            class="bg-gray-900 text-gray-100 rounded p-4 h-96 overflow-y-auto font-mono text-xs leading-relaxed"
+            class="mockup-code h-96 overflow-y-auto text-xs"
             ref="logContainer"
           >
-            <div v-if="logOutput.length === 0" class="text-gray-500">
-              Waiting for output...
+            <div v-if="logOutput.length === 0" class="text-base-content/50">
+              <pre data-prefix="$"><code>Waiting for output...</code></pre>
             </div>
-            <div 
+            <pre 
               v-for="(log, idx) in logOutput" 
-              :key="idx" 
+              :key="idx"
+              :data-prefix="getLogPrefix(log.type)"
               :class="getLogClass(log.type)"
-              class="whitespace-pre-wrap"
-            >{{ log.message }}</div>
+            ><code>{{ log.message }}</code></pre>
           </div>
         </div>
         
@@ -521,22 +521,45 @@ const formatDuration = (seconds: number): string => {
 const getLogClass = (type: string): string => {
   switch (type) {
     case 'task':
-      return 'text-blue-400 font-semibold mt-2'
+      return 'text-info'
     case 'play':
-      return 'text-purple-400 font-semibold mt-3'
+      return 'text-secondary'
     case 'ok':
-      return 'text-green-400'
+      return 'text-success'
     case 'changed':
-      return 'text-yellow-400'
+      return 'text-warning'
     case 'failed':
-      return 'text-red-400 font-semibold'
+      return 'text-error'
     case 'error':
-      return 'text-red-500 font-semibold'
+      return 'bg-error text-error-content'
     case 'start':
     case 'complete':
-      return 'text-gray-300 font-semibold'
+      return 'text-primary'
     default:
-      return 'text-gray-400'
+      return ''
+  }
+}
+
+const getLogPrefix = (type: string): string => {
+  switch (type) {
+    case 'task':
+      return '>'
+    case 'play':
+      return '#'
+    case 'ok':
+      return '✓'
+    case 'changed':
+      return '~'
+    case 'failed':
+      return '✗'
+    case 'error':
+      return '!'
+    case 'start':
+      return '$'
+    case 'complete':
+      return '>'
+    default:
+      return ' '
   }
 }
 

@@ -31,7 +31,7 @@
                 v-model="config.clusterName" 
                 type="text" 
                 placeholder="thinkube" 
-                class="input"
+                class="input input-md"
                 :class="{ 'input-error': errors.clusterName }"
                 required
               />
@@ -48,7 +48,7 @@
                 v-model="config.domainName" 
                 type="text" 
                 placeholder="thinkube.local" 
-                class="input"
+                class="input input-md"
                 :class="{ 'input-error': errors.domainName }"
                 required
               />
@@ -86,7 +86,7 @@
                   </button>
                   <button 
                     type="button"
-                    class="flex items-center"
+                    class="btn btn-ghost btn-xs btn-square"
                     @click="showCloudflareToken = !showCloudflareToken"
                   >
                     <svg v-if="showCloudflareToken" class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -151,7 +151,7 @@
                   </button>
                   <button 
                     type="button"
-                    class="flex items-center"
+                    class="btn btn-ghost btn-xs btn-square"
                     @click="showZerotierToken = !showZerotierToken"
                   >
                     <svg v-if="showZerotierToken" class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -214,7 +214,7 @@
                 </button>
                 <button 
                   type="button"
-                  class="flex items-center"
+                  class="btn btn-ghost btn-xs btn-square"
                   @click="showGithubToken = !showGithubToken"
                 >
                   <svg v-if="showGithubToken" class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

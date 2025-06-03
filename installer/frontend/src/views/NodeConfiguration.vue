@@ -71,7 +71,7 @@
                   />
                   <button 
                     type="button"
-                    class="absolute inset-y-0 right-0 flex items-center pr-2"
+                    class="btn btn-ghost btn-xs btn-square absolute inset-y-0 right-0 flex items-center pr-2"
                     @click="togglePasswordVisibility(idx)"
                   >
                     <svg v-if="showPasswords[idx]" class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -151,7 +151,7 @@
               <label class="label">
                 <span class="label-text font-semibold">Kubernetes Role</span>
               </label>
-              <select v-model="server.k8s_role" class="select">
+              <select v-model="server.k8s_role" class="select select-md">
                 <option value="">Select role...</option>
                 <option value="control_plane" :disabled="hasControlPlane && server.k8s_role !== 'control_plane'">
                   Control Plane {{ hasControlPlane && server.k8s_role !== 'control_plane' ? '(Already assigned)' : '' }}

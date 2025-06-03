@@ -24,7 +24,7 @@
             <input 
               type="text" 
               :value="currentUser" 
-              class="input"
+              class="input input-md"
               disabled
             />
           </div>

@@ -29,7 +29,7 @@
   gather_facts: yes
   vars:
     # Harbor robot account naming - API only needs the base name
-    harbor_robot_name: "kaniko"
+    # harbor_robot_name comes from inventory
     robot_duration: 36500  # 100 years (effectively never expires)
     harbor_admin_user: "admin"  # Harbor's built-in admin user
     admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"

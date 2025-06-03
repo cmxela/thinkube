@@ -1,0 +1,5 @@
+Host github.com-{{ github_repo_name }}
+    HostName github.com
+    User git
+    IdentityFile {{ ssh_private_key_path }}
+    StrictHostKeyChecking no

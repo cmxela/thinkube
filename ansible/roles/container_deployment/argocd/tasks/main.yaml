@@ -1,0 +1,119 @@
+---
+- name: Read SSH private key from remote host for ArgoCD
+  ansible.builtin.slurp:
+    src: "{{ code_source_path }}/.ssh/{{ github_repo_name }}/id_ed25519"
+  register: ssh_private_key_content
+  when: use_github
+
+- name: Create SSH key secret for ArgoCD GitHub access
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: github-{{ github_repo_name }}-ssh
+        namespace: "{{ argocd_namespace }}"
+        labels:
+          argocd.argoproj.io/secret-type: repository
+      stringData:
+        url: "{{ github_repo_url }}"
+        sshPrivateKey: "{{ ssh_private_key_content.content | b64decode }}"
+        type: git
+  when: use_github
+
+# - name: Ensure ssh-keyscan is installed (openssh-client)
+#   become: yes
+#   package:
+#     name: openssh-client
+#     state: present
+#   delegate_to: localhost
+#   when: use_github
+
+- name: Retrieve GitHub SSH host keys (RSA, ECDSA, ED25519)
+  delegate_to: localhost
+  shell: ssh-keyscan -t rsa,ecdsa,ed25519 github.com
+  register: github_keyscan
+  changed_when: true
+  when: use_github
+
+- name: Update argocd-ssh-known-hosts-cm with fresh GitHub known_hosts
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-ssh-known-hosts-cm
+        namespace: "{{ argocd_namespace }}"
+        labels:
+          app.kubernetes.io/part-of: argocd
+      data:
+        ssh_known_hosts: "{{ github_keyscan.stdout }}"
+  when: use_github and github_keyscan.stdout is defined
+
+- name: Restart ArgoCD repo server to pick up new SSH configuration
+  ansible.builtin.shell: |
+    {{ kubectl_bin }} -n {{ argocd_namespace }} rollout restart deployment argocd-repo-server
+    echo "Restarted ArgoCD repo server to pick up new SSH configuration"
+  when: use_github
+  register: argocd_restart
+  changed_when: true
+
+- name: Wait for ArgoCD repo server to be ready
+  ansible.builtin.shell: |
+    for i in $(seq 1 12); do
+      READY=$({{ kubectl_bin }} -n {{ argocd_namespace }} get deployment argocd-repo-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+      if [ "$READY" = "1" ]; then
+        echo "ArgoCD repo server is ready"
+        exit 0
+      fi
+      echo "Waiting for ArgoCD repo server to be ready... attempt $i/12"
+      sleep 10
+    done
+    echo "Timed out waiting for ArgoCD repo server to be ready"
+    exit 1
+  register: argocd_ready_wait
+  when: use_github and argocd_restart.changed
+  changed_when: false
+  args:
+    executable: /bin/bash
+
+- name: Login to ArgoCD
+  ansible.builtin.shell: |
+    argocd login {{ argocd_server }} \
+      --username admin \
+      --password '{{ admin_password }}' \
+      --insecure
+  register: argocd_login_result
+  when: use_github
+
+- name: Create ArgoCD Application
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: "{{ app_name }}"
+        namespace: "{{ argocd_namespace }}"
+      spec:
+        project: default
+        source:
+          repoURL: "{{ github_repo_url }}"
+          targetRevision: HEAD
+          path: k8s
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: "{{ app_namespace }}"
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true
+          syncOptions:
+          - CreateNamespace=true
+        revisionHistoryLimit: 3
+  when: use_github

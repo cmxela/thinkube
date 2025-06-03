@@ -295,3 +295,7 @@ All playbooks MUST include a standardized header:
 ```
 
 Test and rollback playbooks can use a simplified header focusing on their specific purpose.
+
+## Memory Section
+
+- Never use docker

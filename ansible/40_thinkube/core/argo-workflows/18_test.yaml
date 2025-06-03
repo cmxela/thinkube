@@ -31,13 +31,7 @@
   gather_facts: false
   become: false
 
-  vars:
-    ###################################################################
-    # Configuration variables
-    ###################################################################
-    argo_namespace: "argo"
-    argo_domain: "argo.{{ domain_name }}"
-    argo_grpc_domain: "grpc-argo.{{ domain_name }}"
+  # No vars section needed - all variables come from inventory
     
   tasks:
     ###################################################################
@@ -140,7 +134,7 @@
       
     - name: Verify artifact credentials secret exists
       ansible.builtin.shell: |
-        {{ kubectl_bin }} get secret -n {{ argo_namespace }} argo-artifacts
+        {{ kubectl_bin }} get secret -n {{ argo_namespace }} argo-artifacts-s3
       register: artifact_secret_check
       changed_when: false
       failed_when: artifact_secret_check.rc != 0

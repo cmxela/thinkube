@@ -1,0 +1,71 @@
+# roles/redis/ephemeral_redis/tasks/main.yaml
+---
+# Description: Deploy ephemeral Redis (no persistence, no snapshots, no appendonly)
+# 
+# This role deploys Redis without any persistence mechanisms, making it suitable
+# for ephemeral session storage, temporary caching, and other non-critical data.
+# The deployment uses the official Redis Docker image with persistence disabled.
+#
+# Variables:
+#   - redis_namespace: Kubernetes namespace to deploy Redis to (required)
+#   - redis_kubeconfig: Path to kubeconfig (optional)
+#   - redis_deployment_name: Name of Redis deployment (default: ephemeral-redis)
+#   - redis_service_name: Name of Redis service (default: ephemeral-redis)
+#   - redis_image: Redis image to use (default: redis:7.0.9)
+#   - redis_port: Redis port (default: 6379)
+
+- name: Deploy ephemeral Redis (Deployment)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ redis_kubeconfig | default(omit) }}"
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ redis_deployment_name }}"
+        namespace: "{{ redis_namespace }}"
+        labels:
+          app: "{{ redis_deployment_name }}"
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: "{{ redis_deployment_name }}"
+        template:
+          metadata:
+            labels:
+              app: "{{ redis_deployment_name }}"
+          spec:
+            containers:
+            - name: redis
+              image: "{{ redis_image }}"
+              # ephemeral usage: no snapshots, no appendonly
+              command: ["redis-server", "--save", "", "--appendonly", "no"]
+              ports:
+              - containerPort: "{{ redis_port }}"
+                name: redis
+
+- name: Deploy ephemeral Redis (Service)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ redis_kubeconfig | default(omit) }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ redis_service_name }}"
+        namespace: "{{ redis_namespace }}"
+        labels:
+          app: "{{ redis_deployment_name }}"
+      spec:
+        type: ClusterIP
+        selector:
+          app: "{{ redis_deployment_name }}"
+        ports:
+          - name: redis
+            port: "{{ redis_port }}"
+            targetPort: "{{ redis_port }}"
+
+- name: Debug Redis deployment info
+  ansible.builtin.debug:
+    msg: "Deployed ephemeral Redis service '{{ redis_service_name }}' in namespace '{{ redis_namespace }}'"

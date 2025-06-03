@@ -1,0 +1,62 @@
+---
+- name: Create temporary workflow file from template
+  ansible.builtin.template:
+    src: build-workflow.yaml.j2
+    dest: /tmp/build-{{ app_name }}-workflow.yaml
+  register: workflow_template
+
+- name: Submit Argo Workflow to build container
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: present
+    src: "{{ workflow_template.dest }}"
+  register: workflow_result
+
+- name: Extract workflow name
+  set_fact:
+    workflow_name: "{{ workflow_result.result.metadata.name }}"
+  when: workflow_result.changed
+
+- name: Wait for Argo Workflow to complete
+  shell: |
+    #!/bin/bash
+    echo "Waiting for workflow {{ workflow_name }} to start..."
+    for i in $(seq 1 12); do
+      STATUS=$({{ kubectl_bin }} -n {{ argo_namespace }} get workflow {{ workflow_name }} -o jsonpath='{.status.phase}' 2>/dev/null)
+      if [ -n "$STATUS" ]; then
+        echo "Workflow started with initial status: $STATUS"
+        break
+      fi
+      echo "Waiting for workflow to start... attempt $i/12"
+      sleep 10
+    done
+    
+    if [ -z "$STATUS" ]; then
+      echo "Timed out waiting for workflow to start"
+      exit 1
+    fi
+    
+    for i in $(seq 1 30); do
+      STATUS=$({{ kubectl_bin }} -n {{ argo_namespace }} get workflow {{ workflow_name }} -o jsonpath='{.status.phase}' 2>/dev/null)
+      if [ "$STATUS" = "Succeeded" ]; then
+        echo "Workflow completed successfully"
+        exit 0
+      elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Error" ]; then
+        echo "Workflow failed with status: $STATUS"
+        {{ kubectl_bin }} -n {{ argo_namespace }} get workflow {{ workflow_name }} -o jsonpath='{.status.nodes}' | jq '.' || true
+        exit 1
+      fi
+      echo "Waiting for workflow to complete... (Status: $STATUS) attempt $i/30"
+      sleep 60
+    done
+    
+    echo "Timed out waiting for workflow"
+    exit 1
+  register: workflow_wait_result
+  when: workflow_result.changed and workflow_name is defined
+
+- name: Clean up temporary workflow file
+  ansible.builtin.file:
+    path: "{{ workflow_template.dest }}"
+    state: absent
+  when: workflow_template is defined

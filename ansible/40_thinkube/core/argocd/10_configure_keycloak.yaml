@@ -36,11 +36,10 @@
     ###################################################################
     # Setup configuration for Argo CD client
     ###################################################################
-    keycloak_setup_client_id: "argocd"
-    argocd_hostname: "argocd.{{ domain_name }}"
+    keycloak_setup_client_id: "{{ argocd_client_id }}"
     
     keycloak_setup_client_body:
-      clientId: "argocd"
+      clientId: "{{ argocd_client_id }}"
       enabled: true
       protocol: "openid-connect"
       standardFlowEnabled: true

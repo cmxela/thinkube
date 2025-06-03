@@ -1,0 +1,9 @@
+# roles/redis/ephemeral_redis/defaults/main.yaml
+---
+# Redis defaults - these rarely change
+redis_deployment_name: "ephemeral-redis"  # Default deployment name
+redis_service_name: "ephemeral-redis"     # Default service name (can override in playbook)
+redis_image: "redis:7.0.9"                # Redis image version
+redis_port: 6379                          # Standard Redis port
+redis_password: ""                        # Default to no password
+redis_debug: false                        # Debug mode

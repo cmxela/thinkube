@@ -402,8 +402,45 @@ Should be: ... amd_iommu=on iommu=pt ...  # CORRECT for AMD
 
 **Impact**: This prevents GPU passthrough from working even when all other configuration is correct.
 
+## 22. Cloudflare Token Security
+
+**Issue**: The Cloudflare token is currently stored in the inventory file, which gets committed to GitHub, potentially exposing sensitive credentials.
+
+**Current Behavior**:
+- Installer collects `cloudflare_token` and stores it directly in inventory.yaml
+- This inventory file is tracked in git and could be accidentally committed
+- Token is visible in plain text to anyone with repository access
+
+**Fix Required**:
+- Modify the installer to write the Cloudflare token to `~/.env` file instead of inventory
+- Update inventory to use: `cloudflare_token: "{{ lookup('env', 'CLOUDFLARE_TOKEN') }}"`
+- The installer should:
+  - Create/update `~/.env` file with `CLOUDFLARE_TOKEN=<token>`
+  - Ensure `~/.env` has proper permissions (600)
+  - Add `.env` to `.gitignore` if not already present
+- Update all playbooks that use cloudflare_token to ensure they load from environment
+
+## 23. GitHub Token Security
+
+**Issue**: The GitHub token needs to be handled securely and not stored in the inventory file.
+
+**Current Behavior**:
+- GitHub token is now referenced from environment variable in inventory
+- But the installer doesn't collect or store this token
+- Users must manually set GITHUB_TOKEN environment variable
+
+**Fix Required**:
+- Add GitHub token collection to the installer (e.g., in Configuration or Requirements step)
+- Write the token to `~/.env` file: `GITHUB_TOKEN=<token>`
+- The installer should:
+  - Prompt for GitHub personal access token
+  - Validate the token has required permissions (repo, admin:public_key)
+  - Store it securely in `~/.env`
+  - Show instructions on how to create a token if user doesn't have one
+- Ensure the token is available for playbooks that need it (DevPi, etc.)
+
 ## Implementation Priority
 
-1. **High Priority**: ZeroTier API token, VM hosts resolution, OpenSSH server check, Dual IP fix, Python venv issue, DNS name mismatch, DNS hardcoded names, DNS group conflict, Shell setup must run before MicroK8s, Fish fork bomb, Ingress IP configuration, Component deployment order, GRUB IOMMU wrong CPU type, VFIO PCI IDs syntax error - These block installation
+1. **High Priority**: ZeroTier API token, VM hosts resolution, OpenSSH server check, Dual IP fix, Python venv issue, DNS name mismatch, DNS hardcoded names, DNS group conflict, Shell setup must run before MicroK8s, Fish fork bomb, Ingress IP configuration, Component deployment order, GRUB IOMMU wrong CPU type, VFIO PCI IDs syntax error, Cloudflare token security, GitHub token security - These block installation or pose security risks
 2. **Medium Priority**: SSH config timing, inventory validation
 3. **Low Priority**: Environment variable standardization (works but could be cleaner)

@@ -26,6 +26,11 @@ secondary_ingress_service: "secondary-ingress-ingress-nginx-controller"
 
 # Domain configuration is inherited from inventory.yaml (thinkube.com)
 
+# SeaweedFS configuration
+seaweedfs_namespace: "seaweedfs"
+seaweedfs_s3_hostname: "s3.{{ domain_name }}"
+seaweedfs_ui_hostname: "seaweedfs.{{ domain_name }}"
+
 # User configuration - inherits from inventory.yaml
 # admin_username: "admin" - defined in inventory.yaml
 admin_first_name: "Admin"  # Application admin's first name
@@ -46,6 +51,9 @@ harbor_project: "thinkube"
 harbor_storage_class: "microk8s-hostpath"
 harbor_registry_size: "50Gi"
 harbor_database_size: "10Gi"
+harbor_robot_name: "thinkube"
+harbor_robot_user: "robot$thinkube"
+harbor_admin_user: "admin"
 
 # Certificate paths
 ssl_cert_dir: "/etc/ssl/{{ domain_name.split('.')[0] }}_certificates"
@@ -68,3 +76,37 @@ minio_image: "{{ harbor_registry }}/library/minio:latest"
 kubeconfig: "/var/snap/microk8s/current/credentials/client.config"
 kubectl_bin: "/snap/bin/microk8s.kubectl"
 helm_bin: "/snap/bin/microk8s.helm3"
+
+# ArgoCD configuration
+argocd_namespace: "argocd"
+argocd_hostname: "argocd.{{ domain_name }}"
+argocd_grpc_hostname: "argocd-grpc.{{ domain_name }}"
+argocd_release_name: "argocd"
+argocd_chart_repo: "https://argoproj.github.io/argo-helm"
+argocd_chart_name: "argo-cd"
+argocd_client_id: "argocd"
+
+# Argo Workflows configuration
+argo_namespace: "argo"
+argo_domain: "argo.{{ domain_name }}"
+argo_grpc_domain: "grpc-argo.{{ domain_name }}"
+argo_release_name: "argo-workflows"
+argo_chart_repo: "https://argoproj.github.io/argo-helm"
+argo_chart_name: "argo-workflows"
+argo_events_release_name: "argo-events"
+argo_events_chart_name: "argo-events"
+argo_service_type: "ClusterIP"
+argo_oidc_client_id: "argo"
+
+# DevPi configuration
+devpi_namespace: "devpi"
+devpi_dashboard_hostname: "devpi.{{ domain_name }}"
+devpi_api_hostname: "devpi-api.{{ domain_name }}"
+devpi_index_name: "prod"
+
+# GitHub organization for Thinkube
+github_org: "thinkube"
+
+# Container registry settings (for all services)
+registry_subdomain: "registry"
+registry_domain: "{{ registry_subdomain }}.{{ domain_name }}"

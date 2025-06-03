@@ -1,0 +1,24 @@
+- name: Debug Repository Information
+  debug:
+    msg:
+      - "Use GitHub: {{ use_github }}"
+      - "GitHub Repo URL: {{ github_repo_url }}"
+      - "Local Repo Path: {{ code_source_path }}/{{ github_repo_name }}"
+      - "SSH Key Path: {{ ssh_private_key_path }}"
+
+- name: Ensure repository directory exists
+  file:
+    path: "{{ code_source_path }}/{{ github_repo_name }}"
+    state: directory
+    mode: '0755'
+
+- name: Clone or update local repository
+  git:
+    repo: "{{ github_repo_url }}"
+    dest: "{{ code_source_path }}/{{ github_repo_name }}"
+    version: main
+    remote: origin
+  environment:
+    GIT_SSH_COMMAND: "ssh -i {{ ssh_private_key_path }} -o StrictHostKeyChecking=no"
+  when: use_github
+  register: git_result

@@ -1,0 +1,35 @@
+---
+- name: Wait for ArgoCD sync to create deployment
+  shell: |
+    #!/bin/bash
+    for i in $(seq 1 30); do
+      SYNC_STATUS=$(argocd app get {{ app_name }} -o json | jq -r '.status.sync.status' 2>/dev/null || echo "Unknown")
+      HEALTH_STATUS=$(argocd app get {{ app_name }} -o json | jq -r '.status.health.status' 2>/dev/null || echo "Unknown")
+      echo "Sync Status: $SYNC_STATUS, Health Status: $HEALTH_STATUS"
+      
+      if [ "$SYNC_STATUS" = "Synced" ] && [ "$HEALTH_STATUS" = "Healthy" ]; then
+        echo "ArgoCD application is synced and healthy"
+        exit 0
+      fi
+      
+      DEPLOYMENT_EXISTS=$({{ kubectl_bin }} -n {{ app_namespace }} get deployment {{ app_name }} -o name 2>/dev/null || echo "not found")
+      if [ "$DEPLOYMENT_EXISTS" != "not found" ]; then
+        READY=$({{ kubectl_bin }} -n {{ app_namespace }} get deployment {{ app_name }} -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+        DESIRED=$({{ kubectl_bin }} -n {{ app_namespace }} get deployment {{ app_name }} -o jsonpath='{.spec.replicas}' 2>/dev/null)
+        echo "Deployment found, Ready: $READY/$DESIRED"
+        
+        if [ "$READY" = "$DESIRED" ]; then
+          echo "Deployment is fully ready"
+          exit 0
+        fi
+      else
+        echo "Deployment not found yet"
+      fi
+      
+      echo "Waiting for ArgoCD sync to complete... attempt $i/30"
+      sleep 10
+    done
+    
+    echo "Timed out waiting for ArgoCD sync"
+    exit 1
+  register: argocd_sync_wait

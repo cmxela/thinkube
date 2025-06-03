@@ -1,0 +1,34 @@
+# roles/container_deployment/git_push/tasks/main.yaml
+# Now simplified since SSH key setup is handled by common/github_ssh_keys
+
+- name: Test Git access to the repository
+  shell: |
+    GIT_SSH_COMMAND="ssh -i {{ ssh_private_key_path }} -o StrictHostKeyChecking=no" git ls-remote {{ github_repo_url }} || echo "Failed to access repository"
+  args:
+    chdir: "{{ local_repo_path }}"
+  environment:
+    GIT_SSH_COMMAND: "ssh -i {{ ssh_private_key_path }} -o StrictHostKeyChecking=no"
+  register: github_access_test
+  changed_when: false
+  ignore_errors: yes
+
+- name: Add GitHub remote (if not already added)
+  command:
+    cmd: git remote add origin {{ github_repo_url }}
+    chdir: "{{ local_repo_path }}"
+  when: use_github
+  ignore_errors: true
+  environment:
+    GIT_SSH_COMMAND: "ssh -i {{ ssh_private_key_path }} -o StrictHostKeyChecking=no"
+
+- name: Fail if repository is not accessible (double-check)
+  fail:
+    msg: |
+      Cannot access GitHub repository. 
+      Possible issues:
+      - Incorrect SSH key
+      - Key not added to GitHub
+      - Repository access permissions
+      
+      SSH Access Test Result: {{ github_access_test.stdout }}
+  when: "'Failed to access repository' in github_access_test.stdout"

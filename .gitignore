@@ -53,6 +53,7 @@ id_*
 
 # Nested repositories
 thinkube-core/
+devpi-deployment/
 
 # Temporary files for review
 thinkube-core-review-temp.md

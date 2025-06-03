@@ -1,0 +1,18 @@
+# roles/redis/ephemeral_redis/meta/main.yaml
+---
+galaxy_info:
+  author: Alex Martinez Corria
+  description: Deploy ephemeral Redis for session storage
+  license: MIT
+  min_ansible_version: 2.9
+  platforms:
+    - name: GenericLinux
+      versions:
+        - all
+  galaxy_tags:
+    - redis
+    - kubernetes
+    - session
+    - ephemeral
+
+dependencies: []

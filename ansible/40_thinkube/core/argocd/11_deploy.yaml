@@ -33,23 +33,15 @@
   gather_facts: true
 
   vars:
-    # ArgoCD settings
-    argocd_namespace: "argocd"
-    argocd_release_name: "argocd"
-    argocd_chart_repo: "https://argoproj.github.io/argo-helm"
-    argocd_chart_name: "argo-cd"
+    # ArgoCD values file path (temporary, not from inventory)
     argocd_values_file: "/tmp/argocd-values.yaml"
-
-    # Ingress & TLS settings
-    argocd_hostname: "argocd.{{ domain_name }}"
-    argocd_grpc_hostname: "argocd-grpc.{{ domain_name }}"
+    
+    # TLS secret name for ArgoCD
     argocd_tls_secret_name: "argocd-tls-secret"
-
-    # Keycloak existing client info
-    # We assume 10_configure_keycloak.yaml has already created this client.
+    
+    # Keycloak admin credentials
     keycloak_admin_user: "{{ admin_username }}"
     keycloak_admin_password: "{{ lookup('env','ADMIN_PASSWORD') }}"
-    argocd_client_id: "argocd"
     
   tasks:
     #######################################################################

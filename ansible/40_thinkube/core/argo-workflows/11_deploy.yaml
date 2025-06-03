@@ -32,38 +32,26 @@
   hosts: microk8s_control_plane
   become: true
   vars:
-    # Argo Workflows settings
-    argo_namespace: "argo"
-    argo_release_name: "argo-workflows"
-    argo_chart_repo: "https://argoproj.github.io/argo-helm"
-    argo_chart_name: "argo-workflows"
+    # Temporary file paths (not from inventory)
     argo_values_file: "/tmp/argo-values.yaml"
-
-    # Argo Events settings
-    argo_events_release_name: "argo-events"
-    argo_events_chart_name: "argo-events"
     argo_events_values_file: "/tmp/argo-events-values.yaml"
-
-    # Ingress and TLS settings
-    argo_domain: "argo.{{ domain_name }}"
-    argo_grpc_domain: "grpc-argo.{{ domain_name }}"
+    
+    # TLS secret name
     argo_tls_secret_name: "{{ argo_namespace }}-tls-secret"
-
-    # Service type configuration
-    argo_service_type: "ClusterIP"
-
-    # Keycloak settings for Argo OIDC (client must already exist)
+    
+    # Keycloak admin credentials
     keycloak_admin_user: "{{ admin_username }}"
     keycloak_admin_password: "{{ lookup('env','ADMIN_PASSWORD') }}"
-    argo_oidc_client_id: "argo"
+    
+    # OIDC URLs constructed from inventory variables
     argo_oidc_redirect_uri: "https://{{ argo_domain }}/oauth2/callback"
     argo_oidc_web_origins:
       - "https://{{ argo_domain }}"
     argo_redirect_uris:
       - "https://{{ argo_domain }}/oauth2/callback"
       - "https://{{ argo_domain }}/*"
-
-    # OIDC configuration for Argo Server console (client secret will be retrieved)
+    
+    # OIDC configuration for Argo Server console
     oidc_enabled: true
     oidc_issuer: "{{ keycloak_url }}/realms/{{ keycloak_realm }}"
     oidc_client_id: "{{ argo_oidc_client_id }}"
@@ -339,7 +327,8 @@
         fi
       args:
         chdir: "/tmp"
-      failed_when: false
+      register: argo_deploy
+      changed_when: "'STATUS: deployed' in argo_deploy.stdout"
 
     # --- Begin Argo Events installation ---
     - name: Deploy or upgrade Argo Events using Helm
@@ -355,7 +344,8 @@
         fi
       args:
         chdir: "/tmp"
-      failed_when: false
+      register: argo_events_deploy
+      changed_when: "'STATUS: deployed' in argo_events_deploy.stdout"
     # --- End Argo Events installation ---
 
     - name: Wait for Argo Workflows pods to be ready

@@ -29,13 +29,7 @@
   gather_facts: false
   become: false
 
-  vars:
-    ###################################################################
-    # Configuration variables
-    ###################################################################
-    argocd_namespace: "argocd"
-    argocd_hostname: "argocd.{{ domain_name }}"
-    argocd_grpc_hostname: "argocd-grpc.{{ domain_name }}"
+  # No vars section needed - all variables come from inventory
     
   tasks:
     ###################################################################

@@ -124,108 +124,93 @@
       become: true
 
     ###################################################################
-    # 2) Ensure the mc alias is set
+    # 2) Configure OIDC via environment variables only
     ###################################################################
-    - name: mc alias set
-      ansible.builtin.shell: >
-        {{ mc_path }} --json alias set {{ minio_alias }}
-        {{ minio_endpoint }}
-        {{ minio_root_user }}
-        {{ minio_root_password }}
-        --api S3v4
-      args:
-        executable: /bin/bash
-      failed_when: false
+    # Note: We skip IDP configuration entirely and use only environment variables
+    # to avoid conflicts between mc idp openid and environment variable configuration
 
-    ###################################################################
-    # 3) Configure OIDC with `mc idp openid add`
-    ###################################################################
-    - name: Check if OIDC configuration exists
-      ansible.builtin.shell: |
-        {{ mc_path }} --json idp openid ls {{ minio_alias }} | grep -w "{{ keycloak_idp_name }}" || echo ""
-      args:
-        executable: /bin/bash
-      register: idp_check
-      failed_when: false
-      changed_when: false
-
-    # Simply update existing configuration instead of removing and adding
-    - name: Check for existing OIDC configuration
-      ansible.builtin.shell: |
-        {{ mc_path }} --json idp openid ls {{ minio_alias }} | grep -w {{ keycloak_idp_name }} || echo "NotFound"
-      args:
-        executable: /bin/bash
-      register: existing_idp
-      failed_when: false
-      changed_when: false
-      
-    # Update with a fixed scope parameter
-    - name: Update OIDC configuration in MinIO
-      ansible.builtin.shell: |
-        {{ mc_path }} --json idp openid {{ "update" if existing_idp.stdout != "NotFound" else "add" }} \
-          {{ minio_alias }} \
-          {{ keycloak_idp_name }} \
-          client_id={{ keycloak_client_id }} \
-          client_secret={{ keycloak_client_secret }} \
-          config_url="{{ keycloak_config_url }}" \
-          display_name="{{ keycloak_display_name }}" \
-          scopes="{{ keycloak_scopes }}" \
-          redirect_uri="https://{{ minio_console_hostname }}/oauth_callback" \
-          redirect_uri_dynamic="off" \
-          claim_name="policy" \
-          claim_prefix="" \
-          vendor="keycloak" \
-          keycloak_realm="{{ keycloak_realm }}" \
-          keycloak_admin_url="{{ keycloak_admin_url }}"
-      args:
-        executable: /bin/bash
-      register: idp_result
+    # Patch MinIO StatefulSet to add OIDC environment variables
+    - name: Patch MinIO StatefulSet with OIDC environment variables
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        name: minio
+        namespace: "{{ minio_namespace }}"
+        api_version: apps/v1
+        kind: StatefulSet
+        merge_type: strategic-merge
+        definition:
+          spec:
+            template:
+              spec:
+                containers:
+                - name: minio
+                  env:
+                  - name: MINIO_IDENTITY_OPENID_CONFIG_URL
+                    value: "{{ keycloak_config_url }}"
+                  - name: MINIO_IDENTITY_OPENID_CLIENT_ID
+                    value: "{{ keycloak_client_id }}"
+                  - name: MINIO_IDENTITY_OPENID_CLIENT_SECRET
+                    value: "{{ keycloak_client_secret }}"
+                  - name: MINIO_IDENTITY_OPENID_CLAIM_NAME
+                    value: "policy"
+                  - name: MINIO_IDENTITY_OPENID_SCOPES
+                    value: "{{ keycloak_scopes }}"
+                  - name: MINIO_IDENTITY_OPENID_REDIRECT_URI
+                    value: "https://{{ minio_console_hostname }}/oauth_callback"
+                  - name: MINIO_IDENTITY_OPENID_DISPLAY_NAME
+                    value: "{{ keycloak_display_name }}"
 
     ###################################################################
     # 4) Restart MinIO to apply changes
     ###################################################################
-    - name: Restart MinIO service
+    - name: Restart MinIO service via mc
       ansible.builtin.shell: >
         {{ mc_path }} --json admin service restart {{ minio_alias }}
       args:
         executable: /bin/bash
       register: restart_result
+      failed_when: false
 
-    - name: Display restart result
-      ansible.builtin.debug:
-        var: restart_result.stdout_lines
-
-    # Alternative restart method using kubectl
-    - name: Restart MinIO pod as an alternative method
+    - name: Force restart MinIO pod to ensure configuration is loaded
       ansible.builtin.shell: >
-        {{ kubectl_bin }} -n {{ minio_namespace }} delete pod -l app=minio --wait=false
+        {{ kubectl_bin }} -n {{ minio_namespace }} delete pod -l app=minio --force --grace-period=0
       args:
         executable: /bin/bash
       register: pod_restart_result
-      failed_when: false
 
-    - name: Display pod restart result
-      ansible.builtin.debug:
-        var: pod_restart_result.stdout_lines
+    - name: Wait for MinIO pod to be ready
+      ansible.builtin.shell: >
+        {{ kubectl_bin }} -n {{ minio_namespace }} wait --for=condition=ready pod -l app=minio --timeout=120s
+      args:
+        executable: /bin/bash
+      register: wait_result
 
     ###################################################################
     # 5) Verify the OIDC configuration
     ###################################################################
     - name: Wait for MinIO to stabilize after restart
       ansible.builtin.pause:
-        seconds: 5
+        seconds: 10
       
-    - name: Verify OIDC configuration
-      ansible.builtin.shell: >
-        {{ mc_path }} --json idp openid ls {{ minio_alias }}
-      register: idp_list
-      args:
-        executable: /bin/bash
-      changed_when: false
+    - name: Verify OIDC environment variables are set
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: apps/v1
+        kind: StatefulSet
+        name: minio
+        namespace: "{{ minio_namespace }}"
+      register: minio_statefulset
       
-    - name: Display verification results
+    - name: Extract OIDC environment variables
+      ansible.builtin.set_fact:
+        oidc_env_vars: "{{ minio_statefulset.resources[0].spec.template.spec.containers[0].env | selectattr('name', 'match', '^MINIO_IDENTITY_OPENID_') | list }}"
+      
+    - name: Display OIDC configuration
       ansible.builtin.debug:
-        var: idp_list.stdout_lines
+        msg:
+          - "OIDC Configuration via Environment Variables:"
+          - "{{ oidc_env_vars | map(attribute='name') | list }}"
         
     ###################################################################
     # 6) Add verification message about token configuration

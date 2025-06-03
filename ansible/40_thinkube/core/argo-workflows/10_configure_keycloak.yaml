@@ -32,19 +32,14 @@
     keycloak_admin_username: "{{ admin_username }}"
     keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
     keycloak_validate_certs: true
-
-    ###################################################################
-    # Argo hostname settings
-    ###################################################################
-    argo_domain: "argo.{{ domain_name }}"
     
     ###################################################################
     # Setup configuration for the keycloak_setup role
     ###################################################################
-    keycloak_setup_client_id: "argo"
+    keycloak_setup_client_id: "{{ argo_oidc_client_id }}"
     
     keycloak_setup_client_body:
-      clientId: "argo"
+      clientId: "{{ argo_oidc_client_id }}"
       enabled: true
       protocol: "openid-connect"
       standardFlowEnabled: true

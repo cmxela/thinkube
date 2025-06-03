@@ -167,9 +167,14 @@
         description: "Curl utility image from Docker Hub"
         
       # Storage services
+      - source: "docker.io/minio/minio:RELEASE.2024-10-29T16-01-48Z"
+        destination: "{{ harbor_registry }}/{{ library_project }}/minio:RELEASE.2024-10-29T16-01-48Z"
+        description: "MinIO object storage server from Docker Hub - specific version for OIDC compatibility"
+      
+      # Keep latest as well for other uses
       - source: "docker.io/minio/minio:latest"
         destination: "{{ harbor_registry }}/{{ library_project }}/minio:latest"
-        description: "MinIO object storage server from Docker Hub"
+        description: "MinIO object storage server from Docker Hub - latest version"
         
       # Knative related images
       - source: "{{ gcr_registry }}/knative-samples/helloworld-go:latest"

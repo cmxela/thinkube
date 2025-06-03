@@ -1,0 +1,214 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: build-{{ app_name }}-
+  namespace: {{ argo_namespace }}
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: {{ master_node_name }}
+  
+  arguments:
+    parameters:
+    - name: repo-url
+      value: {{ github_repo_url }}
+    - name: repo-name
+      value: {{ github_repo_name }}
+    - name: repo-org
+      value: {{ github_org }}
+  
+  entrypoint: build-and-update-git
+  serviceAccountName: kaniko-builder
+  artifactRepositoryRef:
+    configMap: artifact-repositories
+    key: default-v1
+  
+  templates:
+  - name: build-and-update-git
+    dag:
+      tasks:
+      - name: debug-ssh
+        template: debug-ssh
+        arguments:
+          parameters:
+          - name: repo-url
+            value: "{% raw %}{{workflow.parameters.repo-url}}{% endraw %}"
+      - name: clone-repo
+        template: clone-repo
+        dependencies:
+        - debug-ssh
+        arguments:
+          parameters:
+          - name: repo-url
+            value: "{% raw %}{{workflow.parameters.repo-url}}{% endraw %}"
+      - name: generate-timestamp
+        template: generate-timestamp
+        dependencies:
+        - clone-repo
+      - name: build-image
+        template: build-image
+        dependencies:
+        - clone-repo
+        - generate-timestamp
+        arguments:
+          parameters:
+          - name: image-tag
+            value: "{% raw %}{{tasks.generate-timestamp.outputs.parameters.timestamp}}{% endraw %}"
+          artifacts:
+          - name: repo
+            from: "{% raw %}{{tasks.clone-repo.outputs.artifacts.repo}}{% endraw %}"
+      - name: update-git
+        template: update-git
+        dependencies:
+        - build-image
+        arguments:
+          parameters:
+          - name: repo-org
+            value: "{% raw %}{{workflow.parameters.repo-org}}{% endraw %}"
+          - name: repo-name
+            value: "{% raw %}{{workflow.parameters.repo-name}}{% endraw %}"
+          - name: image-tag
+            value: "{% raw %}{{tasks.generate-timestamp.outputs.parameters.timestamp}}{% endraw %}"
+          artifacts:
+          - name: repo
+            from: "{% raw %}{{tasks.clone-repo.outputs.artifacts.repo}}{% endraw %}"
+
+  - name: debug-ssh
+    inputs:
+      parameters:
+      - name: repo-url
+    container:
+      image: alpine:latest
+      command: [sh, -c]
+      args:
+        - |
+          apk add --no-cache openssh-client git
+          mkdir -p /root/.ssh
+          echo "Testing SSH connection..."
+          ssh-keyscan github.com >> /root/.ssh/known_hosts 2>/dev/null || true
+          echo "Attempting to list SSH keys..."
+          ls -la /etc/ssh-keys/ || echo "No keys directory found"
+          echo "Testing git with SSH..."
+          GIT_SSH_COMMAND="ssh -v -i /etc/ssh-keys/ssh-privatekey -o StrictHostKeyChecking=no" git ls-remote {% raw %}{{inputs.parameters.repo-url}}{% endraw %} 2>&1 || echo "Git test failed"
+      volumeMounts:
+      - name: github-ssh-key
+        mountPath: /etc/ssh-keys
+        readOnly: true
+    volumes:
+    - name: github-ssh-key
+      secret:
+        secretName: github-ssh-key-{{ github_repo_name }}
+        defaultMode: 0400
+
+  - name: clone-repo
+    inputs:
+      parameters:
+      - name: repo-url
+    outputs:
+      artifacts:
+      - name: repo
+        path: /workspace
+    container:
+      image: alpine/git:latest
+      command: [sh, -c]
+      args:
+        - |
+          mkdir -p /root/.ssh
+          cp /etc/ssh-keys/ssh-privatekey /root/.ssh/id_ed25519
+          chmod 600 /root/.ssh/id_ed25519
+          ssh-keyscan github.com >> /root/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i /root/.ssh/id_ed25519 -o StrictHostKeyChecking=no"
+          git clone {% raw %}{{inputs.parameters.repo-url}}{% endraw %} /workspace
+          cd /workspace
+          git log --oneline -n 5
+      volumeMounts:
+      - name: github-ssh-key
+        mountPath: /etc/ssh-keys
+        readOnly: true
+    volumes:
+    - name: github-ssh-key
+      secret:
+        secretName: github-ssh-key-{{ github_repo_name }}
+        defaultMode: 0400
+
+  - name: generate-timestamp
+    outputs:
+      parameters:
+      - name: timestamp
+        valueFrom:
+          path: /tmp/timestamp.txt
+    container:
+      image: alpine:latest
+      command: [sh, -c]
+      args:
+        - |
+          date +%Y%m%dT%H%M%S > /tmp/timestamp.txt
+
+  - name: build-image
+    inputs:
+      parameters:
+      - name: image-tag
+      artifacts:
+      - name: repo
+        path: /workspace
+    container:
+      image: gcr.io/kaniko-project/executor:latest
+      args:
+        - --dockerfile=/workspace/dockerfile/Dockerfile
+        - --context=/workspace
+        - "--destination={{ harbor_registry }}/{{ harbor_project }}/{{ app_name }}:{% raw %}{{inputs.parameters.image-tag}}{% endraw %}"
+        - --insecure
+        - --insecure-pull
+        - --skip-tls-verify
+        - --verbosity=debug
+      volumeMounts:
+      - name: docker-config
+        mountPath: /kaniko/.docker/config.json
+        subPath: .dockerconfigjson
+    volumes:
+    - name: docker-config
+      secret:
+        secretName: docker-config
+
+  - name: update-git
+    inputs:
+      parameters:
+      - name: repo-org
+      - name: repo-name
+      - name: image-tag
+      artifacts:
+      - name: repo
+        path: /workspace
+    container:
+      image: bitnami/git:latest
+      command: [sh, -c]
+      args:
+        - |
+          # Setup SSH for git
+          mkdir -p /root/.ssh
+          cp /etc/ssh-keys/ssh-privatekey /root/.ssh/id_ed25519
+          chmod 600 /root/.ssh/id_ed25519
+          ssh-keyscan github.com >> /root/.ssh/known_hosts
+          
+          # Configure git
+          cd /workspace
+          git config --global user.email "argo@{{ domain_name }}"
+          git config --global user.name "Argo Workflow"
+          git config --global core.sshCommand "ssh -i /root/.ssh/id_ed25519 -o StrictHostKeyChecking=no"
+          
+          # Update kustomization.yaml with new image tag
+          cd /workspace/k8s
+          sed -i "s|newTag:.*|newTag: {% raw %}{{inputs.parameters.image-tag}}{% endraw %}|" kustomization.yaml
+          
+          # Commit and push changes
+          git add kustomization.yaml
+          git commit -m "Update image tag to {% raw %}{{inputs.parameters.image-tag}}{% endraw %}"
+          git push origin main
+      volumeMounts:
+      - name: github-ssh-key
+        mountPath: /etc/ssh-keys
+        readOnly: true
+    volumes:
+    - name: github-ssh-key
+      secret:
+        secretName: github-ssh-key-{{ github_repo_name }}
+        defaultMode: 0400

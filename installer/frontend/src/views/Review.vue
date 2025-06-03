@@ -1,6 +1,6 @@
 <template>
   <div class="max-w-6xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">Review Configuration</h1>
+    <h1 class="text-3xl font-bold mb-6 text-base-content">Review Configuration</h1>
     
     <!-- Cluster Settings -->
     <div class="card bg-base-100 shadow-xl mb-6">
@@ -9,20 +9,20 @@
         
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <p class="text-sm text-base-content/70">Cluster Name</p>
-            <p class="font-semibold">{{ config.clusterName }}</p>
+            <p class="text-sm text-base-content/60 font-medium">Cluster Name</p>
+            <p class="font-semibold text-base-content">{{ config.clusterName }}</p>
           </div>
           <div>
-            <p class="text-sm text-base-content/70">Domain Name</p>
-            <p class="font-semibold">{{ config.domainName }}</p>
+            <p class="text-sm text-base-content/60 font-medium">Domain Name</p>
+            <p class="font-semibold text-base-content">{{ config.domainName }}</p>
           </div>
           <div>
-            <p class="text-sm text-base-content/70">Admin Username</p>
-            <p class="font-semibold">{{ config.adminUsername || 'tkadmin' }}</p>
+            <p class="text-sm text-base-content/60 font-medium">Admin Username</p>
+            <p class="font-semibold text-base-content">{{ config.adminUsername || 'tkadmin' }}</p>
           </div>
           <div>
-            <p class="text-sm text-base-content/70">Deployment Type</p>
-            <p class="font-semibold">{{ deploymentType }}</p>
+            <p class="text-sm text-base-content/60 font-medium">Deployment Type</p>
+            <p class="font-semibold text-base-content">{{ deploymentType }}</p>
           </div>
         </div>
       </div>
@@ -34,16 +34,16 @@
         <h2 class="card-title mb-4">Node Assignments</h2>
         
         <div class="space-y-3">
-          <div v-for="node in allNodes" :key="node.id" class="border rounded-lg p-4">
+          <div v-for="node in allNodes" :key="node.id" class="border border-base-300 rounded-lg p-4 hover:bg-base-200/20 transition-colors">
             <div class="flex justify-between items-start">
               <div class="flex-1">
-                <h3 class="font-semibold text-lg">{{ node.hostname }}</h3>
-                <p class="text-sm text-base-content/70">
+                <h3 class="font-semibold text-lg text-base-content">{{ node.hostname }}</h3>
+                <p class="text-sm text-base-content/60">
                   {{ node.type === 'baremetal' ? 'Baremetal Server' : `VM on ${node.host}` }}
                 </p>
-                <p class="text-sm mt-1">
-                  {{ node.cpu }} CPU, {{ node.memory }} GB RAM
-                  <span v-if="node.ip" class="ml-2">• {{ node.ip }}</span>
+                <p class="text-sm mt-1 text-base-content/80">
+                  <span class="font-medium">{{ node.cpu }}</span> CPU, <span class="font-medium">{{ node.memory }}</span> GB RAM
+                  <span v-if="node.ip" class="ml-2">• <span class="font-mono">{{ node.ip }}</span></span>
                 </p>
                 
                 <!-- GPU assignments for this node -->
@@ -73,9 +73,11 @@
     <div v-if="generatedInventory" class="card bg-base-100 shadow-xl mb-6">
       <div class="card-body">
         <h2 class="card-title mb-4">Generated Ansible Inventory</h2>
-        <p class="text-sm text-base-content/70 mb-4">
-          Your configuration has been converted to an Ansible inventory file. You can download this for manual playbook execution.
-        </p>
+        <div class="prose prose-sm max-w-none mb-4">
+          <p class="text-base-content/80">
+            Your configuration has been converted to an Ansible inventory file. You can download this for manual playbook execution.
+          </p>
+        </div>
         
         <div class="flex gap-3">
           <button class="btn btn-outline btn-sm" @click="copyInventory">

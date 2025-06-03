@@ -2,44 +2,96 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom styles for thinkube installer */
+/* Typography using Tailwind utilities */
 @layer base {
   body {
-    @apply font-roboto-slab;
+    @apply font-body text-base antialiased;
   }
   
-  code, pre {
+  h1, h2, h3, h4, h5, h6, .card-title {
+    @apply font-heading tracking-tight;
+  }
+  
+  h1 {
+    @apply text-3xl font-bold;
+  }
+  
+  h2, .card-title {
+    @apply text-2xl font-semibold;
+  }
+  
+  h3 {
+    @apply text-xl font-semibold;
+  }
+  
+  code, pre, .mockup-code {
     @apply font-mono;
   }
-}
-
-@layer components {
-  /* Use Alata only for main section headers and card titles */
-  h1 {
-    @apply font-alata;
+  
+  /* JetBrains Mono specific enhancements */
+  code {
+    @apply text-sm font-medium;
   }
   
-  .card-title {
-    @apply font-alata;
+  pre, .mockup-code {
+    @apply text-sm leading-relaxed;
+    font-variant-ligatures: contextual;
   }
   
-  /* Everything else inherits Roboto Slab from body */
+  /* Inline code styling */
+  :not(pre) > code {
+    @apply px-1.5 py-0.5 rounded bg-base-200 text-base-content/90;
+  }
+  
+  /* Prose styling for content-heavy sections */
+  .prose {
+    @apply font-body;
+  }
+  
+  .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+    @apply font-heading;
+  }
+  
+  /* Better table styling */
+  .table th {
+    @apply bg-base-200 bg-opacity-50;
+  }
+  
+  .table-compact th,
+  .table-compact td {
+    @apply py-2;
+  }
+  
+  /* Enhanced prose defaults */
+  .prose {
+    @apply text-base-content;
+  }
+  
+  .prose ul {
+    @apply space-y-1;
+  }
+  
+  /* Better form labels */
+  .label-text {
+    @apply font-medium text-base-content text-opacity-90;
+  }
+  
+  .label-text-alt {
+    @apply text-xs text-base-content text-opacity-60;
+  }
 }
 
-/* Custom animations */
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(-10px);
+/* Animation utilities using Tailwind */
+@layer utilities {
+  /* Responsive table wrapper */
+  .table-responsive {
+    @apply overflow-x-auto rounded-lg shadow-sm;
   }
-  to {
-    opacity: 1;
-    transform: translateX(0);
+  
+  /* Better focus states */
+  .input:focus {
+    @apply ring-2 ring-primary ring-opacity-20;
   }
-}
-
-.slide-in {
-  animation: slideIn 0.3s ease-out;
 }
 
 /* Theme-aware scrollbar styling */
@@ -56,5 +108,5 @@
 }
 
 .mockup-code::-webkit-scrollbar-thumb:hover {
-  @apply bg-neutral-focus;
+  @apply bg-neutral opacity-80;
 }

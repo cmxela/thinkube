@@ -1,6 +1,6 @@
 <template>
   <div class="max-w-6xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">Hardware Detection</h1>
+    <h1 class="text-3xl font-bold mb-6 text-base-content">Hardware Detection</h1>
     
     <!-- Detection Progress -->
     <div v-if="isDetecting" class="card bg-base-100 shadow-xl mb-6">
@@ -21,8 +21,8 @@
         <div class="card-body">
           <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-2">
-              <h2 class="text-xl font-bold">{{ server.hostname }}</h2>
-              <div class="badge badge-ghost">{{ server.ip }}</div>
+              <h2 class="text-xl font-bold text-base-content">{{ server.hostname }}</h2>
+              <div class="badge badge-ghost font-mono">{{ server.ip }}</div>
             </div>
             <div v-if="server.canHostVMs" class="badge badge-success">Can Host VMs</div>
           </div>
@@ -30,27 +30,27 @@
           <!-- Hardware Stats -->
           <div v-if="server.hardware" class="stats stats-horizontal shadow w-full">
             <div class="stat place-items-center">
-              <div class="stat-title">CPU</div>
+              <div class="stat-title font-medium">CPU</div>
               <div class="stat-value text-primary">{{ server.hardware.cpu_cores }}</div>
-              <div class="stat-desc">cores</div>
+              <div class="stat-desc text-base-content/60">cores</div>
             </div>
             
             <div class="stat place-items-center">
-              <div class="stat-title">RAM</div>
+              <div class="stat-title font-medium">RAM</div>
               <div class="stat-value text-primary">{{ Math.round(server.hardware.memory_gb) }}</div>
-              <div class="stat-desc">GB</div>
+              <div class="stat-desc text-base-content/60">GB</div>
             </div>
             
             <div class="stat place-items-center">
-              <div class="stat-title">Disk</div>
+              <div class="stat-title font-medium">Disk</div>
               <div class="stat-value text-primary">{{ Math.round(server.hardware.disk_gb) }}</div>
-              <div class="stat-desc">GB</div>
+              <div class="stat-desc text-base-content/60">GB</div>
             </div>
             
             <div v-if="server.hardware.gpu_detected" class="stat place-items-center">
-              <div class="stat-title">GPU</div>
+              <div class="stat-title font-medium">GPU</div>
               <div class="stat-value text-primary">{{ server.hardware.gpu_count }}</div>
-              <div class="stat-desc">{{ server.hardware.gpu_model?.split(' ').slice(-2).join(' ') || 'Detected' }}</div>
+              <div class="stat-desc text-base-content/60">{{ server.hardware.gpu_model?.split(' ').slice(-2).join(' ') || 'Detected' }}</div>
             </div>
           </div>
           
@@ -70,13 +70,13 @@
       <div class="card-body">
         <h2 class="card-title mb-4">Cluster Capacity Summary</h2>
         
-        <div>
-          <h3 class="font-semibold mb-2">Total Resources</h3>
-          <ul class="space-y-1 text-sm">
-            <li>CPU Cores: {{ totalResources.cpu }}</li>
-            <li>Memory: {{ Math.round(totalResources.memory) }} GB</li>
-            <li>Storage: {{ Math.round(totalResources.storage) }} GB</li>
-            <li v-if="totalResources.gpus > 0">GPUs: {{ totalResources.gpus }}</li>
+        <div class="prose prose-sm max-w-none">
+          <h3 class="font-semibold mb-2 text-base-content">Total Resources</h3>
+          <ul class="space-y-1 text-base-content/80">
+            <li>CPU Cores: <span class="font-medium text-base-content">{{ totalResources.cpu }}</span></li>
+            <li>Memory: <span class="font-medium text-base-content">{{ Math.round(totalResources.memory) }}</span> GB</li>
+            <li>Storage: <span class="font-medium text-base-content">{{ Math.round(totalResources.storage) }}</span> GB</li>
+            <li v-if="totalResources.gpus > 0">GPUs: <span class="font-medium text-base-content">{{ totalResources.gpus }}</span></li>
           </ul>
         </div>
       </div>

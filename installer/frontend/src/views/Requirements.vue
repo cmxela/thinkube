@@ -1,6 +1,6 @@
 <template>
   <div class="max-w-4xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">System Requirements</h1>
+    <h1 class="text-3xl font-bold mb-6 text-base-content">System Requirements</h1>
     
     <div v-if="error" class="alert alert-error mb-6">
       <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
@@ -24,10 +24,10 @@
         
         <!-- System Requirements -->
         <div v-if="systemRequirements.length > 0" class="mb-6">
-          <h3 class="font-semibold mb-3">System Requirements</h3>
+          <h3 class="font-semibold mb-3 text-base-content">System Requirements</h3>
           <div class="space-y-3">
             <div v-for="req in systemRequirements" :key="req.name" 
-                 class="flex items-center gap-4 p-3 rounded-lg bg-base-200 slide-in">
+                 class="flex items-center gap-4 p-3 rounded-lg bg-base-200">
               <div class="flex-shrink-0">
                 <svg v-if="req.status === 'pass'" class="w-6 h-6 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -37,8 +37,8 @@
                 </svg>
               </div>
               <div class="flex-1">
-                <h3 class="font-semibold">{{ req.name }}</h3>
-                <p class="text-sm text-base-content/70">
+                <h3 class="font-semibold text-base-content">{{ req.name }}</h3>
+                <p class="text-sm text-base-content/60">
                   {{ req.details }}
                   <span v-if="req.required" class="badge badge-sm badge-neutral ml-2">Required</span>
                 </p>
@@ -49,10 +49,10 @@
         
         <!-- Tools to be Installed -->
         <div v-if="toolRequirements.length > 0">
-          <h3 class="font-semibold mb-3">Tools to be Installed</h3>
+          <h3 class="font-semibold mb-3 text-base-content">Tools to be Installed</h3>
           <div class="space-y-3">
             <div v-for="req in toolRequirements" :key="req.name" 
-                 class="flex items-center gap-4 p-3 rounded-lg bg-base-200 slide-in">
+                 class="flex items-center gap-4 p-3 rounded-lg bg-base-200">
               <div class="flex-shrink-0">
                 <svg v-if="req.status === 'pass'" class="w-6 h-6 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -62,8 +62,8 @@
                 </svg>
               </div>
               <div class="flex-1">
-                <h3 class="font-semibold">{{ req.name }}</h3>
-                <p class="text-sm text-base-content/70">
+                <h3 class="font-semibold text-base-content">{{ req.name }}</h3>
+                <p class="text-sm text-base-content/60">
                   {{ req.details }}
                   <span v-if="req.action === 'install'" class="badge badge-sm badge-info ml-2">Will be installed</span>
                 </p>
@@ -84,8 +84,8 @@
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
-            <div>
-              <p>Some tools need to be installed to continue.</p>
+            <div class="prose prose-sm max-w-none">
+              <p class="text-base-content">Some tools need to be installed to continue.</p>
             </div>
           </div>
         </div>

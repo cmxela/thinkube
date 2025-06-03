@@ -1,6 +1,6 @@
 <template>
   <div class="max-w-6xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">Cluster Configuration</h1>
+    <h1 class="text-3xl font-bold mb-6 text-base-content">Cluster Configuration</h1>
     
     <!-- Deployment Warning -->
     <div class="alert alert-warning mb-6">
@@ -8,11 +8,13 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
       <div>
-        <h3 class="font-bold">Important: Server Restart Required</h3>
-        <p class="text-sm mt-1">
-          During deployment, all servers (including this one) will be automatically restarted to apply network configuration.
-          Please ensure no critical workloads are running on these servers that cannot be interrupted.
-        </p>
+        <h3 class="font-bold text-base-content">Important: Server Restart Required</h3>
+        <div class="prose prose-sm max-w-none mt-1">
+          <p class="text-base-content/80">
+            During deployment, all servers (including this one) will be automatically restarted to apply network configuration.
+            Please ensure no critical workloads are running on these servers that cannot be interrupted.
+          </p>
+        </div>
       </div>
     </div>
     

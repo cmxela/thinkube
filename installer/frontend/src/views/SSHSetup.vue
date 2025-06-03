@@ -1,6 +1,6 @@
 <template>
   <div class="max-w-4xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">SSH Connectivity Check</h1>
+    <h1 class="text-3xl font-bold mb-6 text-base-content">SSH Connectivity Check</h1>
     
     <!-- SSH Info -->
     <div class="card bg-base-100 shadow-xl mb-6">
@@ -11,9 +11,9 @@
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
-          <div>
-            <p>Checking SSH connectivity to all discovered servers.</p>
-            <p class="text-sm mt-1">Using credentials: <span class="font-mono">{{ currentUser }}</span> with the sudo password provided earlier.</p>
+          <div class="prose prose-sm max-w-none">
+            <p class="font-medium mb-1">Checking SSH connectivity to all discovered servers.</p>
+            <p class="text-sm text-base-content/80">Using credentials: <span class="font-mono text-primary">{{ currentUser }}</span> with the sudo password provided earlier.</p>
           </div>
         </div>
       </div>
@@ -24,13 +24,13 @@
       <div class="card-body">
         <h2 class="card-title mb-4">Servers to Configure</h2>
         
-        <div class="overflow-x-auto">
-          <table class="table table-zebra">
+        <div class="overflow-x-auto rounded-lg">
+          <table class="table table-compact table-pin-rows hover">
             <thead>
               <tr>
-                <th>Hostname</th>
-                <th>IP Address</th>
-                <th>Status</th>
+                <th class="font-semibold text-base-content/90">Hostname</th>
+                <th class="font-semibold text-base-content/90">IP Address</th>
+                <th class="font-semibold text-base-content/90">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -66,8 +66,8 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <div>
-            <h3 class="font-bold text-lg">SSH Setup Complete!</h3>
-            <div class="text-sm text-base-content/70">Passwordless SSH has been configured between all servers.</div>
+            <h3 class="font-bold text-lg text-base-content">SSH Setup Complete!</h3>
+            <div class="text-sm text-base-content/80">Passwordless SSH has been configured between all servers.</div>
           </div>
         </div>
         

@@ -1,6 +1,6 @@
 <template>
   <div class="max-w-6xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">Network Configuration</h1>
+    <h1 class="text-3xl font-bold mb-6 text-base-content">Network Configuration</h1>
     
     <!-- Network Overview -->
     <div class="card bg-base-100 shadow-xl mb-6">
@@ -86,8 +86,8 @@
         <div v-if="zerotierNetworkName" class="alert alert-info mt-4">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
           <div>
-            <div class="font-bold">Networks Configured</div>
-            <div class="text-sm">ZeroTier: {{ zerotierNetworkName }} • LXD Bridge: lxdbr0 • IPs auto-assigned below</div>
+            <div class="font-bold text-base-content">Networks Configured</div>
+            <div class="text-sm text-base-content/80">ZeroTier: {{ zerotierNetworkName }} • LXD Bridge: lxdbr0 • IPs auto-assigned below</div>
           </div>
         </div>
       </div>
@@ -103,8 +103,8 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
           <div>
-            <div class="font-bold">MetalLB Load Balancer IPs</div>
-            <div class="text-sm">These IPs will be reserved on the ZeroTier network for Kubernetes ingress services</div>
+            <div class="font-bold text-base-content">MetalLB Load Balancer IPs</div>
+            <div class="text-sm text-base-content/80">These IPs will be reserved on the ZeroTier network for Kubernetes ingress services</div>
           </div>
         </div>
         
@@ -161,11 +161,11 @@
         </div>
         
         <div v-if="networkConfig.primaryIngressOctet && networkConfig.secondaryIngressOctet" class="mt-4">
-          <div class="text-sm text-base-content/70">
-            <p>Reserved IPs:</p>
-            <ul class="list-disc list-inside ml-2">
-              <li>Primary: {{ getNetworkBase(networkConfig.zerotierCIDR) }}.{{ networkConfig.primaryIngressOctet }}</li>
-              <li>Secondary: {{ getNetworkBase(networkConfig.zerotierCIDR) }}.{{ networkConfig.secondaryIngressOctet }}</li>
+          <div class="prose prose-sm max-w-none text-base-content/80">
+            <p class="font-medium mb-2">Reserved IPs:</p>
+            <ul>
+              <li>Primary: <span class="font-mono">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.{{ networkConfig.primaryIngressOctet }}</span></li>
+              <li>Secondary: <span class="font-mono">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.{{ networkConfig.secondaryIngressOctet }}</span></li>
             </ul>
           </div>
         </div>
@@ -177,14 +177,14 @@
       <div class="card-body">
         <h2 class="card-title mb-4">Baremetal Servers</h2>
         
-        <div class="overflow-x-auto">
-          <table class="table table-zebra">
+        <div class="overflow-x-auto rounded-lg">
+          <table class="table table-compact table-pin-rows hover">
             <thead>
               <tr>
-                <th>Hostname</th>
-                <th>LAN IP</th>
-                <th>ZeroTier IP</th>
-                <th>Role</th>
+                <th class="font-semibold text-base-content/90">Hostname</th>
+                <th class="font-semibold text-base-content/90">LAN IP</th>
+                <th class="font-semibold text-base-content/90">ZeroTier IP</th>
+                <th class="font-semibold text-base-content/90">Role</th>
               </tr>
             </thead>
             <tbody>
@@ -242,16 +242,16 @@
       <div class="card-body">
         <h2 class="card-title mb-4">Virtual Machines</h2>
         
-        <div class="overflow-x-auto">
-          <table class="table table-zebra">
+        <div class="overflow-x-auto rounded-lg">
+          <table class="table table-compact table-pin-rows hover">
             <thead>
               <tr>
-                <th>VM Name</th>
-                <th>Host</th>
-                <th>LAN IP</th>
-                <th>Internal IP</th>
-                <th>ZeroTier IP</th>
-                <th>Role</th>
+                <th class="font-semibold text-base-content/90">VM Name</th>
+                <th class="font-semibold text-base-content/90">Host</th>
+                <th class="font-semibold text-base-content/90">LAN IP</th>
+                <th class="font-semibold text-base-content/90">Internal IP</th>
+                <th class="font-semibold text-base-content/90">ZeroTier IP</th>
+                <th class="font-semibold text-base-content/90">Role</th>
               </tr>
             </thead>
             <tbody>
@@ -329,10 +329,12 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
       <div>
-        <h3 class="font-bold">IP Address Conflicts Detected</h3>
-        <ul class="text-sm mt-1">
-          <li v-for="conflict in ipConflicts" :key="conflict">{{ conflict }}</li>
-        </ul>
+        <h3 class="font-bold text-base-content">IP Address Conflicts Detected</h3>
+        <div class="prose prose-sm max-w-none mt-2">
+          <ul class="text-warning-content">
+            <li v-for="conflict in ipConflicts" :key="conflict">{{ conflict }}</li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -343,23 +345,23 @@
         
         <div class="stats stats-vertical lg:stats-horizontal shadow">
           <div class="stat">
-            <div class="stat-title">Baremetal Servers</div>
+            <div class="stat-title font-medium">Baremetal Servers</div>
             <div class="stat-value text-primary">{{ physicalServers.length }}</div>
-            <div class="stat-desc">{{ physicalServers.filter(s => isValidIP(s.ip)).length }} with valid IPs</div>
+            <div class="stat-desc text-base-content/60">{{ physicalServers.filter(s => isValidIP(s.ip)).length }} with valid IPs</div>
           </div>
           
           <div class="stat">
-            <div class="stat-title">Virtual Machines</div>
+            <div class="stat-title font-medium">Virtual Machines</div>
             <div class="stat-value text-secondary">{{ virtualMachines.length }}</div>
-            <div class="stat-desc">{{ virtualMachines.filter(v => isValidIP(v.lanIP)).length }} with valid LAN IPs</div>
+            <div class="stat-desc text-base-content/60">{{ virtualMachines.filter(v => isValidIP(v.lanIP)).length }} with valid LAN IPs</div>
           </div>
           
           <div class="stat">
-            <div class="stat-title">IP Conflicts</div>
+            <div class="stat-title font-medium">IP Conflicts</div>
             <div class="stat-value" :class="ipConflicts.length > 0 ? 'text-error' : 'text-success'">
               {{ ipConflicts.length }}
             </div>
-            <div class="stat-desc">{{ ipConflicts.length === 0 ? 'No conflicts' : 'Need resolution' }}</div>
+            <div class="stat-desc text-base-content/60">{{ ipConflicts.length === 0 ? 'No conflicts' : 'Need resolution' }}</div>
           </div>
         </div>
       </div>

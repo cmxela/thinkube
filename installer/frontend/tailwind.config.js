@@ -7,8 +7,9 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        'alata': ['Alata', 'sans-serif'],
-        'roboto-slab': ['Roboto Slab', 'serif'],
+        'heading': ['Outfit', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        'body': ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        'mono': ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'SF Mono', 'Consolas', 'Liberation Mono', 'Menlo', 'monospace'],
       },
       colors: {
         'thinkube': {
@@ -27,6 +28,7 @@ export default {
     },
   },
   plugins: [
+    require('@tailwindcss/typography'),
     require('daisyui'),
   ],
   daisyui: {

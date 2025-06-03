@@ -171,7 +171,7 @@
                     v-if="vm.name !== 'dns'"
                     v-model="vm.name" 
                     type="text" 
-                    class="input input-bordered input-sm font-semibold text-lg"
+                    class="input input-sm font-semibold text-lg"
                     :class="{ 'input-error': vm.name && !/^[a-z0-9-]+$/.test(vm.name) }"
                     placeholder="vm-name"
                     pattern="[a-z0-9\\x2D]+"

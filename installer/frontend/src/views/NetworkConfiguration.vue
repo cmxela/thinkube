@@ -16,7 +16,7 @@
             <input 
               v-model="networkConfig.cidr" 
               type="text" 
-              class="input input-bordered input-disabled"
+              class="input input-disabled"
               readonly
             />
           </div>

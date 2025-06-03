@@ -24,7 +24,7 @@
             <input 
               type="text" 
               :value="currentUser" 
-              class="input input-bordered"
+              class="input"
               disabled
             />
           </div>

@@ -70,7 +70,7 @@
                 
                 <select 
                   v-model="node.role" 
-                  class="select select-bordered select-sm"
+                  class="select select-sm"
                   @change="validateRoles"
                   :disabled="controlPlaneNodes.length > 0 && node.role !== 'control_plane'"
                 >

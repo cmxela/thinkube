@@ -59,7 +59,7 @@
                 v-model="server.ssh_username" 
                 type="text" 
                 placeholder="SSH Username" 
-                class="input input-bordered input-sm"
+                class="input input-sm"
               />
               <div class="flex gap-2">
                 <div class="relative flex-1">
@@ -151,7 +151,7 @@
               <label class="label">
                 <span class="label-text font-semibold">Kubernetes Role</span>
               </label>
-              <select v-model="server.k8s_role" class="select select-bordered">
+              <select v-model="server.k8s_role" class="select">
                 <option value="">Select role...</option>
                 <option value="control_plane" :disabled="hasControlPlane && server.k8s_role !== 'control_plane'">
                   Control Plane {{ hasControlPlane && server.k8s_role !== 'control_plane' ? '(Already assigned)' : '' }}
@@ -287,7 +287,7 @@
             <label class="label">
               <span class="label-text">Container Type</span>
             </label>
-            <select v-model="newContainer.type" class="select select-bordered" @change="updateContainerDefaults">
+            <select v-model="newContainer.type" class="select" @change="updateContainerDefaults">
               <option value="">Select type...</option>
               <option value="k8s_control">Kubernetes Control Plane</option>
               <option value="k8s_worker">Kubernetes Worker</option>
@@ -366,7 +366,7 @@
             <label class="label">
               <span class="label-text">Kubernetes Role</span>
             </label>
-            <select v-model="newContainer.k8s_role" class="select select-bordered">
+            <select v-model="newContainer.k8s_role" class="select">
               <option value="control_plane" :disabled="hasControlPlane">
                 Control Plane {{ hasControlPlane ? '(Already assigned)' : '' }}
               </option>

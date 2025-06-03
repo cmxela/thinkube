@@ -31,7 +31,7 @@
                 v-model="config.clusterName" 
                 type="text" 
                 placeholder="thinkube" 
-                class="input input-bordered"
+                class="input"
                 :class="{ 'input-error': errors.clusterName }"
                 required
               />
@@ -48,7 +48,7 @@
                 v-model="config.domainName" 
                 type="text" 
                 placeholder="thinkube.local" 
-                class="input input-bordered"
+                class="input"
                 :class="{ 'input-error': errors.domainName }"
                 required
               />

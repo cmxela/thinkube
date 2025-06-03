@@ -107,7 +107,7 @@
             <label class="label">
               <span class="label-text font-semibold">Admin Username</span>
             </label>
-            <div class="input input-bordered flex items-center justify-between">
+            <div class="input  flex items-center justify-between">
               <span>{{ adminUsername }}</span>
               <button class="btn btn-ghost btn-xs" @click="copyToClipboard(adminUsername)">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

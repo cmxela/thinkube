@@ -460,29 +460,21 @@ const verifyGithub = async () => {
   errors.value.githubToken = ''
   
   try {
-    // Simple verification - check if token can access user info
-    const response = await axios.get('https://api.github.com/user', {
-      headers: {
-        'Authorization': `token ${config.value.githubToken}`,
-        'Accept': 'application/vnd.github.v3+json'
-      }
+    const response = await axios.post('/api/verify-github', {
+      token: config.value.githubToken
     })
     
-    if (response.status === 200) {
+    if (response.data.valid) {
       githubVerified.value = true
       errors.value.githubToken = ''
       return true
     } else {
-      errors.value.githubToken = 'Invalid GitHub token'
+      errors.value.githubToken = response.data.message || 'Invalid GitHub token'
       githubVerified.value = false
       return false
     }
   } catch (error) {
-    if (error.response?.status === 401) {
-      errors.value.githubToken = 'Invalid or expired GitHub token'
-    } else {
-      errors.value.githubToken = 'Failed to verify GitHub token'
-    }
+    errors.value.githubToken = error.response?.data?.detail || 'Failed to verify GitHub token'
     githubVerified.value = false
     return false
   } finally {

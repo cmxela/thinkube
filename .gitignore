@@ -79,5 +79,6 @@ build/
 installer/frontend/src-tauri/target/
 
 # Sensitive inventory files
+inventory/inventory.yaml
 inventory/production.yaml
 inventory/secrets.yaml

@@ -30,7 +30,7 @@
     # Basic vars
     ###################################################################
     namespace: "{{ minio_namespace }}"
-    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
     keycloak_validate_certs: true
     mc_path: "/usr/local/bin/mc"
     

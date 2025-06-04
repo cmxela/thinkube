@@ -75,7 +75,7 @@
             </button>
           </div>
           
-          <div class="text-sm text-base-content/70">
+          <div class="text-sm text-base-content text-opacity-70">
             <p class="mb-2">The installer will use sudo to:</p>
             <ul class="list-disc list-inside space-y-1 ml-2">
               <li>Configure SSH access between servers</li>
@@ -128,12 +128,17 @@ const verifyAndContinue = async () => {
     if (response.data.valid) {
       // Store the password temporarily for SSH setup and other operations
       sessionStorage.setItem('sudoPassword', sudoPassword.value)
+      // Store the system username for inventory generation
+      sessionStorage.setItem('systemUsername', currentUser.value)
       
       // Check if tools need installation
       console.log('Checking if tools need installation...')
       const requirementsResponse = await axios.get('/api/check-requirements')
       const toolRequirements = requirementsResponse.data.requirements.filter(req => req.category === 'tools')
       const hasToolsToInstall = toolRequirements.some(req => req.status === 'missing')
+      
+      // Check if we're in skip-config mode
+      const skipConfigMode = sessionStorage.getItem('skipConfigMode') === 'true'
       
       if (hasToolsToInstall) {
         // Tools need installation - start the installation process
@@ -143,15 +148,25 @@ const verifyAndContinue = async () => {
         })
         console.log('Setup response:', setupResponse.data)
         
-        if (setupResponse.data.status === 'exists') {
-          // Tools were already installed, proceed to server discovery
-          router.push('/server-discovery')
+        if (setupResponse.data.status === 'exists' || skipConfigMode) {
+          // If tools were already installed or we're in skip-config mode,
+          // check where to go next
+          if (skipConfigMode) {
+            console.log('Skip-config mode: proceeding directly to deployment after tools')
+            router.push('/deploy')
+          } else {
+            router.push('/server-discovery')
+          }
         } else {
           // Redirect to installation progress page
           router.push('/installation')
         }
+      } else if (skipConfigMode) {
+        // All tools already installed and in skip-config mode
+        console.log('Skip-config mode: tools already installed, proceeding directly to deployment')
+        router.push('/deploy')
       } else {
-        // All tools are already installed, proceed directly to server discovery
+        // All tools are already installed, proceed normally
         console.log('All tools already installed, proceeding to server discovery...')
         router.push('/server-discovery')
       }

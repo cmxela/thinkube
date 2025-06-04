@@ -41,7 +41,7 @@
   vars:
     harbor_values: "/tmp/harbor-values.yaml"
     harbor_admin_user: "admin"  # Harbor's built-in admin user (EXCEPTION: Cannot be changed)
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
     
     # OIDC configuration  
     oidc_client_id: "harbor"
@@ -459,14 +459,14 @@
         body_format: json
         body:
           old_password: "{{ harbor_generated_password }}"
-          new_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+          new_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
         validate_certs: false
         status_code: 200
         
     # Update admin_password to use the new password
     - name: Update admin_password with the new value
       ansible.builtin.set_fact:
-        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
         
     # Refresh Keycloak token before verifying group
     - name: Refresh Keycloak admin token

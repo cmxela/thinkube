@@ -13,7 +13,7 @@
           </svg>
           <div class="prose prose-sm max-w-none">
             <p class="font-medium mb-1">Checking SSH connectivity to all discovered servers.</p>
-            <p class="text-sm text-base-content/80">Using credentials: <span class="font-mono text-primary">{{ currentUser }}</span> with the sudo password provided earlier.</p>
+            <p class="text-sm text-base-content text-opacity-80">Using credentials: <span class="font-mono text-primary">{{ currentUser }}</span> with the sudo password provided earlier.</p>
           </div>
         </div>
       </div>
@@ -28,9 +28,9 @@
           <table class="table table-compact table-pin-rows hover">
             <thead>
               <tr>
-                <th class="font-semibold text-base-content/90">Hostname</th>
-                <th class="font-semibold text-base-content/90">IP Address</th>
-                <th class="font-semibold text-base-content/90">Status</th>
+                <th class="font-semibold text-base-content text-opacity-90">Hostname</th>
+                <th class="font-semibold text-base-content text-opacity-90">IP Address</th>
+                <th class="font-semibold text-base-content text-opacity-90">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -59,7 +59,7 @@
     </div>
     
     <!-- SSH Setup Complete -->
-    <div v-if="!isChecking && sshSetupComplete" class="card bg-success/10 border border-success/20 shadow-xl mb-6">
+    <div v-if="!isChecking && sshSetupComplete" class="card bg-success bg-opacity-10 border border-success/20 shadow-xl mb-6">
       <div class="card-body">
         <div class="flex items-center gap-3 mb-4">
           <svg xmlns="http://www.w3.org/2000/svg" class="stroke-success shrink-0 h-8 w-8" fill="none" viewBox="0 0 24 24">
@@ -67,7 +67,7 @@
           </svg>
           <div>
             <h3 class="font-bold text-lg text-base-content">SSH Setup Complete!</h3>
-            <div class="text-sm text-base-content/80">Passwordless SSH has been configured between all servers.</div>
+            <div class="text-sm text-base-content text-opacity-80">Passwordless SSH has been configured between all servers.</div>
           </div>
         </div>
         

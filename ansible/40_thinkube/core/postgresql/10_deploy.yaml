@@ -40,8 +40,8 @@
     # Database config
     postgres_database: "mydatabase"
     
-    # User authentication from environment variable
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    # User authentication from environment variable or .env file
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
 
     # PostgreSQL image from AWS ECR (official PostgreSQL, no Docker Hub dependency)
     postgres_image: "public.ecr.aws/docker/library/postgres:16-alpine"

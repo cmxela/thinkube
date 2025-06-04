@@ -26,7 +26,7 @@
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="space-y-3">
             <h3 class="font-semibold text-success">✓ Good Use Cases for VMs</h3>
-            <ul class="text-sm space-y-1 text-base-content/70">
+            <ul class="text-sm space-y-1 text-base-content text-opacity-70">
               <li>• Learning Kubernetes with multi-node simulation on limited hardware</li>
               <li>• Maximizing use of powerful servers (32+ cores, 128+ GB RAM)</li>
               <li>• Testing cluster configurations before deploying to production</li>
@@ -37,7 +37,7 @@
           
           <div class="space-y-3">
             <h3 class="font-semibold text-warning">✗ Avoid VMs For</h3>
-            <ul class="text-sm space-y-1 text-base-content/70">
+            <ul class="text-sm space-y-1 text-base-content text-opacity-70">
               <li>• GPU-accelerated AI/ML workloads</li>
               <li>• Real-time applications or gaming servers</li>
               <li>• Storage-intensive applications (use baremetal)</li>
@@ -47,7 +47,7 @@
           </div>
         </div>
 
-        <div class="mt-4 p-3 bg-info/10 rounded-lg">
+        <div class="mt-4 p-3 bg-info bg-opacity-10 rounded-lg">
           <p class="text-sm"><strong>Homelab Tip:</strong> If you have older servers with 8-16GB RAM, use them as dedicated nodes instead of cramming VMs onto one powerful server. This gives better performance and real distributed system experience.</p>
         </div>
       </div>
@@ -72,7 +72,7 @@
                 />
                 <div>
                   <span class="label-text font-semibold">Dedicate a server for DNS</span>
-                  <p class="text-sm text-base-content/70 mt-1">
+                  <p class="text-sm text-base-content text-opacity-70 mt-1">
                     Use one of your discovered servers exclusively for DNS (recommended if you have 3+ servers)
                   </p>
                 </div>
@@ -92,7 +92,7 @@
                 />
                 <div>
                   <span class="label-text font-semibold">Create a VM for DNS</span>
-                  <p class="text-sm text-base-content/70 mt-1">
+                  <p class="text-sm text-base-content text-opacity-70 mt-1">
                     Create a lightweight VM (2 CPU, 2GB RAM) to run DNS services
                   </p>
                 </div>
@@ -101,7 +101,7 @@
           </div>
         </div>
         
-        <div v-if="dnsOption === 'baremetal' && servers.length < 3" class="mt-4 p-3 bg-warning/10 rounded-lg">
+        <div v-if="dnsOption === 'baremetal' && servers.length < 3" class="mt-4 p-3 bg-warning bg-opacity-10 rounded-lg">
           <p class="text-sm"><strong>Note:</strong> With {{ servers.length }} server(s), dedicating one to DNS leaves {{ servers.length - 1 }} for your cluster. Consider using a VM instead to maximize cluster resources.</p>
         </div>
       </div>
@@ -140,7 +140,7 @@
             <div class="flex justify-between items-center">
               <div>
                 <h3 class="font-semibold">{{ server.hostname }}</h3>
-                <p class="text-sm text-base-content/70">
+                <p class="text-sm text-base-content text-opacity-70">
                   {{ server.availableCpu }} CPU cores, {{ server.availableRam }} GB RAM available
                 </p>
               </div>
@@ -181,7 +181,7 @@
                     Name must contain only lowercase letters, numbers, and hyphens
                   </p>
                 </div>
-                <p class="text-sm text-base-content/70 mb-2">Host: {{ vm.host }}</p>
+                <p class="text-sm text-base-content text-opacity-70 mb-2">Host: {{ vm.host }}</p>
                 
                 <div class="grid grid-cols-3 gap-4 mt-3">
                   <div>
@@ -290,7 +290,7 @@
     </div>
     
     <!-- LXD Primary Selection (shown when VMs span multiple servers) -->
-    <div v-if="needsLxdPrimarySelection" class="card bg-warning/10 border-warning shadow-xl mb-6">
+    <div v-if="needsLxdPrimarySelection" class="card bg-warning bg-opacity-10 border-warning shadow-xl mb-6">
       <div class="card-body">
         <h2 class="card-title text-warning mb-4">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -301,7 +301,7 @@
         
         <div class="mb-4">
           <p class="mb-2">Your VMs will be distributed across multiple servers, requiring an LXD cluster.</p>
-          <p class="text-sm text-base-content/70">Choose which server should be the LXD primary node (manages the cluster):</p>
+          <p class="text-sm text-base-content text-opacity-70">Choose which server should be the LXD primary node (manages the cluster):</p>
         </div>
         
         <div class="space-y-3">
@@ -309,7 +309,7 @@
             v-for="server in serversWithVMs" 
             :key="server.hostname"
             class="border rounded-lg p-4 cursor-pointer transition-colors"
-            :class="lxdPrimary === server.hostname ? 'border-primary bg-primary/10' : 'border-base-300 hover:border-primary'"
+            :class="lxdPrimary === server.hostname ? 'border-primary bg-primary bg-opacity-10' : 'border-base-300 hover:border-primary'"
             @click="lxdPrimary = server.hostname"
           >
             <div class="flex items-center justify-between">
@@ -323,7 +323,7 @@
                   />
                   <div>
                     <h3 class="font-bold">{{ server.hostname }}</h3>
-                    <p class="text-sm text-base-content/70">{{ server.ip }}</p>
+                    <p class="text-sm text-base-content text-opacity-70">{{ server.ip }}</p>
                   </div>
                 </div>
                 <div class="mt-2 text-sm">
@@ -341,7 +341,7 @@
           </div>
         </div>
         
-        <div class="mt-4 text-sm text-base-content/70">
+        <div class="mt-4 text-sm text-base-content text-opacity-70">
           <p><strong>Recommendation:</strong> Choose the server with moderate resources for cluster management, reserving powerful servers for AI workloads.</p>
         </div>
       </div>

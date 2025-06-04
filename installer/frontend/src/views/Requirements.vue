@@ -38,7 +38,7 @@
               </div>
               <div class="flex-1">
                 <h3 class="font-semibold text-base-content">{{ req.name }}</h3>
-                <p class="text-sm text-base-content/60">
+                <p class="text-sm text-base-content text-opacity-60">
                   {{ req.details }}
                   <span v-if="req.required" class="badge badge-sm badge-neutral ml-2">Required</span>
                 </p>
@@ -63,7 +63,7 @@
               </div>
               <div class="flex-1">
                 <h3 class="font-semibold text-base-content">{{ req.name }}</h3>
-                <p class="text-sm text-base-content/60">
+                <p class="text-sm text-base-content text-opacity-60">
                   {{ req.details }}
                   <span v-if="req.action === 'install'" class="badge badge-sm badge-info ml-2">Will be installed</span>
                 </p>

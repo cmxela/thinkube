@@ -28,7 +28,7 @@
   vars:
     # Harbor settings
     env_file_path: "{{ ansible_env.HOME }}/.env"
-    harbor_robot_user: "robot$kaniko"
+    harbor_robot_user: "robot$thinkube"
     
     # Source registries
     quay_registry: "quay.io"
@@ -261,7 +261,7 @@
 
     - name: Get admin password from environment
       ansible.builtin.set_fact:
-        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
         harbor_admin_user: "admin"  # Harbor's built-in admin user
 
     - name: Create library project in Harbor
@@ -290,7 +290,7 @@
         --tls-verify=true
       register: harbor_login
       changed_when: "'Login Succeeded' in harbor_login.stdout"
-      no_log: true
+      no_log: false
       
     - name: Loop through images and mirror them to Harbor
       include_role:

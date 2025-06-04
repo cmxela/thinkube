@@ -145,46 +145,6 @@
       delegate_to: localhost
       register: bucket_list
 
-    # Create secrets for Argo Workflows
-    - name: Create S3 secret for Argo Workflows
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: argo-artifacts-s3
-            namespace: argo
-          type: Opaque
-          stringData:
-            accesskey: "{{ s3_access_key }}"
-            secretkey: "{{ s3_secret_key }}"
-
-    - name: Update Argo Workflows artifact repository ConfigMap
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        state: present
-        definition:
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: artifact-repositories
-            namespace: argo
-          data:
-            default-v1: |
-              archiveLogs: true
-              s3:
-                endpoint: seaweedfs-filer.{{ seaweedfs_namespace }}.svc.cluster.local:8333
-                bucket: argo-artifacts
-                insecure: true
-                accessKeySecret:
-                  name: argo-artifacts-s3
-                  key: accesskey
-                secretKeySecret:
-                  name: argo-artifacts-s3
-                  key: secretkey
-
     - name: Clean up s3cmd config
       ansible.builtin.file:
         path: "/tmp/s3cmd-{{ seaweedfs_namespace }}.cfg"

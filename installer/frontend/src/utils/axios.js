@@ -1,7 +1,10 @@
 import axios from 'axios'
 
 // Configure axios defaults
-const baseURL = window.electronAPI ? 'http://localhost:8000' : ''
+const isTauri = window.__TAURI__ !== undefined
+const baseURL = isTauri || (window.location.protocol === 'http:' && window.location.hostname === 'localhost') 
+  ? 'http://localhost:8000' 
+  : ''
 
 // Create axios instance with default config
 const axiosInstance = axios.create({

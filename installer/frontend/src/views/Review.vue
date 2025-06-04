@@ -9,19 +9,19 @@
         
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <p class="text-sm text-base-content/60 font-medium">Cluster Name</p>
+            <p class="text-sm text-base-content text-opacity-60 font-medium">Cluster Name</p>
             <p class="font-semibold text-base-content">{{ config.clusterName }}</p>
           </div>
           <div>
-            <p class="text-sm text-base-content/60 font-medium">Domain Name</p>
+            <p class="text-sm text-base-content text-opacity-60 font-medium">Domain Name</p>
             <p class="font-semibold text-base-content">{{ config.domainName }}</p>
           </div>
           <div>
-            <p class="text-sm text-base-content/60 font-medium">Admin Username</p>
+            <p class="text-sm text-base-content text-opacity-60 font-medium">Admin Username</p>
             <p class="font-semibold text-base-content">{{ config.adminUsername || 'tkadmin' }}</p>
           </div>
           <div>
-            <p class="text-sm text-base-content/60 font-medium">Deployment Type</p>
+            <p class="text-sm text-base-content text-opacity-60 font-medium">Deployment Type</p>
             <p class="font-semibold text-base-content">{{ deploymentType }}</p>
           </div>
         </div>
@@ -38,19 +38,19 @@
             <div class="flex justify-between items-start">
               <div class="flex-1">
                 <h3 class="font-semibold text-lg text-base-content">{{ node.hostname }}</h3>
-                <p class="text-sm text-base-content/60">
+                <p class="text-sm text-base-content text-opacity-60">
                   {{ node.type === 'baremetal' ? 'Baremetal Server' : `VM on ${node.host}` }}
                 </p>
-                <p class="text-sm mt-1 text-base-content/80">
+                <p class="text-sm mt-1 text-base-content text-opacity-80">
                   <span class="font-medium">{{ node.cpu }}</span> CPU, <span class="font-medium">{{ node.memory }}</span> GB RAM
                   <span v-if="node.ip" class="ml-2">• <span class="font-mono">{{ node.ip }}</span></span>
                 </p>
                 
                 <!-- GPU assignments for this node -->
                 <div v-if="getNodeGPUs(node.hostname).length > 0" class="mt-2">
-                  <p class="text-sm font-medium text-base-content/80 mb-1">GPU:</p>
+                  <p class="text-sm font-medium text-base-content text-opacity-80 mb-1">GPU:</p>
                   <div class="space-y-1">
-                    <div v-for="gpu in getNodeGPUs(node.hostname)" :key="gpu.address" class="text-sm text-base-content/70 ml-2">
+                    <div v-for="gpu in getNodeGPUs(node.hostname)" :key="gpu.address" class="text-sm text-base-content text-opacity-70 ml-2">
                       {{ gpu.name }} • PCI: {{ gpu.address }}
                       <span v-if="gpu.assignment !== 'baremetal'" class="ml-2 text-primary">
                         (passed from {{ gpu.hostname }})
@@ -74,7 +74,7 @@
       <div class="card-body">
         <h2 class="card-title mb-4">Generated Ansible Inventory</h2>
         <div class="prose prose-sm max-w-none mb-4">
-          <p class="text-base-content/80">
+          <p class="text-base-content text-opacity-80">
             Your configuration has been converted to an Ansible inventory file. You can download this for manual playbook execution.
           </p>
         </div>
@@ -274,7 +274,7 @@ const startDeployment = () => {
 }
 
 // Load configuration
-onMounted(() => {
+onMounted(async () => {
   // Load saved configuration
   config.value = JSON.parse(localStorage.getItem('thinkube-config') || '{}')
   
@@ -325,8 +325,20 @@ onMounted(() => {
     return node
   })
   
-  // Load generated inventory if available
-  generatedInventory.value = sessionStorage.getItem('generatedInventory') || ''
+  // Generate fresh inventory with GPU assignments
+  try {
+    const { generateDynamicInventory, inventoryToYAML } = await import('../utils/inventoryGenerator.js')
+    const inventory = generateDynamicInventory()
+    generatedInventory.value = inventoryToYAML(inventory)
+    // Save the updated inventory
+    sessionStorage.setItem('generatedInventory', generatedInventory.value)
+    // Also save to localStorage for future skip-config runs
+    localStorage.setItem('thinkube-last-inventory', generatedInventory.value)
+  } catch (error) {
+    console.error('Failed to generate inventory:', error)
+    // Fall back to saved inventory if generation fails
+    generatedInventory.value = sessionStorage.getItem('generatedInventory') || ''
+  }
 })
 </script>
 

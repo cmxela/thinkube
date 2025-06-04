@@ -27,7 +27,7 @@
               <span class="label-text-alt">Auto-discovered (last octet editable)</span>
             </label>
             <div class="flex items-center gap-1">
-              <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.cidr) }}.</span>
+              <span class="text-sm text-base-content text-opacity-70">{{ getNetworkBase(networkConfig.cidr) }}.</span>
               <input 
                 :value="getLastOctet(networkConfig.gateway)"
                 @input="networkConfig.gateway = setLastOctet(getNetworkBase(networkConfig.cidr), $event.target.value)"
@@ -87,7 +87,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-current shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
           <div>
             <div class="font-bold text-base-content">Networks Configured</div>
-            <div class="text-sm text-base-content/80">ZeroTier: {{ zerotierNetworkName }} • LXD Bridge: lxdbr0 • IPs auto-assigned below</div>
+            <div class="text-sm text-base-content text-opacity-80">ZeroTier: {{ zerotierNetworkName }} • LXD Bridge: lxdbr0 • IPs auto-assigned below</div>
           </div>
         </div>
       </div>
@@ -104,7 +104,7 @@
           </svg>
           <div>
             <div class="font-bold text-base-content">MetalLB Load Balancer IPs</div>
-            <div class="text-sm text-base-content/80">These IPs will be reserved on the ZeroTier network for Kubernetes ingress services</div>
+            <div class="text-sm text-base-content text-opacity-80">These IPs will be reserved on the ZeroTier network for Kubernetes ingress services</div>
           </div>
         </div>
         
@@ -115,7 +115,7 @@
               <span class="label-text-alt">For main services</span>
             </label>
             <div class="flex items-center gap-1">
-              <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
+              <span class="text-sm text-base-content text-opacity-70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
               <input 
                 v-model="networkConfig.primaryIngressOctet"
                 type="number" 
@@ -130,7 +130,7 @@
               />
             </div>
             <div v-if="isIngressIPInUse(networkConfig.primaryIngressOctet)" class="text-xs text-warning mt-1">
-              This IP is already assigned to a ZeroTier member
+              This IP is already assigned to another ZeroTier member
             </div>
           </div>
           
@@ -140,7 +140,7 @@
               <span class="label-text-alt">For Knative services</span>
             </label>
             <div class="flex items-center gap-1">
-              <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
+              <span class="text-sm text-base-content text-opacity-70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
               <input 
                 v-model="networkConfig.secondaryIngressOctet"
                 type="number" 
@@ -155,13 +155,13 @@
               />
             </div>
             <div v-if="isIngressIPInUse(networkConfig.secondaryIngressOctet)" class="text-xs text-warning mt-1">
-              This IP is already assigned to a ZeroTier member
+              This IP is already assigned to another ZeroTier member
             </div>
           </div>
         </div>
         
         <div v-if="networkConfig.primaryIngressOctet && networkConfig.secondaryIngressOctet" class="mt-4">
-          <div class="prose prose-sm max-w-none text-base-content/80">
+          <div class="prose prose-sm max-w-none text-base-content text-opacity-80">
             <p class="font-medium mb-2">Reserved IPs:</p>
             <ul>
               <li>Primary: <span class="font-mono">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.{{ networkConfig.primaryIngressOctet }}</span></li>
@@ -181,10 +181,10 @@
           <table class="table table-compact table-pin-rows hover">
             <thead>
               <tr>
-                <th class="font-semibold text-base-content/90">Hostname</th>
-                <th class="font-semibold text-base-content/90">LAN IP</th>
-                <th class="font-semibold text-base-content/90">ZeroTier IP</th>
-                <th class="font-semibold text-base-content/90">Role</th>
+                <th class="font-semibold text-base-content text-opacity-90">Hostname</th>
+                <th class="font-semibold text-base-content text-opacity-90">LAN IP</th>
+                <th class="font-semibold text-base-content text-opacity-90">ZeroTier IP</th>
+                <th class="font-semibold text-base-content text-opacity-90">Role</th>
               </tr>
             </thead>
             <tbody>
@@ -192,7 +192,7 @@
                 <td class="font-medium">{{ server.hostname }}</td>
                 <td>
                   <div class="flex items-center gap-1">
-                    <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.cidr) }}.</span>
+                    <span class="text-sm text-base-content text-opacity-70">{{ getNetworkBase(networkConfig.cidr) }}.</span>
                     <input 
                       :value="getLastOctet(server.ip)"
                       @input="server.ip = setLastOctet(getNetworkBase(networkConfig.cidr), $event.target.value)"
@@ -207,7 +207,7 @@
                 <td>
                   <div>
                     <div class="flex items-center gap-1">
-                      <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
+                      <span class="text-sm text-base-content text-opacity-70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
                       <input 
                         :value="getLastOctet(server.zerotierIP)"
                         @input="server.zerotierIP = setLastOctet(getNetworkBase(networkConfig.zerotierCIDR), $event.target.value)"
@@ -246,12 +246,12 @@
           <table class="table table-compact table-pin-rows hover">
             <thead>
               <tr>
-                <th class="font-semibold text-base-content/90">VM Name</th>
-                <th class="font-semibold text-base-content/90">Host</th>
-                <th class="font-semibold text-base-content/90">LAN IP</th>
-                <th class="font-semibold text-base-content/90">Internal IP</th>
-                <th class="font-semibold text-base-content/90">ZeroTier IP</th>
-                <th class="font-semibold text-base-content/90">Role</th>
+                <th class="font-semibold text-base-content text-opacity-90">VM Name</th>
+                <th class="font-semibold text-base-content text-opacity-90">Host</th>
+                <th class="font-semibold text-base-content text-opacity-90">LAN IP</th>
+                <th class="font-semibold text-base-content text-opacity-90">Internal IP</th>
+                <th class="font-semibold text-base-content text-opacity-90">ZeroTier IP</th>
+                <th class="font-semibold text-base-content text-opacity-90">Role</th>
               </tr>
             </thead>
             <tbody>
@@ -260,7 +260,7 @@
                 <td>{{ vm.host }}</td>
                 <td>
                   <div class="flex items-center gap-1">
-                    <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.cidr) }}.</span>
+                    <span class="text-sm text-base-content text-opacity-70">{{ getNetworkBase(networkConfig.cidr) }}.</span>
                     <input 
                       :value="getLastOctet(vm.lanIP)"
                       @input="vm.lanIP = setLastOctet(getNetworkBase(networkConfig.cidr), $event.target.value)"
@@ -274,7 +274,7 @@
                 </td>
                 <td>
                   <div class="flex items-center gap-1">
-                    <span class="text-sm text-base-content/70">{{ getLXDBase() }}.</span>
+                    <span class="text-sm text-base-content text-opacity-70">{{ getLXDBase() }}.</span>
                     <input 
                       :value="getLastOctet(vm.internalIP)"
                       @input="vm.internalIP = setLastOctet(getLXDBase(), $event.target.value)"
@@ -289,7 +289,7 @@
                 <td>
                   <div>
                     <div class="flex items-center gap-1">
-                      <span class="text-sm text-base-content/70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
+                      <span class="text-sm text-base-content text-opacity-70">{{ getNetworkBase(networkConfig.zerotierCIDR) }}.</span>
                       <input 
                         :value="getLastOctet(vm.zerotierIP)"
                         @input="vm.zerotierIP = setLastOctet(getNetworkBase(networkConfig.zerotierCIDR), $event.target.value)"
@@ -329,11 +329,13 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
       <div>
-        <h3 class="font-bold text-base-content">IP Address Conflicts Detected</h3>
+        <h3 class="font-bold text-base-content">Existing ZeroTier Members Detected</h3>
         <div class="prose prose-sm max-w-none mt-2">
+          <p class="text-sm mb-2">The following IPs are assigned to ZeroTier members from a previous installation:</p>
           <ul class="text-warning-content">
             <li v-for="conflict in ipConflicts" :key="conflict">{{ conflict }}</li>
           </ul>
+          <p class="text-sm mt-2">These members should be removed from your ZeroTier network before proceeding, or the IPs will conflict during deployment.</p>
         </div>
       </div>
     </div>
@@ -347,13 +349,13 @@
           <div class="stat">
             <div class="stat-title font-medium">Baremetal Servers</div>
             <div class="stat-value text-primary">{{ physicalServers.length }}</div>
-            <div class="stat-desc text-base-content/60">{{ physicalServers.filter(s => isValidIP(s.ip)).length }} with valid IPs</div>
+            <div class="stat-desc text-base-content text-opacity-60">{{ physicalServers.filter(s => isValidIP(s.ip)).length }} with valid IPs</div>
           </div>
           
           <div class="stat">
             <div class="stat-title font-medium">Virtual Machines</div>
             <div class="stat-value text-secondary">{{ virtualMachines.length }}</div>
-            <div class="stat-desc text-base-content/60">{{ virtualMachines.filter(v => isValidIP(v.lanIP)).length }} with valid LAN IPs</div>
+            <div class="stat-desc text-base-content text-opacity-60">{{ virtualMachines.filter(v => isValidIP(v.lanIP)).length }} with valid LAN IPs</div>
           </div>
           
           <div class="stat">
@@ -361,7 +363,7 @@
             <div class="stat-value" :class="ipConflicts.length > 0 ? 'text-error' : 'text-success'">
               {{ ipConflicts.length }}
             </div>
-            <div class="stat-desc text-base-content/60">{{ ipConflicts.length === 0 ? 'No conflicts' : 'Need resolution' }}</div>
+            <div class="stat-desc text-base-content text-opacity-60">{{ ipConflicts.length === 0 ? 'No conflicts' : 'Need resolution' }}</div>
           </div>
         </div>
       </div>
@@ -450,12 +452,21 @@ const ipConflicts = computed(() => {
     }
   })
   
-  // Check for ZeroTier conflicts
+  // Check for ZeroTier conflicts - but exclude valid assignments
   allIPs.forEach(ip => {
     if (ip && isZeroTierIPInUse(ip) && ip.startsWith(getNetworkBase(networkConfig.value.zerotierCIDR))) {
-      const status = getZeroTierIPStatus(ip)
-      if (status) {
-        conflicts.push(`ZeroTier IP ${ip}: ${status}`)
+      // Check if this IP is legitimately assigned to a VM or reserved for ingress
+      const vmWithIP = virtualMachines.value.find(vm => vm.zerotierIP === ip)
+      const serverWithIP = physicalServers.value.find(s => s.zerotierIP === ip)
+      const primaryIngress = `${getNetworkBase(networkConfig.value.zerotierCIDR)}.${networkConfig.value.primaryIngressOctet}`
+      const secondaryIngress = `${getNetworkBase(networkConfig.value.zerotierCIDR)}.${networkConfig.value.secondaryIngressOctet}`
+      
+      // If the IP is assigned to a VM/server in our config, or is a reserved ingress IP, it's not a conflict
+      if (!vmWithIP && !serverWithIP && ip !== primaryIngress && ip !== secondaryIngress) {
+        const status = getZeroTierIPStatus(ip)
+        if (status) {
+          conflicts.push(`ZeroTier IP ${ip}: ${status}`)
+        }
       }
     }
   })
@@ -518,7 +529,20 @@ const getZeroTierIPStatus = (ip) => {
   if (!ip) return ''
   if (isZeroTierIPInUse(ip)) {
     const member = zerotierMembers.value.find(m => m.ipAssignments.includes(ip))
-    return member ? `Used by ${member.name || member.nodeId.substring(0, 10)}` : 'Already in use'
+    if (member) {
+      const memberName = member.name || member.nodeId.substring(0, 10)
+      
+      // Check if this is likely a stale member from a previous installation
+      const thinkubeNames = ['dns', 'vm-2', 'vm-3', 'tkc', 'tkw1', 'dns1']
+      const isStaleThinkubeMember = thinkubeNames.includes(memberName)
+      
+      if (isStaleThinkubeMember) {
+        return `Previously assigned to ${memberName} (stale member)`
+      }
+      
+      return `Used by ${memberName}`
+    }
+    return 'Already in use'
   }
   return ''
 }
@@ -532,7 +556,23 @@ const isValidIngressOctet = (octet) => {
 const isIngressIPInUse = (octet) => {
   if (!octet || !networkConfig.value.zerotierCIDR) return false
   const fullIP = `${getNetworkBase(networkConfig.value.zerotierCIDR)}.${octet}`
-  return isZeroTierIPInUse(fullIP)
+  
+  // Check if it's used by ZeroTier AND not already assigned to a VM/server in our config
+  if (isZeroTierIPInUse(fullIP)) {
+    // Check if this IP is already assigned to one of our VMs or servers
+    const vmWithIP = virtualMachines.value.find(vm => vm.zerotierIP === fullIP)
+    const serverWithIP = physicalServers.value.find(s => s.zerotierIP === fullIP)
+    
+    // If it's assigned to our infrastructure, it's not a problem
+    if (vmWithIP || serverWithIP) {
+      return false
+    }
+    
+    // It's used by something else in ZeroTier
+    return true
+  }
+  
+  return false
 }
 
 const getLXDBase = () => {

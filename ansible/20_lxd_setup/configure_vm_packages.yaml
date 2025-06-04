@@ -6,6 +6,36 @@
   ansible.builtin.debug:
     msg: "Installing packages on VM: {{ current_vm }}"
 
+# Check current DNS configuration
+- name: Check current DNS configuration ({{ current_vm }})
+  ansible.builtin.shell: |
+    echo "=== Checking DNS configuration for {{ current_vm }} ==="
+    echo "--- /etc/resolv.conf ---"
+    lxc exec {{ current_vm }} -- cat /etc/resolv.conf
+    echo "--- systemd-resolved status ---"
+    lxc exec {{ current_vm }} -- systemctl status systemd-resolved --no-pager || true
+    echo "--- netplan config ---"
+    lxc exec {{ current_vm }} -- cat /etc/netplan/*.yaml || true
+  register: dns_check
+  changed_when: false
+  failed_when: false
+
+- name: Display DNS configuration status
+  ansible.builtin.debug:
+    var: dns_check.stdout_lines
+
+# If DNS is not working, try to restart systemd-resolved
+- name: Restart systemd-resolved if needed ({{ current_vm }})
+  ansible.builtin.shell: |
+    # Check if resolv.conf has nameservers
+    if ! lxc exec {{ current_vm }} -- grep -q "nameserver" /etc/resolv.conf; then
+      echo "No nameservers found, restarting systemd-resolved..."
+      lxc exec {{ current_vm }} -- systemctl restart systemd-resolved
+      sleep 2
+    fi
+  register: dns_restart
+  changed_when: "'restarting' in dns_restart.stdout"
+
 # Verify VM network connectivity first
 - name: Verify network connectivity ({{ current_vm }})
   ansible.builtin.command: lxc exec {{ current_vm }} -- ping -c 2 8.8.8.8

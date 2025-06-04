@@ -153,10 +153,21 @@
       changed_when: false
       failed_when: false
 
+    - name: Install apache2-utils for htpasswd
+      ansible.builtin.apt:
+        name: apache2-utils
+        state: present
+        update_cache: yes
+      become: true
+
+    - name: Set admin password from environment or file
+      ansible.builtin.set_fact:
+        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
+
     # Generate a bcrypt hash of the admin password for ArgoCD
     - name: Generate bcrypt hash of admin password
       ansible.builtin.shell: |
-        echo -n "{{ lookup('env', 'ADMIN_PASSWORD') }}" | htpasswd -nbiBC 10 "" | tr -d ':\n' | sed 's/$2y/$2a/'
+        echo -n "{{ admin_password }}" | htpasswd -nbiBC 10 "" | tr -d ':\n' | sed 's/$2y/$2a/'
       register: password_hash
       changed_when: false
       no_log: true

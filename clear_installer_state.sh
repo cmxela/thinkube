@@ -1,0 +1,17 @@
+#!/bin/bash
+
+echo "=================================="
+echo "Clear Thinkube Installer State"
+echo "=================================="
+echo ""
+echo "To reset the installer and start fresh, run these commands in your browser's Developer Console"
+echo "(press F12 in the browser, go to Console tab):"
+echo ""
+echo "localStorage.removeItem('thinkube-deployment-state');"
+echo "localStorage.removeItem('thinkube-session-backup');"
+echo "localStorage.removeItem('thinkube-config');"
+echo "sessionStorage.clear();"
+echo ""
+echo "Then refresh the installer page."
+echo ""
+echo "This will clear all saved progress and configuration."

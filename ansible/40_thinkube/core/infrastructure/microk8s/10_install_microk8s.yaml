@@ -318,6 +318,16 @@
       tags:
         - aliases
 
+    - name: Ensure generated_aliases.sh exists
+      ansible.builtin.file:
+        path: "{{ user_home }}/.thinkube_shared_shell/aliases/generated_aliases.sh"
+        state: touch
+        mode: '0644'
+        owner: "{{ user }}"
+        group: "{{ user }}"
+      tags:
+        - aliases
+
     - name: Include K8s aliases in main aliases
       ansible.builtin.blockinfile:
         path: "{{ user_home }}/.thinkube_shared_shell/aliases/generated_aliases.sh"

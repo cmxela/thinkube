@@ -32,15 +32,15 @@
   gather_facts: true
   vars:
     keycloak_namespace: keycloak
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
     zerotier_dns_server: "{{ hostvars['dns1'].zerotier_ip }}"
 
   pre_tasks:
     - name: Verify required environment variables
       ansible.builtin.assert:
-        that: lookup('env', 'ADMIN_PASSWORD') != ''
-        fail_msg: "ADMIN_PASSWORD environment variable must be set"
-        success_msg: "Required environment variables are set"
+        that: admin_password != ''
+        fail_msg: "ADMIN_PASSWORD must be set (either as environment variable or in ~/.env)"
+        success_msg: "Required admin password is available"
 
     # No need to check for certificate files - cert-manager will handle this
 

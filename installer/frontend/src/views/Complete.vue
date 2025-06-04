@@ -2,13 +2,13 @@
   <div class="max-w-4xl mx-auto">
     <!-- Error state if no data -->
     <div v-if="!dataLoaded" class="text-center mb-8">
-      <div class="inline-flex items-center justify-center w-24 h-24 bg-error/20 rounded-full mb-6">
+      <div class="inline-flex items-center justify-center w-24 h-24 bg-error bg-opacity-20 rounded-full mb-6">
         <svg class="w-16 h-16 text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
         </svg>
       </div>
       <h1 class="text-4xl font-bold mb-4">Configuration Not Found</h1>
-      <p class="text-xl text-base-content/70 mb-8">
+      <p class="text-xl text-base-content text-opacity-70 mb-8">
         The deployment configuration could not be loaded. Please ensure you've completed all previous steps.
       </p>
       <button class="btn btn-primary" @click="$router.push('/')">
@@ -19,13 +19,13 @@
     <!-- Success state with data -->
     <div v-else>
       <div class="text-center mb-8">
-        <div class="inline-flex items-center justify-center w-24 h-24 bg-success/20 rounded-full mb-6">
+        <div class="inline-flex items-center justify-center w-24 h-24 bg-success bg-opacity-20 rounded-full mb-6">
           <svg class="w-16 h-16 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
         </div>
         <h1 class="text-4xl font-bold mb-4">Cluster Deployment Complete!</h1>
-        <p class="text-xl text-base-content/70">
+        <p class="text-xl text-base-content text-opacity-70">
           Your thinkube platform has been successfully deployed and is ready for AI workloads.
         </p>
       </div>
@@ -37,7 +37,7 @@
         
         <div class="space-y-4">
           <div class="flex items-start gap-4">
-            <div class="flex-shrink-0 w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center">
+            <div class="flex-shrink-0 w-12 h-12 bg-primary bg-opacity-20 rounded-lg flex items-center justify-center">
               <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
               </svg>
@@ -47,14 +47,14 @@
               <a :href="`https://dashboard.${domainName}`" target="_blank" class="link link-primary">
                 https://dashboard.{{ domainName }}
               </a>
-              <p class="text-sm text-base-content/70 mt-1">
+              <p class="text-sm text-base-content text-opacity-70 mt-1">
                 Central management interface for your cluster
               </p>
             </div>
           </div>
           
           <div class="flex items-start gap-4">
-            <div class="flex-shrink-0 w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center">
+            <div class="flex-shrink-0 w-12 h-12 bg-primary bg-opacity-20 rounded-lg flex items-center justify-center">
               <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path>
               </svg>
@@ -64,14 +64,14 @@
               <a :href="`https://ai.${domainName}`" target="_blank" class="link link-primary">
                 https://ai.{{ domainName }}
               </a>
-              <p class="text-sm text-base-content/70 mt-1">
+              <p class="text-sm text-base-content text-opacity-70 mt-1">
                 Deploy and manage AI models and workloads
               </p>
             </div>
           </div>
           
           <div class="flex items-start gap-4">
-            <div class="flex-shrink-0 w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center">
+            <div class="flex-shrink-0 w-12 h-12 bg-primary bg-opacity-20 rounded-lg flex items-center justify-center">
               <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
               </svg>
@@ -81,7 +81,7 @@
               <code class="text-sm bg-base-200 px-2 py-1 rounded">
                 ssh {{ systemUsername }}@{{ controlPlaneIP }}
               </code>
-              <p class="text-sm text-base-content/70 mt-1">
+              <p class="text-sm text-base-content text-opacity-70 mt-1">
                 Direct access to control plane node
               </p>
             </div>

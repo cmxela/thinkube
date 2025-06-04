@@ -1,112 +1,17 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@plugin "daisyui";
 
-/* Typography using Tailwind utilities */
+/* Apply custom fonts */
 @layer base {
   body {
-    @apply font-body text-base antialiased;
+    font-family: "Roboto Slab", ui-serif, serif;
   }
   
   h1, h2, h3, h4, h5, h6, .card-title {
-    @apply font-heading tracking-tight;
-  }
-  
-  h1 {
-    @apply text-3xl font-bold;
-  }
-  
-  h2, .card-title {
-    @apply text-2xl font-semibold;
-  }
-  
-  h3 {
-    @apply text-xl font-semibold;
+    font-family: "Roboto", ui-sans-serif, system-ui, sans-serif;
   }
   
   code, pre, .mockup-code {
-    @apply font-mono;
+    font-family: "Roboto Mono", ui-monospace, monospace;
   }
-  
-  /* JetBrains Mono specific enhancements */
-  code {
-    @apply text-sm font-medium;
-  }
-  
-  pre, .mockup-code {
-    @apply text-sm leading-relaxed;
-    font-variant-ligatures: contextual;
-  }
-  
-  /* Inline code styling */
-  :not(pre) > code {
-    @apply px-1.5 py-0.5 rounded bg-base-200 text-base-content/90;
-  }
-  
-  /* Prose styling for content-heavy sections */
-  .prose {
-    @apply font-body;
-  }
-  
-  .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
-    @apply font-heading;
-  }
-  
-  /* Better table styling */
-  .table th {
-    @apply bg-base-200 bg-opacity-50;
-  }
-  
-  .table-compact th,
-  .table-compact td {
-    @apply py-2;
-  }
-  
-  /* Enhanced prose defaults */
-  .prose {
-    @apply text-base-content;
-  }
-  
-  .prose ul {
-    @apply space-y-1;
-  }
-  
-  /* Better form labels */
-  .label-text {
-    @apply font-medium text-base-content text-opacity-90;
-  }
-  
-  .label-text-alt {
-    @apply text-xs text-base-content text-opacity-60;
-  }
-}
-
-/* Animation utilities using Tailwind */
-@layer utilities {
-  /* Responsive table wrapper */
-  .table-responsive {
-    @apply overflow-x-auto rounded-lg shadow-sm;
-  }
-  
-  /* Better focus states */
-  .input:focus {
-    @apply ring-2 ring-primary ring-opacity-20;
-  }
-}
-
-/* Theme-aware scrollbar styling */
-.mockup-code::-webkit-scrollbar {
-  width: 8px;
-}
-
-.mockup-code::-webkit-scrollbar-track {
-  @apply bg-base-300;
-}
-
-.mockup-code::-webkit-scrollbar-thumb {
-  @apply bg-neutral rounded;
-}
-
-.mockup-code::-webkit-scrollbar-thumb:hover {
-  @apply bg-neutral opacity-80;
 }

@@ -167,7 +167,7 @@
           GPU DRIVER STATUS IN VM ({{ inventory_hostname }})
           ═════════════════════════════════════════════════════════
           
-          NVIDIA Modules: {{ module_status.stdout_lines | length > 0 | ternary('✓ LOADED', '✗ NOT LOADED') }}
+          NVIDIA Modules: {{ module_status.stdout | default('') | length | ternary('✓ LOADED', '✗ NOT LOADED') }}
           nvidia-smi: {{ nvidia_smi.rc == 0 | ternary('✓ WORKING', '✗ NOT WORKING') }}
           
           {% if nvidia_smi.rc == 0 %}
@@ -181,7 +181,7 @@
     # PART 6: Display GPU status summary
     - name: Set driver status facts
       ansible.builtin.set_fact:
-        driver_loaded: "{{ module_status.stdout_lines | length > 0 }}"
+        driver_loaded: "{{ module_status.stdout | default('') | length | bool }}"
         nvidia_smi_working: "{{ nvidia_smi.rc == 0 }}"
     
     - name: Display completion summary

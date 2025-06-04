@@ -43,13 +43,13 @@
         
         <div ref="logContainer" class="log-container bg-base-200 rounded-lg p-4 h-96 overflow-y-auto font-mono text-sm">
           <div v-for="(log, index) in status.logs" :key="index" class="mb-1">
-            <span class="text-base-content/60">{{ formatTime(new Date()) }}</span>
+            <span class="text-base-content text-opacity-60">{{ formatTime(new Date()) }}</span>
             <span class="ml-2">{{ log }}</span>
           </div>
           
           <div v-if="status.errors.length > 0" class="mt-4 border-t border-error pt-4">
             <div v-for="(error, index) in status.errors" :key="`error-${index}`" class="text-error mb-1">
-              <span class="text-error/60">{{ formatTime(new Date()) }}</span>
+              <span class="text-error text-opacity-60">{{ formatTime(new Date()) }}</span>
               <span class="ml-2">ERROR: {{ error }}</span>
             </div>
           </div>
@@ -68,9 +68,9 @@
       
       <button 
         class="btn btn-primary btn-block btn-lg gap-2"
-        @click="$router.push('/server-discovery')"
+        @click="continueNext"
       >
-        Continue to Server Discovery
+        {{ skipConfigMode ? 'Continue to Deployment' : 'Continue to Server Discovery' }}
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
         </svg>
@@ -81,6 +81,12 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+// Check if we're in skip-config mode
+const skipConfigMode = sessionStorage.getItem('skipConfigMode') === 'true'
 
 const status = ref({
   phase: 'starting',
@@ -114,27 +120,51 @@ const formatTime = (date) => {
 }
 
 const connectWebSocket = () => {
-  const wsUrl = window.electronAPI 
-    ? 'ws://localhost:8000/api/ws'
-    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/ws`
+  // In Tauri, we need to connect directly to localhost:8000
+  const isTauri = window.__TAURI__ !== undefined
+  const wsBase = isTauri || window.location.protocol === 'http:' && window.location.hostname === 'localhost'
+    ? 'ws://localhost:8000'
+    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
   
-  ws = new WebSocket(wsUrl)
+  // Try /ws first, then /api/ws
+  let wsUrl = `${wsBase}/ws`
+  let retryWithApi = true
   
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data)
-    status.value = data
-  }
-  
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error)
-  }
-  
-  ws.onclose = () => {
-    // Reconnect after 5 seconds if not complete
-    if (!isComplete.value) {
-      setTimeout(connectWebSocket, 5000)
+  const createConnection = (url) => {
+    console.log('Connecting to WebSocket:', url)
+    ws = new WebSocket(url)
+    
+    ws.onopen = () => {
+      console.log('WebSocket connected successfully')
+      retryWithApi = false
+    }
+    
+    ws.onmessage = (event) => {
+      console.log('WebSocket message received:', event.data)
+      const data = JSON.parse(event.data)
+      status.value = data
+      console.log('Status updated:', status.value)
+    }
+    
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error)
+      if (retryWithApi && url.endsWith('/ws')) {
+        // Try /api/ws endpoint
+        retryWithApi = false
+        wsUrl = `${wsBase}/api/ws`
+        createConnection(wsUrl)
+      }
+    }
+    
+    ws.onclose = () => {
+      // Reconnect after 5 seconds if not complete
+      if (!isComplete.value) {
+        setTimeout(() => createConnection(wsUrl), 5000)
+      }
     }
   }
+  
+  createConnection(wsUrl)
 }
 
 watch(() => status.value.logs.length, async () => {
@@ -143,6 +173,14 @@ watch(() => status.value.logs.length, async () => {
     logContainer.value.scrollTop = logContainer.value.scrollHeight
   }
 })
+
+const continueNext = () => {
+  if (skipConfigMode) {
+    router.push('/deploy')
+  } else {
+    router.push('/server-discovery')
+  }
+}
 
 onMounted(() => {
   connectWebSocket()

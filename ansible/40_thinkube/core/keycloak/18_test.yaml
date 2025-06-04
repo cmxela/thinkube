@@ -21,7 +21,7 @@
   
   vars:
     keycloak_namespace: keycloak
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
     
   tasks:
     - name: Check if namespace exists

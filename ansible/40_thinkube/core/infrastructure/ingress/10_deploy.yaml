@@ -62,10 +62,22 @@
     - name: Test kubernetes module import
       ansible.builtin.command: "{{ ansible_python_interpreter }} -c 'import kubernetes; print(kubernetes.__version__)'"
       register: k8s_test
+      failed_when: false
+      changed_when: false
+      
+    - name: Install kubernetes module if missing
+      ansible.builtin.pip:
+        name: 
+          - kubernetes>=26.1.0
+          - pyyaml>=6.0
+        executable: "{{ ansible_python_interpreter | dirname }}/pip"
+      when: k8s_test.rc != 0
+      become: false
       
     - name: Show kubernetes module version
       ansible.builtin.debug:
         var: k8s_test.stdout
+      when: k8s_test.rc == 0
         
     - name: Disable MicroK8s ingress addon (if enabled)
       ansible.builtin.command: microk8s disable ingress

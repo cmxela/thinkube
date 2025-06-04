@@ -4,7 +4,7 @@
   gather_facts: false
   
   vars:
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
     
   tasks:
     - name: Test admin authentication on master realm

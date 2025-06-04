@@ -10,7 +10,7 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <h3 class="font-semibold mb-2">Control Plane Node</h3>
-            <ul class="text-sm space-y-1 text-base-content/70">
+            <ul class="text-sm space-y-1 text-base-content text-opacity-70">
               <li>• Manages Kubernetes API and cluster state</li>
               <li>• Requires at least 4 CPU cores and 8GB RAM</li>
               <li>• Single node setup for homelab use</li>
@@ -20,7 +20,7 @@
           
           <div>
             <h3 class="font-semibold mb-2">Worker Nodes</h3>
-            <ul class="text-sm space-y-1 text-base-content/70">
+            <ul class="text-sm space-y-1 text-base-content text-opacity-70">
               <li>• Run application workloads</li>
               <li>• Can be baremetal or VMs</li>
               <li>• GPU nodes for AI workloads</li>
@@ -30,7 +30,7 @@
           
           <div>
             <h3 class="font-semibold mb-2">DNS Server</h3>
-            <ul class="text-sm space-y-1 text-base-content/70">
+            <ul class="text-sm space-y-1 text-base-content text-opacity-70">
               <li>• Provides internal DNS resolution</li>
               <li>• Can run on baremetal or VM</li>
               <li>• Requires at least 2 CPU cores and 2GB RAM</li>
@@ -59,7 +59,7 @@
                 <div class="flex items-center gap-3">
                   <div>
                     <p class="font-medium">{{ node.hostname }}</p>
-                    <p class="text-sm text-base-content/70">
+                    <p class="text-sm text-base-content text-opacity-70">
                       {{ node.cpu }} CPU, {{ node.memory }} GB RAM
                       <span v-if="getNodeGPUStatus(node)" class="badge badge-success badge-sm ml-2">
                         {{ getNodeGPUStatus(node) }}
@@ -95,7 +95,7 @@
                 <div class="flex items-center gap-3">
                   <div>
                     <p class="font-medium">{{ node.hostname }}</p>
-                    <p class="text-sm text-base-content/70">
+                    <p class="text-sm text-base-content text-opacity-70">
                       {{ node.cpu }} CPU, {{ node.memory }} GB RAM
                       <span class="badge badge-info badge-sm ml-2">VM on {{ node.host }}</span>
                     </p>
@@ -116,7 +116,7 @@
                 <div class="flex items-center gap-3">
                   <div>
                     <p class="font-medium">{{ node.hostname }}</p>
-                    <p class="text-sm text-base-content/70">
+                    <p class="text-sm text-base-content text-opacity-70">
                       {{ node.cpu }} CPU, {{ node.memory }} GB RAM
                       <span class="badge badge-info badge-sm ml-2">VM on {{ node.host }}</span>
                       <span v-if="canVMHaveGPU(node)" class="badge badge-warning badge-sm ml-2">

@@ -15,7 +15,7 @@
 #   - kubectl available
 #
 # Usage:
-#   export CLOUDFLARE_API_TOKEN='your-cloudflare-api-token'
+#   export CLOUDFLARE_TOKEN='your-cloudflare-api-token'
 #   ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/core/infrastructure/cert-manager/10_deploy.yaml
 
 - name: Deploy cert-manager
@@ -24,7 +24,7 @@
 
   vars:
     cert_manager_namespace: "cert-manager"
-    cloudflare_token: "{{ lookup('env', 'CLOUDFLARE_API_TOKEN') }}"
+    cloudflare_token: "{{ lookup('env', 'CLOUDFLARE_TOKEN') }}"
     acme_email: "admin@{{ domain_name }}"
     
     # Certificate domains - only wildcards, not base domain
@@ -35,7 +35,7 @@
   tasks:
     - name: Verify Cloudflare API token is set
       ansible.builtin.fail:
-        msg: "CLOUDFLARE_API_TOKEN environment variable is not set"
+        msg: "CLOUDFLARE_TOKEN environment variable is not set"
       when: cloudflare_token | length == 0
 
     - name: Create cert-manager namespace

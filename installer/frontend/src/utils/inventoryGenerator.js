@@ -10,9 +10,16 @@ export function generateDynamicInventory() {
   const clusterNodes = JSON.parse(sessionStorage.getItem('clusterNodes') || '[]')
   const vmPlan = JSON.parse(sessionStorage.getItem('vmPlan') || '[]')  // Original VM specs
   const gpuAssignments = JSON.parse(sessionStorage.getItem('gpuAssignments') || '{}')  // GPU assignments from Review
+  const hardwareData = JSON.parse(sessionStorage.getItem('hardwareData') || '{}')  // Hardware detection data
   const dnsOption = sessionStorage.getItem('dnsOption')
   const lxdPrimary = sessionStorage.getItem('lxdPrimary')
   const deploymentType = sessionStorage.getItem('deploymentType')
+  
+  // Debug GPU assignments
+  console.log('GPU Assignments:', gpuAssignments)
+  console.log('VM Plan:', vmPlan)
+  console.log('Cluster Nodes:', clusterNodes)
+  console.log('Hardware Data:', hardwareData)
   
   // Validate required configuration exists
   if (!networkConfiguration.networkConfig) {
@@ -41,7 +48,9 @@ export function generateDynamicInventory() {
   
   // Helper function to check if VM has GPU passthrough
   const vmHasGPUPassthrough = (vmHostname) => {
-    return Object.values(gpuAssignments).includes(vmHostname)
+    const hasGPU = Object.values(gpuAssignments).includes(vmHostname)
+    console.log(`Checking GPU for ${vmHostname}: ${hasGPU}`, gpuAssignments)
+    return hasGPU
   }
   
   // Validate required network configuration
@@ -64,7 +73,7 @@ export function generateDynamicInventory() {
         // Global variables from user configuration
         domain_name: config.domainName,
         admin_username: 'tkadmin',
-        system_username: 'thinkube',
+        system_username: config.systemUsername,
         auth_realm_username: 'thinkube',
         ansible_python_interpreter: '/usr/bin/python3',
         ansible_become_pass: "{{ lookup('env', 'ANSIBLE_BECOME_PASSWORD') }}",
@@ -236,14 +245,22 @@ export function generateDynamicInventory() {
     }
     
     // Determine if this host needs GPU passthrough configuration
-    const gpuAssignments = JSON.parse(sessionStorage.getItem('gpuAssignments') || '{}')
     const assignedSlots = []
     
     // Find GPUs assigned to VMs on this host
     Object.entries(gpuAssignments).forEach(([pciAddress, assignment]) => {
-      if (assignment !== 'baremetal' && configuredVirtualMachines.some(vm => vm.host === hostname && vm.name === assignment)) {
-        // This GPU is assigned to a VM on this host
-        assignedSlots.push(pciAddress)
+      console.log(`Checking GPU assignment: ${pciAddress} -> ${assignment}`)
+      if (assignment !== 'baremetal') {
+        // Check if any VM (configured or from vmPlan) on this host has this assignment
+        const vmOnThisHost = configuredVirtualMachines.some(vm => {
+          const originalVM = vmPlan.find(v => v.name === vm.name)
+          return originalVM && originalVM.host === hostname && vm.name === assignment
+        }) || vmPlan.some(vm => vm.host === hostname && vm.name === assignment)
+        
+        if (vmOnThisHost) {
+          console.log(`GPU ${pciAddress} is assigned to VM ${assignment} on host ${hostname}`)
+          assignedSlots.push(pciAddress)
+        }
       }
     })
     
@@ -253,6 +270,7 @@ export function generateDynamicInventory() {
     // Add assigned PCI slots if any
     if (hasGPUPassthrough) {
       serverDef.assigned_pci_slots = assignedSlots
+      console.log(`Host ${hostname} configured for GPU passthrough with slots: ${assignedSlots}`)
     }
     
     // Add to inventory
@@ -329,6 +347,9 @@ export function generateDynamicInventory() {
         const networkVM = configuredVirtualMachines.find(v => v.name === node.hostname)
         
         if (originalVM && networkVM) {
+          const hasGPU = vmHasGPUPassthrough(node.hostname)
+          console.log(`Setting up control plane VM ${node.hostname}, GPU passthrough: ${hasGPU}`)
+          
           const vmDef = {
             parent_host: originalVM.host,
             memory: `${originalVM.memory}GB`,
@@ -339,18 +360,25 @@ export function generateDynamicInventory() {
             internal_ip: networkVM.internalIP,
             zerotier_ip: networkVM.zerotierIP,
             zerotier_enabled: true,
-            gpu_passthrough: vmHasGPUPassthrough(node.hostname)
+            gpu_passthrough: hasGPU
           }
           
           // Add PCI slot if GPU is assigned to this VM
           Object.entries(gpuAssignments).forEach(([pciAddress, assignment]) => {
+            console.log(`Checking if ${assignment} === ${node.hostname} for PCI ${pciAddress}`)
             if (assignment === node.hostname) {
               // Add the 0000: prefix to the PCI address
               vmDef.pci_slot = `0000:${pciAddress}`
+              console.log(`Added PCI slot ${vmDef.pci_slot} to VM ${node.hostname}`)
             }
           })
           
           inventory.all.children.lxd_containers.children.microk8s_containers.children.controllers.hosts[node.hostname] = vmDef
+          
+          // Also add to gpu_passthrough_vms group if it has GPU
+          if (vmHasGPUPassthrough(node.hostname)) {
+            inventory.all.children.gpu_passthrough_vms.hosts[node.hostname] = {}
+          }
         }
       }
     } else if (node.role === 'worker') {
@@ -362,6 +390,9 @@ export function generateDynamicInventory() {
         const networkVM = configuredVirtualMachines.find(v => v.name === node.hostname)
         
         if (originalVM && networkVM) {
+          const hasGPU = vmHasGPUPassthrough(node.hostname)
+          console.log(`Setting up worker VM ${node.hostname}, GPU passthrough: ${hasGPU}`)
+          
           const vmDef = {
             parent_host: originalVM.host,
             memory: `${originalVM.memory}GB`,
@@ -372,18 +403,25 @@ export function generateDynamicInventory() {
             internal_ip: networkVM.internalIP,
             zerotier_ip: networkVM.zerotierIP,
             zerotier_enabled: true,
-            gpu_passthrough: vmHasGPUPassthrough(node.hostname)
+            gpu_passthrough: hasGPU
           }
           
           // Add PCI slot if GPU is assigned to this VM
           Object.entries(gpuAssignments).forEach(([pciAddress, assignment]) => {
+            console.log(`Checking if ${assignment} === ${node.hostname} for PCI ${pciAddress}`)
             if (assignment === node.hostname) {
               // Add the 0000: prefix to the PCI address
               vmDef.pci_slot = `0000:${pciAddress}`
+              console.log(`Added PCI slot ${vmDef.pci_slot} to VM ${node.hostname}`)
             }
           })
           
           inventory.all.children.lxd_containers.children.microk8s_containers.children.workers.hosts[node.hostname] = vmDef
+          
+          // Also add to gpu_passthrough_vms group if it has GPU
+          if (vmHasGPUPassthrough(node.hostname)) {
+            inventory.all.children.gpu_passthrough_vms.hosts[node.hostname] = {}
+          }
         }
       }
     }
@@ -406,10 +444,80 @@ export function generateDynamicInventory() {
   })
   
   // Add DNS VM to zerotier_nodes if it exists
-  if (inventory.all.children.dns.hosts.dns1) {
-    inventory.all.children.zerotier_nodes.hosts.dns1 = {}
-    inventory.all.children.arch.children.x86_64.hosts.dns1 = {}
+  if (inventory.all.children.dns_servers.hosts.dns) {
+    inventory.all.children.zerotier_nodes.hosts.dns = {}
+    inventory.all.children.arch.children.x86_64.hosts.dns = {}
   }
+  
+  // Configure container_configs and baremetal_gpus vars
+  configuredPhysicalServers.forEach(server => {
+    const serverVMs = []
+    
+    // Find all VMs on this server
+    configuredVirtualMachines.forEach(vm => {
+      const originalVM = vmPlan.find(v => v.name === vm.name)
+      if (originalVM && originalVM.host === server.hostname) {
+        const vmConfig = {
+          name: vm.name,
+          gpu_passthrough: vmHasGPUPassthrough(vm.name)
+        }
+        
+        // Add GPU info if assigned
+        Object.entries(gpuAssignments).forEach(([pciAddress, assignment]) => {
+          if (assignment === vm.name) {
+            // Get GPU type from hardware detection data
+            const hardwareData = JSON.parse(sessionStorage.getItem('hardwareData') || '{}')
+            const serverHardware = hardwareData[server.hostname]
+            if (serverHardware && serverHardware.gpus) {
+              const gpu = serverHardware.gpus.find(g => g.pci_address === pciAddress)
+              if (gpu) {
+                vmConfig.gpu_type = gpu.model || gpu.name
+              }
+            }
+            vmConfig.pci_slot = pciAddress
+          }
+        })
+        
+        serverVMs.push(vmConfig)
+      }
+    })
+    
+    // Only add to container_configs if there are VMs on this host
+    if (serverVMs.length > 0) {
+      inventory.all.children.container_configs.vars[server.hostname] = serverVMs
+    }
+    
+    // Check if this baremetal host has GPUs for baremetal use
+    const hasBaremetalGPU = Object.entries(gpuAssignments).some(([pci, assignment]) => 
+      assignment === 'baremetal'
+    )
+    
+    if (hasBaremetalGPU) {
+      // Get GPU info from hardware detection data
+      const hardwareData = JSON.parse(sessionStorage.getItem('hardwareData') || '{}')
+      const serverHardware = hardwareData[server.hostname]
+      const baremetalGPU = {}
+      
+      if (serverHardware && serverHardware.gpus) {
+        // Find the first GPU assigned to baremetal
+        const baremetalGPUEntry = Object.entries(gpuAssignments).find(([pci, assignment]) => 
+          assignment === 'baremetal'
+        )
+        if (baremetalGPUEntry) {
+          const [pciAddress] = baremetalGPUEntry
+          const gpu = serverHardware.gpus.find(g => g.pci_address === pciAddress)
+          if (gpu) {
+            baremetalGPU.gpu_type = gpu.model || gpu.name
+            baremetalGPU.gpu_device = gpu.device || "/dev/nvidia0"
+          }
+        }
+      }
+      
+      if (baremetalGPU.gpu_type) {
+        inventory.all.children.baremetal_gpus.vars[server.hostname] = baremetalGPU
+      }
+    }
+  })
   
   return inventory
 }
@@ -438,8 +546,19 @@ export function inventoryToYAML(inventory) {
       } else if (Array.isArray(value)) {
         yaml.push(`${indent(level)}${key}:`)
         value.forEach(item => {
-          // Quote strings that could be misinterpreted as numbers (like PCI addresses)
-          if (typeof item === 'string' && item.match(/^\d+:\d+\.\d+$/)) {
+          if (typeof item === 'object' && item !== null) {
+            // Handle objects in arrays
+            yaml.push(`${indent(level + 1)}-`)
+            Object.entries(item).forEach(([itemKey, itemValue]) => {
+              if (typeof itemValue === 'string') {
+                yaml.push(`${indent(level + 2)}${itemKey}: "${itemValue}"`)
+              } else if (typeof itemValue === 'boolean') {
+                yaml.push(`${indent(level + 2)}${itemKey}: ${itemValue}`)
+              } else {
+                yaml.push(`${indent(level + 2)}${itemKey}: ${itemValue}`)
+              }
+            })
+          } else if (typeof item === 'string' && item.match(/^\d+:\d+\.\d+$/)) {
             yaml.push(`${indent(level + 1)}- "${item}"`)
           } else if (typeof item === 'string') {
             yaml.push(`${indent(level + 1)}- "${item}"`)

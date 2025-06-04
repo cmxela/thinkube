@@ -109,7 +109,7 @@
                   />
                   <div class="flex-1">
                     <div class="font-semibold">Container Host Only</div>
-                    <div class="text-sm text-base-content/70">Server will only host LXD containers for the cluster</div>
+                    <div class="text-sm text-base-content text-opacity-70">Server will only host LXD containers for the cluster</div>
                   </div>
                 </label>
                 
@@ -123,7 +123,7 @@
                   />
                   <div class="flex-1">
                     <div class="font-semibold">Hybrid Mode</div>
-                    <div class="text-sm text-base-content/70">Server will join Kubernetes cluster AND host LXD containers</div>
+                    <div class="text-sm text-base-content text-opacity-70">Server will join Kubernetes cluster AND host LXD containers</div>
                     <div v-if="server.hardware && server.hardware.memory_gb >= 64" class="badge badge-success badge-sm mt-1">
                       Recommended
                     </div>
@@ -140,7 +140,7 @@
                   />
                   <div class="flex-1">
                     <div class="font-semibold">Direct Kubernetes Node</div>
-                    <div class="text-sm text-base-content/70">Server will join Kubernetes cluster directly (no containers)</div>
+                    <div class="text-sm text-base-content text-opacity-70">Server will join Kubernetes cluster directly (no containers)</div>
                   </div>
                 </label>
               </div>
@@ -176,7 +176,7 @@
                       <div>
                         <span class="font-semibold">{{ container.name }}</span>
                         <span class="badge badge-ghost badge-sm ml-2">{{ getContainerTypeLabel(container.type) }}</span>
-                        <div class="text-sm text-base-content/70">
+                        <div class="text-sm text-base-content text-opacity-70">
                           {{ container.cpu_cores }} CPU • {{ container.memory }} RAM • {{ container.disk_size }} Disk
                           <span v-if="container.gpu_passthrough" class="badge badge-success badge-xs ml-2">GPU</span>
                         </div>

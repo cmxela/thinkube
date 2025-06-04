@@ -90,7 +90,7 @@
         body_format: form-urlencoded
         body:
           username: "{{ admin_username }}"
-          password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+          password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
           grant_type: password
           client_id: "admin-cli"
         validate_certs: true

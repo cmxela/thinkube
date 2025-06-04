@@ -150,9 +150,17 @@
           async: 180
           poll: 5
         
-        # Configure DNS settings
+        # Configure DNS settings with proper systemd-resolved integration
         - name: Configure persistent DNS settings in VMs
           ansible.builtin.shell: |
+            # Wait for systemd to be ready
+            for i in {1..30}; do
+              if lxc exec {{ vm_name }} -- systemctl is-system-running 2>/dev/null | grep -qE '^(running|degraded)$'; then
+                break
+              fi
+              sleep 2
+            done
+            
             # Create systemd-resolved config directory
             lxc exec {{ vm_name }} -- mkdir -p /etc/systemd/resolved.conf.d
             
@@ -162,20 +170,29 @@
             DNS={{ dns_servers | join(" ") }}
             Domains=~.
             Cache=yes
+            DNSSEC=no
+            DNSStubListener=yes
             EOF'
             
-            # Restart systemd-resolved
-            lxc exec {{ vm_name }} -- systemctl restart systemd-resolved || true
+            # Ensure resolv.conf is properly symlinked to systemd-resolved stub
+            lxc exec {{ vm_name }} -- rm -f /etc/resolv.conf
+            lxc exec {{ vm_name }} -- ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
             
-            # Create resolv.conf with proper nameservers
-            lxc exec {{ vm_name }} -- bash -c 'cat > /etc/resolv.conf << EOF
-            {% for dns in dns_servers %}
-            nameserver {{ dns }}
-            {% endfor %}
-            EOF'
+            # Enable and restart systemd-resolved
+            lxc exec {{ vm_name }} -- systemctl enable systemd-resolved
+            lxc exec {{ vm_name }} -- systemctl restart systemd-resolved
             
-            # Make resolv.conf immutable to prevent changes
-            lxc exec {{ vm_name }} -- chattr +i /etc/resolv.conf || true
+            # Wait for systemd-resolved to be active
+            for i in {1..10}; do
+              if lxc exec {{ vm_name }} -- systemctl is-active systemd-resolved | grep -q '^active$'; then
+                break
+              fi
+              sleep 1
+            done
+            
+            # Verify DNS is working
+            sleep 2
+            lxc exec {{ vm_name }} -- resolvectl status || true
           register: dns_config
           failed_when: dns_config.rc != 0
           changed_when: dns_config.rc == 0
@@ -228,6 +245,28 @@
           # Add async to prevent timeout
           async: 120
           poll: 5
+        
+        # Verify DNS is working before proceeding
+        - name: Verify DNS resolution is working in VMs
+          ansible.builtin.shell: |
+            # Test DNS resolution
+            if ! lxc exec {{ vm_name }} -- nslookup google.com 2>&1 | grep -q "Address:"; then
+              # Try restarting systemd-resolved one more time
+              lxc exec {{ vm_name }} -- systemctl restart systemd-resolved
+              sleep 3
+              # Test again
+              if ! lxc exec {{ vm_name }} -- nslookup google.com 2>&1 | grep -q "Address:"; then
+                echo "ERROR: DNS resolution failed for {{ vm_name }}"
+                exit 1
+              fi
+            fi
+            echo "✓ DNS resolution working for {{ vm_name }}"
+          register: dns_verify
+          changed_when: false
+          failed_when: "'ERROR:' in dns_verify.stdout"
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
         
         # Clean up temporary network configuration files
         - name: Clean up temporary network configuration files

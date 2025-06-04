@@ -9,7 +9,7 @@
     
     <div class="navbar-center">
       <!-- Progress indicator -->
-      <div v-if="currentStep" class="text-sm text-base-content/70">
+      <div v-if="currentStep" class="text-sm text-base-content text-opacity-70">
         Step {{ currentStepIndex + 1 }} of {{ totalSteps }}
       </div>
     </div>

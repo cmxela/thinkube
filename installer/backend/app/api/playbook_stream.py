@@ -10,6 +10,7 @@ import os
 import json
 import yaml
 import tempfile
+import shutil
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -23,13 +24,33 @@ async def stream_playbook_execution(websocket: WebSocket, playbook_name: str):
     from urllib.parse import unquote
     
     await websocket.accept()
+    logger.info(f"WebSocket accepted for playbook: {playbook_name}")
     
     try:
         # Decode the URL-encoded playbook name
         playbook_name = unquote(playbook_name)
+        logger.info(f"Decoded playbook name: {playbook_name}")
         
         # Receive execution parameters
-        data = await websocket.receive_json()
+        logger.info("Waiting to receive parameters from WebSocket...")
+        try:
+            # Add a timeout to prevent hanging
+            data = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
+            logger.info(f"Received parameters: {list(data.keys())}")
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for WebSocket parameters")
+            await websocket.send_json({
+                "type": "error",
+                "message": "Timeout waiting for execution parameters"
+            })
+            return
+        except Exception as e:
+            logger.error(f"Error receiving parameters: {e}")
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Error receiving parameters: {str(e)}"
+            })
+            return
         
         # Extract dynamic inventory if provided
         dynamic_inventory = data.get("inventory", None)
@@ -85,28 +106,25 @@ async def stream_playbook_execution(websocket: WebSocket, playbook_name: str):
             os.close(temp_vars_fd)
             raise
         
-        # Create temporary inventory file if dynamic inventory provided
-        temp_inventory_path = None
+        # Update inventory file if dynamic inventory provided
         if dynamic_inventory:
-            temp_inv_fd, temp_inventory_path = tempfile.mkstemp(suffix='.yaml', prefix='ansible-inventory-')
+            # The installer saves to the main inventory.yaml
+            # Just ensure it has proper formatting
             try:
-                with os.fdopen(temp_inv_fd, 'w') as f:
-                    f.write(dynamic_inventory)
-                
-                # Also save the inventory to the main inventory location for manual use
-                try:
-                    with open(inventory_path, 'w') as f:
-                        f.write(dynamic_inventory)
-                    print(f"Saved dynamic inventory to {inventory_path}")
-                except Exception as e:
-                    print(f"Warning: Could not save inventory to {inventory_path}: {e}")
+                # Ensure dynamic inventory ends with newline
+                if not dynamic_inventory.endswith('\n'):
+                    dynamic_inventory += '\n'
                     
-            except:
-                os.close(temp_inv_fd)
+                with open(inventory_path, 'w') as f:
+                    f.write(dynamic_inventory)
+                print(f"Updated inventory at {inventory_path}")
+                    
+            except Exception as e:
+                print(f"Error saving inventory: {e}")
                 raise
         
-        # Use dynamic inventory if provided, otherwise use default
-        inventory_to_use = temp_inventory_path if temp_inventory_path else str(inventory_path)
+        # Always use the main inventory path
+        inventory_to_use = str(inventory_path)
         
         # Find ansible-playbook in user venv or system
         ansible_playbook_path = "ansible-playbook"
@@ -143,11 +161,13 @@ async def stream_playbook_execution(websocket: WebSocket, playbook_name: str):
         env['ANSIBLE_CONFIG'] = str(thinkube_root / "ansible.cfg")
         
         # Send start message
+        logger.info("Sending start message to WebSocket")
         await websocket.send_json({
             "type": "start",
             "message": "Starting playbook execution",
             "playbook": playbook_name
         })
+        logger.info("Start message sent")
         
         # Create subprocess with unbuffered output
         process = await asyncio.create_subprocess_exec(
@@ -174,7 +194,7 @@ async def stream_playbook_execution(websocket: WebSocket, playbook_name: str):
             
             # Debug logging
             if line_text:
-                logger.debug(f"Ansible output: {line_text}")
+                logger.info(f"Ansible output: {line_text}")
             
             # Always send the line to frontend for visibility
             if line_text:  # Skip empty lines
@@ -290,8 +310,5 @@ async def stream_playbook_execution(websocket: WebSocket, playbook_name: str):
                 os.unlink(temp_vars_path)
             except:
                 pass
-        if 'temp_inventory_path' in locals() and temp_inventory_path:
-            try:
-                os.unlink(temp_inventory_path)
-            except:
-                pass
+        # Note: We intentionally keep installer-inventory.yaml for debugging
+        # and to ensure it survives system restarts

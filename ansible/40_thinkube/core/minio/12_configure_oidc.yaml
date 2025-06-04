@@ -42,7 +42,7 @@
     minio_endpoint: "https://{{ minio_api_hostname }}"
     minio_alias: "minio"
     minio_root_user: "{{ admin_username }}"
-    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
 
     ###################################################################
     # Keycloak Client Info
@@ -64,7 +64,7 @@
     ###################################################################
     # Keycloak connection info
     ###################################################################
-    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
 
   tasks:
     ###################################################################

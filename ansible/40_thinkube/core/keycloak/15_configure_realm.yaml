@@ -31,8 +31,8 @@
     ###################################################################
     # Keycloak environment
     ###################################################################
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
-    auth_realm_password: "{{ lookup('env', 'AUTH_REALM_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
+    auth_realm_password: "{{ lookup('env', 'AUTH_REALM_PASSWORD') | default(admin_password, true) }}"
     cluster_admin_group: "cluster-admins"
 
     keycloak_user:

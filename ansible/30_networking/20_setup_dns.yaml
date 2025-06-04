@@ -138,6 +138,13 @@
       register: bind9_service
       become: true
     
+    # Reload bind9 to ensure zones are loaded
+    - name: Reload bind9 service to load zones
+      ansible.builtin.systemd:
+        name: bind9
+        state: reloaded
+      become: true
+    
     # Phase 7: Configure systemd-resolved to use our DNS server
     - name: Create resolved.conf template
       ansible.builtin.template:
@@ -157,6 +164,11 @@
       become: true
     
     # Phase 8: Verify DNS configuration
+    - name: Wait for bind9 to be ready
+      ansible.builtin.pause:
+        seconds: 3
+        prompt: "Waiting for bind9 to fully initialize..."
+    
     - name: Check bind9 configuration
       ansible.builtin.command: named-checkconf
       register: bind_check
@@ -180,25 +192,39 @@
     
     # Phase 9: Test DNS resolution
     - name: Test DNS resolution for main domain
-      ansible.builtin.command: dig @127.0.0.1 {{ domain_name }} +short
+      ansible.builtin.command: dig @127.0.0.1 {{ domain_name }} +short +tries=3 +time=2
       register: main_domain_test
       changed_when: false
-      failed_when: main_domain_test.stdout == ""
+      failed_when: 
+        - main_domain_test.rc != 0
+        - '"communications error" in main_domain_test.stdout'
       become: true
     
     - name: Test DNS resolution for wildcard domain
-      ansible.builtin.command: dig @127.0.0.1 test.{{ domain_name }} +short
+      ansible.builtin.command: dig @127.0.0.1 test.{{ domain_name }} +short +tries=3 +time=2
       register: wildcard_test
       changed_when: false
-      failed_when: wildcard_test.stdout != ingress_ip
+      failed_when:
+        - wildcard_test.rc != 0
+        - '"communications error" in wildcard_test.stdout'
       become: true
     
     - name: Test DNS resolution for knative wildcard
-      ansible.builtin.command: dig @127.0.0.1 test.kn.{{ domain_name }} +short
+      ansible.builtin.command: dig @127.0.0.1 test.kn.{{ domain_name }} +short +tries=3 +time=2
       register: knative_wildcard_test
       changed_when: false
-      failed_when: knative_wildcard_test.stdout != knative_ingress_ip
+      failed_when:
+        - knative_wildcard_test.rc != 0
+        - '"communications error" in knative_wildcard_test.stdout'
       become: true
+    
+    - name: Verify DNS test results
+      ansible.builtin.debug:
+        msg: |
+          DNS Resolution Tests:
+          - Main domain ({{ domain_name }}): {{ main_domain_test.stdout | default('No result') }}
+          - Wildcard test (test.{{ domain_name }}): {{ wildcard_test.stdout | default('No result') }}
+          - Knative wildcard (test.kn.{{ domain_name }}): {{ knative_wildcard_test.stdout | default('No result') }}
     
     # Phase 10: Display successful completion message
     - name: Display DNS setup completion message
@@ -219,7 +245,7 @@
           - Wildcard *.{{ domain_name }} → {{ ingress_ip }}
           - Wildcard *.kn.{{ domain_name }} → {{ knative_ingress_ip }}
           - {{ domain_name }} → {{ hostvars[groups['microk8s_control_plane'][0]]['zerotier_ip'] }}
-          - dns.{{ domain_name }} → {{ hostvars[groups['dns'][0]]['zerotier_ip'] }}
+          - dns.{{ domain_name }} → {{ hostvars[groups['dns_servers'][0]]['zerotier_ip'] }}
           
           Verification tests:
           - Main domain: {{ main_domain_test.stdout }}

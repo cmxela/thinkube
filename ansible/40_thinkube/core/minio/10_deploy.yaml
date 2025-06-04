@@ -47,7 +47,7 @@
     # MinIO credentials
     ###################################################################
     minio_root_user: "{{ admin_username }}"
-    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
 
     ###################################################################
     # TLS / Domain / Ingress

@@ -57,3 +57,27 @@ devpi-deployment/
 
 # Temporary files for review
 thinkube-core-review-temp.md
+
+# Backup directories (use Git branches instead!)
+*_backup/
+*.backup/
+installer_backup/
+installer/electron.backup/
+installer/frontend.backup/
+
+# Python virtual environments (additional patterns)
+venv-*/
+*-venv/
+.venv*/
+
+# Build outputs
+out/
+dist/
+build/
+
+# Tauri
+installer/frontend/src-tauri/target/
+
+# Sensitive inventory files
+inventory/production.yaml
+inventory/secrets.yaml

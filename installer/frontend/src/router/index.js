@@ -99,28 +99,56 @@ const router = createRouter({
 })
 
 // Check for ongoing deployment on every navigation
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   console.log('Router guard checking navigation to:', to.name)
   
-  // Check if there's a saved deployment state
-  const deploymentState = localStorage.getItem('thinkube-deployment-state')
+  // Check for both old and new deployment state formats
+  const newStateKey = 'thinkube-deployment-state-v2'
+  const oldStateKey = 'thinkube-deployment-state'
+  
+  let deploymentState = localStorage.getItem(newStateKey)
+  let isNewFormat = true
+  
+  if (!deploymentState) {
+    deploymentState = localStorage.getItem(oldStateKey)
+    isNewFormat = false
+  }
   
   if (deploymentState) {
     const state = JSON.parse(deploymentState)
-    console.log('Found deployment state:', {
-      awaitingRestart: state.awaitingRestart,
-      currentPhase: state.currentPhase,
-      queueLength: state.queue?.length
-    })
     
-    // If we're in the middle of a deployment and not already going to deploy page
-    if (state.awaitingRestart && to.name !== 'deploy') {
-      console.log('Redirecting to deployment page due to awaitingRestart flag')
-      next({ name: 'deploy' })
-      return
+    if (isNewFormat) {
+      console.log('Found deployment state (v2):', {
+        hasProgress: state.completedIds?.length > 0,
+        totalPlaybooks: state.allPlaybooks?.length,
+        completed: state.completedIds?.length
+      })
+      
+      // If we have a session backup, we're in restart recovery mode
+      const hasBackup = localStorage.getItem('thinkube-session-backup') !== null
+      
+      // If deployment is in progress and we're not already going to deploy
+      if ((state.completedIds?.length > 0 || hasBackup) && to.name !== 'deploy' && to.name !== 'welcome') {
+        console.log('Redirecting to deployment page - deployment in progress')
+        next({ name: 'deploy' })
+        return
+      }
+    } else {
+      // Old format
+      console.log('Found deployment state (old format):', {
+        awaitingRestart: state.awaitingRestart,
+        currentPhase: state.currentPhase,
+        queueLength: state.queue?.length
+      })
+      
+      if (state.awaitingRestart && to.name !== 'deploy') {
+        console.log('Redirecting to deployment page due to awaitingRestart flag')
+        next({ name: 'deploy' })
+        return
+      }
     }
   } else {
-    console.log('No deployment state found in localStorage')
+    console.log('No deployment state found')
   }
   
   // Otherwise, proceed normally

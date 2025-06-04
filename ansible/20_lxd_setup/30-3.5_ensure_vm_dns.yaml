@@ -1,0 +1,218 @@
+---
+# ansible/20_lxd_setup/30-3.5_ensure_vm_dns.yaml
+# Description:
+#   Ensures DNS is properly configured and working in VMs before package installation.
+#   This playbook addresses intermittent DNS failures that can occur after VM creation.
+#
+# Requirements:
+#   - VMs must be created by 30-1_create_base_vms.yaml
+#   - Networking must be configured by 30-2_configure_vm_networking.yaml
+#   - DNS servers must be defined in inventory
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/20_lxd_setup/30-3.5_ensure_vm_dns.yaml
+#
+# Variables from inventory:
+#   - dns_servers: List of DNS servers to configure
+#   - domain_name: Base domain for the cluster
+#
+# Dependencies:
+#   - 30-2_configure_vm_networking.yaml must be complete
+#
+# 🤖 [AI-assisted]
+
+- name: Ensure VM DNS Configuration
+  hosts: management
+  gather_facts: true
+  become: false
+  
+  tasks:
+    - name: Display configuration intro message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ═════════════════════════════════════════════════════════
+          🌐 Ensuring VM DNS Configuration ({{ inventory_hostname }})
+          ═════════════════════════════════════════════════════════
+          
+          This playbook ensures DNS is properly working in all VMs
+          to prevent intermittent resolution failures during package
+          installation.
+          
+          Actions:
+          - Wait for VMs to be fully ready
+          - Verify systemd-resolved is running
+          - Apply netplan configuration
+          - Test DNS resolution with retries
+          
+          ═════════════════════════════════════════════════════════
+    
+    # Verify required variables
+    - name: Verify required variables exist
+      ansible.builtin.assert:
+        that:
+          - dns_servers is defined
+          - domain_name is defined
+        fail_msg: |
+          Required variables not found in inventory.
+          Please ensure the following variables are defined:
+          - dns_servers: List of DNS servers
+          - domain_name: Base domain name
+        success_msg: "✓ All required variables found in inventory"
+    
+    # Process each VM
+    - name: Ensure DNS configuration for each VM
+      block:
+        - name: Wait for VM to be fully ready ({{ vm_name }})
+          ansible.builtin.shell: |
+            # Wait for systemd to be fully running
+            for i in {1..30}; do
+              if lxc exec {{ vm_name }} -- systemctl is-system-running 2>/dev/null | grep -qE '^(running|degraded)$'; then
+                echo "✓ System is ready"
+                break
+              fi
+              echo "Waiting for system to be ready... (attempt $i/30)"
+              sleep 2
+            done
+          register: vm_ready
+          changed_when: false
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+        
+        - name: Ensure systemd-resolved is running ({{ vm_name }})
+          ansible.builtin.shell: |
+            # Enable and start systemd-resolved
+            lxc exec {{ vm_name }} -- systemctl enable systemd-resolved
+            lxc exec {{ vm_name }} -- systemctl restart systemd-resolved
+            
+            # Wait for it to be active
+            for i in {1..10}; do
+              if lxc exec {{ vm_name }} -- systemctl is-active systemd-resolved | grep -q '^active$'; then
+                echo "✓ systemd-resolved is active"
+                break
+              fi
+              echo "Waiting for systemd-resolved... (attempt $i/10)"
+              sleep 1
+            done
+          register: resolved_status
+          changed_when: true
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+        
+        - name: Apply netplan configuration ({{ vm_name }})
+          ansible.builtin.command: lxc exec {{ vm_name }} -- netplan apply
+          register: netplan_apply
+          changed_when: true
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+          # Add delay to allow network changes to settle
+          async: 60
+          poll: 5
+        
+        - name: Wait for network to stabilize
+          ansible.builtin.pause:
+            seconds: 5
+            prompt: "Waiting for network configuration to stabilize..."
+        
+        - name: Verify DNS resolution ({{ vm_name }})
+          ansible.builtin.shell: |
+            echo "=== Testing DNS resolution for {{ vm_name }} ==="
+            
+            # Test multiple domains with retries
+            failed=0
+            for domain in google.com archive.ubuntu.com security.ubuntu.com; do
+              echo "Testing resolution of $domain..."
+              success=0
+              for i in {1..5}; do
+                if lxc exec {{ vm_name }} -- nslookup $domain 2>&1 | grep -q "Address:"; then
+                  echo "✓ Successfully resolved $domain"
+                  success=1
+                  break
+                else
+                  echo "✗ Failed to resolve $domain (attempt $i/5)"
+                  if [ $i -lt 5 ]; then
+                    # Try to fix DNS if resolution fails
+                    lxc exec {{ vm_name }} -- systemctl restart systemd-resolved
+                    sleep 2
+                  fi
+                fi
+              done
+              if [ $success -eq 0 ]; then
+                failed=1
+                echo "ERROR: Could not resolve $domain after 5 attempts"
+              fi
+            done
+            
+            if [ $failed -eq 1 ]; then
+              echo "ERROR: DNS resolution failures detected"
+              exit 1
+            else
+              echo "✓ All DNS tests passed"
+            fi
+          register: dns_test
+          changed_when: false
+          failed_when: "'ERROR:' in dns_test.stdout"
+          loop: "{{ groups['lxd_containers'] | default([]) }}"
+          loop_control:
+            loop_var: vm_name
+        
+        - name: Display DNS test results ({{ vm_name }})
+          ansible.builtin.debug:
+            msg: "{{ dns_test.results[item].stdout_lines | select('match', '^✓') | list }}"
+          loop: "{{ range(groups['lxd_containers'] | length) | list }}"
+          when: dns_test.results[item].stdout_lines is defined
+          loop_control:
+            index_var: item
+    
+    # Final verification
+    - name: Final DNS verification for all VMs
+      ansible.builtin.shell: |
+        echo "=== Final DNS Verification ==="
+        failed_vms=""
+        for vm in {{ groups['lxd_containers'] | join(' ') }}; do
+          echo "Checking $vm..."
+          if lxc exec $vm -- nslookup archive.ubuntu.com 2>&1 | grep -q "Address:"; then
+            echo "✓ $vm: DNS working"
+          else
+            echo "✗ $vm: DNS FAILED"
+            failed_vms="$failed_vms $vm"
+          fi
+        done
+        
+        if [ -n "$failed_vms" ]; then
+          echo "ERROR: DNS failed on VMs:$failed_vms"
+          exit 1
+        else
+          echo "✓ All VMs have working DNS"
+        fi
+      register: final_check
+      changed_when: false
+      failed_when: "'ERROR:' in final_check.stdout"
+    
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: >-
+          
+          ════════════════════════════════════════════════════════════════════════
+          ✅ VM DNS Configuration Verified ({{ inventory_hostname }})
+          ════════════════════════════════════════════════════════════════════════
+          
+          RESULTS:
+            ✓ All VMs have systemd-resolved running
+            ✓ Netplan configuration applied successfully
+            ✓ DNS resolution verified for all VMs
+          
+          VMs verified:
+          {% for vm in groups['lxd_containers'] %}
+          - {{ vm }}: DNS working correctly
+          {% endfor %}
+          
+          NEXT STEPS:
+            You can now proceed with package installation:
+            $ ./scripts/run_ansible.sh ansible/20_lxd_setup/30-4_install_vm_packages.yaml
+          
+          ════════════════════════════════════════════════════════════════════════

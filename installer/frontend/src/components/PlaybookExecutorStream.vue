@@ -9,7 +9,7 @@
         <div v-if="currentTask" class="mb-4">
           <div class="flex justify-between text-sm mb-1">
             <span class="font-semibold">{{ currentTask }}</span>
-            <span v-if="taskCount > 0" class="text-sm text-base-content/70">
+            <span v-if="taskCount > 0" class="text-sm text-base-content text-opacity-70">
               Task {{ taskCount }}
             </span>
           </div>
@@ -43,7 +43,7 @@
             class="mockup-code h-96 overflow-y-auto text-xs"
             ref="logContainer"
           >
-            <div v-if="logOutput.length === 0" class="text-base-content/50">
+            <div v-if="logOutput.length === 0" class="text-base-content text-opacity-50">
               <pre data-prefix="$"><code>Waiting for output...</code></pre>
             </div>
             <pre 
@@ -228,11 +228,25 @@ const startExecution = (params: any = {}) => {
 
 const connectWebSocket = (params: any) => {
   const encodedPlaybookName = encodeURIComponent(props.playbookName)
-  const wsUrl = `ws://localhost:8000/ws/playbook/${encodedPlaybookName}`
-  websocket.value = new WebSocket(wsUrl)
   
-  websocket.value.onopen = async () => {
-    console.log('WebSocket connected')
+  // In Tauri, we need to connect directly to localhost:8000
+  const isTauri = window.__TAURI__ !== undefined
+  const wsBase = isTauri || (window.location.protocol === 'http:' && window.location.hostname === 'localhost')
+    ? 'ws://localhost:8000'
+    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+  
+  const wsUrl = `${wsBase}/ws/playbook/${encodedPlaybookName}`
+  console.log('Connecting to WebSocket URL:', wsUrl)
+  
+  try {
+    websocket.value = new WebSocket(wsUrl)
+    console.log('WebSocket created, setting up handlers...')
+    
+    // Store params in closure to ensure they're available in onopen
+    const paramsToSend = params
+    
+    websocket.value.onopen = async () => {
+      console.log('WebSocket onopen triggered, readyState:', websocket.value?.readyState)
     
     let inventoryYAML = ''
     
@@ -250,7 +264,7 @@ const connectWebSocket = (params: any) => {
     
     // Add inventory to parameters
     const paramsWithInventory = {
-      ...params,
+      ...paramsToSend,
       inventory: inventoryYAML
     }
     
@@ -296,10 +310,34 @@ const connectWebSocket = (params: any) => {
     }
     
     // Send execution parameters with dynamic inventory
-    websocket.value?.send(JSON.stringify(paramsWithInventory))
+    console.log('Preparing to send parameters...')
+    console.log('WebSocket state:', websocket.value?.readyState, 'OPEN=', WebSocket.OPEN)
+    console.log('Parameters to send:', paramsWithInventory)
+    
+    try {
+      if (websocket.value && websocket.value.readyState === WebSocket.OPEN) {
+        const jsonData = JSON.stringify(paramsWithInventory)
+        console.log('Sending JSON data, length:', jsonData.length)
+        websocket.value.send(jsonData)
+        console.log('Parameters sent successfully')
+      } else {
+        console.error('WebSocket not ready to send. State:', websocket.value?.readyState, 'Expected:', WebSocket.OPEN)
+        logOutput.value.push({
+          type: 'error',
+          message: 'WebSocket not ready - connection may have failed'
+        })
+      }
+    } catch (error) {
+      console.error('Error sending parameters:', error)
+      logOutput.value.push({
+        type: 'error',
+        message: `Failed to send parameters: ${error}`
+      })
+    }
   }
   
   websocket.value.onmessage = (event) => {
+    console.log('WebSocket message received:', event.data)
     const data = JSON.parse(event.data)
     handleWebSocketMessage(data)
   }
@@ -322,6 +360,17 @@ const connectWebSocket = (params: any) => {
         message: 'Connection to server lost'
       })
     }
+  }
+  } catch (error) {
+    console.error('Error creating WebSocket:', error)
+    logOutput.value.push({
+      type: 'error',
+      message: `Failed to connect: ${error}`
+    })
+    completeExecution({
+      status: 'error',
+      message: 'Failed to establish connection'
+    })
   }
 }
 

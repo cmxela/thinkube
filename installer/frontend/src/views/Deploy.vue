@@ -55,7 +55,7 @@
     </div>
     
     <!-- Machine Restart Notice -->
-    <div v-if="showRestartNotice" class="card bg-warning/10 border-warning mb-6">
+    <div v-if="showRestartNotice" class="card bg-warning bg-opacity-10 border-warning mb-6">
       <div class="card-body">
         <h2 class="card-title text-warning mb-4">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -67,7 +67,7 @@
         <div class="space-y-4">
           <div>
             <p class="font-semibold mb-2">The network bridge configuration requires all baremetal servers to be restarted.</p>
-            <p class="text-sm text-base-content/70">Click the button below to begin the automated restart process.</p>
+            <p class="text-sm text-base-content text-opacity-70">Click the button below to begin the automated restart process.</p>
           </div>
           
           <div class="text-center">
@@ -77,7 +77,7 @@
               </svg>
               Restart All Servers
             </button>
-            <p class="text-sm text-base-content/70 mt-3">
+            <p class="text-sm text-base-content text-opacity-70 mt-3">
               Remote servers will restart first, followed by this server.<br/>
               The installer will automatically continue after all servers are back online.
             </p>
@@ -122,45 +122,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import PlaybookExecutorStream from '@/components/PlaybookExecutorStream.vue'
 import axios from '@/utils/axios'
+import { deploymentState } from '@/utils/deploymentState'
 
 const router = useRouter()
-
-// Load saved deployment state
-const loadDeploymentState = () => {
-  const saved = localStorage.getItem('thinkube-deployment-state')
-  if (saved) {
-    return JSON.parse(saved)
-  }
-  return null
-}
-
-// Save deployment state
-const saveDeploymentState = (forceAwaitingRestart = false) => {
-  const state = {
-    phases: deploymentPhases.value,
-    queue: playbookQueue.value,
-    currentPhase: currentPhase.value,
-    awaitingRestart: forceAwaitingRestart || showRestartNotice.value,
-    timestamp: new Date().toISOString()
-  }
-  console.log('Saving deployment state:', {
-    currentPhase: state.currentPhase,
-    queueLength: state.queue.length,
-    awaitingRestart: state.awaitingRestart,
-    forceAwaitingRestart,
-    showRestartNotice: showRestartNotice.value
-  })
-  localStorage.setItem('thinkube-deployment-state', JSON.stringify(state))
-}
-
-// Clear deployment state
-const clearDeploymentState = () => {
-  localStorage.removeItem('thinkube-deployment-state')
-}
 
 // Deployment phases
 const deploymentPhases = ref([
@@ -171,20 +139,70 @@ const deploymentPhases = ref([
   { id: 'kubernetes', name: 'Kubernetes', status: 'pending' }
 ])
 
-// Playbook queue
-const playbookQueue = ref([])
+// State variables
 const currentPlaybook = ref(null)
 const currentPhase = ref(null)
 const showRestartNotice = ref(false)
 const deploymentComplete = ref(false)
 const deploymentError = ref('')
 
-// Progress calculation
-const overallProgress = computed(() => {
-  const completed = deploymentPhases.value.filter(p => p.status === 'completed').length
-  const total = deploymentPhases.value.length
-  return Math.round((completed / total) * 100)
-})
+// Component refs
+const currentPlaybookExecutor = ref(null)
+
+// Progress tracking
+const overallProgress = ref(0)
+
+// Update progress and phase statuses
+const updateProgress = async () => {
+  try {
+    const progress = await deploymentState.getProgress()
+    overallProgress.value = progress.percentage
+    
+    // Also update phase statuses
+    await updatePhaseStatuses()
+  } catch (e) {
+    console.error('Error updating progress:', e)
+    overallProgress.value = 0
+  }
+}
+
+// Update phase statuses based on deployment progress
+const updatePhaseStatuses = async () => {
+  try {
+    const state = await deploymentState.loadState()
+    if (!state || !state.allPlaybooks) return
+    
+    // Reset all phases
+    deploymentPhases.value.forEach(phase => {
+      phase.status = 'pending'
+    })
+    
+    // Mark completed phases
+    state.allPlaybooks.forEach(playbook => {
+      if (state.completedIds.includes(playbook.id)) {
+        const phase = deploymentPhases.value.find(p => p.id === playbook.phase)
+        if (phase && phase.status === 'pending') {
+          // Check if all playbooks in this phase are complete
+          const phasePlaybooks = state.allPlaybooks.filter(p => p.phase === playbook.phase)
+          const phaseComplete = phasePlaybooks.every(p => state.completedIds.includes(p.id))
+          if (phaseComplete) {
+            phase.status = 'completed'
+          }
+        }
+      }
+    })
+    
+    // Mark current phase as active
+    if (currentPhase.value) {
+      const phase = deploymentPhases.value.find(p => p.id === currentPhase.value)
+      if (phase && phase.status === 'pending') {
+        phase.status = 'active'
+      }
+    }
+  } catch (e) {
+    console.error('Error updating phase statuses:', e)
+  }
+}
 
 // Get phase class for styling
 const getPhaseClass = (phase) => {
@@ -296,6 +314,12 @@ const buildPlaybookQueue = () => {
       name: 'ansible/20_lxd_setup/30-3_configure_vm_users.yaml'
     })
     queue.push({
+      id: 'vm-dns-ensure',
+      phase: 'lxd',
+      title: 'Ensuring VM DNS Configuration',
+      name: 'ansible/20_lxd_setup/30-3.5_ensure_vm_dns.yaml'
+    })
+    queue.push({
       id: 'vm-packages',
       phase: 'lxd',
       title: 'Installing VM Packages',
@@ -352,6 +376,14 @@ const buildPlaybookQueue = () => {
   }
   
   // Phase 6: Kubernetes Infrastructure (40_thinkube/core/infrastructure)
+  // CRITICAL: Setup Python K8s libraries FIRST
+  queue.push({
+    id: 'setup-python-k8s',
+    phase: 'kubernetes',
+    title: 'Setting up Python Kubernetes Libraries',
+    name: 'ansible/40_thinkube/core/infrastructure/00_setup_python_k8s.yaml'
+  })
+  
   queue.push({
     id: 'microk8s',
     phase: 'kubernetes',
@@ -389,6 +421,13 @@ const buildPlaybookQueue = () => {
     phase: 'kubernetes',
     title: 'Deploying CoreDNS',
     name: 'ansible/40_thinkube/core/infrastructure/coredns/10_deploy.yaml'
+  })
+  
+  queue.push({
+    id: 'coredns-configure-nodes',
+    phase: 'kubernetes',
+    title: 'Configuring Node DNS',
+    name: 'ansible/40_thinkube/core/infrastructure/coredns/15_configure_node_dns.yaml'
   })
   
   // Fix cluster DNS if needed
@@ -448,6 +487,13 @@ const buildPlaybookQueue = () => {
   })
   
   queue.push({
+    id: 'install-podman',
+    phase: 'kubernetes',
+    title: 'Installing Podman',
+    name: 'ansible/40_thinkube/core/harbor/11_install_podman.yaml'
+  })
+  
+  queue.push({
     id: 'harbor-configure',
     phase: 'kubernetes',
     title: 'Configuring Harbor',
@@ -461,7 +507,6 @@ const buildPlaybookQueue = () => {
     name: 'ansible/40_thinkube/core/harbor/16_configure_default_registry.yaml'
   })
   
-  // Mirror public images to Harbor
   queue.push({
     id: 'mirror-images',
     phase: 'kubernetes',
@@ -475,20 +520,6 @@ const buildPlaybookQueue = () => {
     phase: 'kubernetes',
     title: 'Deploying SeaweedFS',
     name: 'ansible/40_thinkube/core/seaweedfs/10_deploy.yaml'
-  })
-  
-  queue.push({
-    id: 'seaweedfs-keycloak',
-    phase: 'kubernetes',
-    title: 'Configuring SeaweedFS Keycloak Integration',
-    name: 'ansible/40_thinkube/core/seaweedfs/11_configure_keycloak.yaml'
-  })
-  
-  queue.push({
-    id: 'seaweedfs-oidc',
-    phase: 'kubernetes',
-    title: 'Configuring SeaweedFS OIDC',
-    name: 'ansible/40_thinkube/core/seaweedfs/12_configure_oidc.yaml'
   })
   
   // Argo Workflows
@@ -506,6 +537,28 @@ const buildPlaybookQueue = () => {
     name: 'ansible/40_thinkube/core/argo-workflows/11_deploy.yaml'
   })
   
+  queue.push({
+    id: 'argo-workflows-token',
+    phase: 'kubernetes',
+    title: 'Setting up Argo Workflows Token',
+    name: 'ansible/40_thinkube/core/argo-workflows/12_setup_token.yaml'
+  })
+  
+  queue.push({
+    id: 'argo-workflows-artifacts',
+    phase: 'kubernetes',
+    title: 'Configuring Argo Workflows Artifacts',
+    name: 'ansible/40_thinkube/core/argo-workflows/13_setup_artifacts.yaml'
+  })
+  
+  // Configure SeaweedFS after Argo is deployed (creates resources in Argo namespace)
+  queue.push({
+    id: 'seaweedfs-configure',
+    phase: 'kubernetes',
+    title: 'Configuring SeaweedFS',
+    name: 'ansible/40_thinkube/core/seaweedfs/15_configure.yaml'
+  })
+  
   // ArgoCD
   queue.push({
     id: 'argocd-keycloak',
@@ -519,6 +572,20 @@ const buildPlaybookQueue = () => {
     phase: 'kubernetes',
     title: 'Deploying ArgoCD',
     name: 'ansible/40_thinkube/core/argocd/11_deploy.yaml'
+  })
+  
+  queue.push({
+    id: 'argocd-credentials',
+    phase: 'kubernetes',
+    title: 'Getting ArgoCD Credentials',
+    name: 'ansible/40_thinkube/core/argocd/12_get_credentials.yaml'
+  })
+  
+  queue.push({
+    id: 'argocd-serviceaccount',
+    phase: 'kubernetes',
+    title: 'Setting up ArgoCD Service Account',
+    name: 'ansible/40_thinkube/core/argocd/13_setup_serviceaccount.yaml'
   })
   
   // DevPi (Python package index)
@@ -536,48 +603,40 @@ const buildPlaybookQueue = () => {
     name: 'ansible/40_thinkube/core/devpi/15_configure_cli.yaml'
   })
   
-  playbookQueue.value = queue
   console.log('Final playbook queue:', queue.map(p => `${p.id}: ${p.title}`))
   console.log('Total playbooks in queue:', queue.length)
+  
+  return queue
 }
 
-// Reference to current playbook executor
-const currentPlaybookExecutor = ref(null)
+// Reference to current playbook executor is already declared above
 
 // Execute next playbook in queue
 const executeNextPlaybook = async () => {
-  console.log('executeNextPlaybook called, queue length:', playbookQueue.value.length)
-  console.log('Current queue:', playbookQueue.value.map(p => p.title))
+  console.log('executeNextPlaybook called')
   
-  if (playbookQueue.value.length === 0) {
-    console.log('Queue empty, deployment complete')
-    // Mark final phase as completed
-    if (currentPhase.value) {
-      const phase = deploymentPhases.value.find(p => p.id === currentPhase.value)
-      if (phase) phase.status = 'completed'
-    }
+  // Get next playbook from state manager
+  const next = await deploymentState.getNextPlaybook()
+  
+  if (!next) {
+    console.log('No more playbooks to execute, deployment complete')
     deploymentComplete.value = true
-    clearDeploymentState()
+    // Update final phase status
+    await updateProgress()
     return
   }
   
-  const playbook = playbookQueue.value.shift()
+  const { playbook, index } = next
   console.log('Next playbook to execute:', playbook.id, '-', playbook.title, '-', playbook.name)
   currentPlaybook.value = playbook
   
-  // Update phase status
+  // Update current phase
   if (currentPhase.value !== playbook.phase) {
-    if (currentPhase.value) {
-      const prevPhase = deploymentPhases.value.find(p => p.id === currentPhase.value)
-      if (prevPhase) prevPhase.status = 'completed'
-    }
     currentPhase.value = playbook.phase
-    const phase = deploymentPhases.value.find(p => p.id === playbook.phase)
-    if (phase) phase.status = 'active'
   }
   
-  // Save state after each change
-  saveDeploymentState()
+  // Update phase statuses
+  await updateProgress()
   
   // Wait for Vue to update the DOM and component to mount
   await nextTick()
@@ -607,11 +666,24 @@ const handlePlaybookComplete = async (result) => {
   console.log('=== PLAYBOOK COMPLETE ===')
   console.log('Completed playbook:', currentPlaybook.value?.title)
   console.log('Result:', result)
-  console.log('Queue before continuing:', playbookQueue.value.map(p => p.title))
   
   // Check if playbook succeeded (status can be 'success' or 'ok')
   if (result.status === 'error' || result.status === 'failed' || result.status === 'cancelled') {
-    console.log('Playbook failed or cancelled, stopping deployment')
+    console.log('Playbook failed or cancelled')
+    
+    // Mark as failed in state manager
+    if (currentPlaybook.value) {
+      const errorMsg = result.status === 'cancelled' 
+        ? 'Cancelled by user' 
+        : (result.message || 'Check the logs for details')
+      try {
+        await deploymentState.markFailed(currentPlaybook.value.id, errorMsg)
+      } catch (e) {
+        console.error('Failed to save deployment state:', e)
+        // Show critical error to user
+        alert(`CRITICAL: Failed to save deployment state: ${e.message}\n\nYour progress may be lost!`)
+      }
+    }
     
     if (result.status === 'cancelled') {
       deploymentError.value = `Deployment cancelled during: ${currentPlaybook.value.title}`
@@ -619,20 +691,35 @@ const handlePlaybookComplete = async (result) => {
       deploymentError.value = `Playbook ${currentPlaybook.value.title} failed: ${result.message || 'Check the logs for details'}`
     }
     
-    const phase = deploymentPhases.value.find(p => p.id === currentPhase.value)
-    if (phase) phase.status = 'failed'
+    // Update phase statuses
+    await updateProgress()
     
     // Keep the playbook component visible so user can see the error/cancel modal
     // Don't set currentPlaybook to null here
     return
   }
   
-  console.log('Playbook succeeded, checking for restart requirement...')
+  console.log('Playbook succeeded')
+  
+  // Mark as completed in state manager
+  if (currentPlaybook.value) {
+    try {
+      await deploymentState.markCompleted(currentPlaybook.value.id)
+    } catch (e) {
+      console.error('Failed to save deployment state:', e)
+      // Show critical error to user
+      alert(`CRITICAL: Failed to save deployment state: ${e.message}\n\nYour progress may be lost!`)
+      // Still show error in UI
+      deploymentError.value = `Failed to save state: ${e.message}`
+      return
+    }
+  }
+  
   // Check if restart is required
-  if (currentPlaybook.value.requiresRestart) {
+  if (currentPlaybook.value?.requiresRestart) {
     console.log('Restart required, saving state...')
     showRestartNotice.value = true
-    saveDeploymentState(true) // Force awaitingRestart = true
+    // Note: Restart state is handled by the state manager automatically
     return
   }
   
@@ -650,7 +737,7 @@ const handlePlaybookContinue = () => {
     console.log('Playbook requires restart, showing restart notice...')
     currentPlaybook.value = null
     showRestartNotice.value = true
-    saveDeploymentState(true) // Force awaitingRestart = true
+    // Note: Restart state is handled by the state manager automatically
     return
   }
   
@@ -707,8 +794,8 @@ const automatedRestart = async () => {
   // Save all session data before restart
   saveSessionDataForRestart()
   
-  // Save state BEFORE restart with awaitingRestart flag set to true
-  saveDeploymentState(true)  // Force awaitingRestart = true
+  // Note: The deployment state manager automatically handles restart state
+  // by not advancing the currentIndex when a restart is needed
   
   // Now hide the restart notice for UI
   showRestartNotice.value = false
@@ -756,7 +843,7 @@ const checkSystemsAfterRestart = async () => {
     
     if (allOnline) {
       showRestartNotice.value = false
-      saveDeploymentState() // Update state
+      // State is already saved by deployment state manager
       executeNextPlaybook()
     } else {
       alert('Some servers are not yet reachable. Please wait and try again.')
@@ -782,83 +869,127 @@ const retryCurrentPlaybook = () => {
   }
 }
 
-// Retry deployment from beginning
-const retryDeployment = () => {
-  deploymentError.value = ''
-  deploymentComplete.value = false
-  deploymentPhases.value.forEach(p => p.status = 'pending')
-  buildPlaybookQueue()
-  executeNextPlaybook()
-}
 
 // Reset deployment completely and go back to configuration
 const resetDeployment = () => {
-  clearDeploymentState()
+  deploymentState.clearState()
   deploymentError.value = ''
   deploymentComplete.value = false
   currentPlaybook.value = null
-  playbookQueue.value = []
   currentPhase.value = null
   showRestartNotice.value = false
   router.push('/configuration')
 }
 
+// Retry failed playbooks
+const retryDeployment = async () => {
+  deploymentError.value = ''
+  try {
+    await deploymentState.resetFailed()
+  } catch (e) {
+    console.error('Failed to reset failed playbooks:', e)
+    alert(`Failed to reset deployment state: ${e.message}`)
+    return
+  }
+  executeNextPlaybook()
+}
+
 // Start deployment on mount
 onMounted(async () => {
-  // Check if we're resuming from any saved state
-  const savedState = loadDeploymentState()
+  console.log('Deploy component mounted')
+  
+  // First, check if we have a session backup (indicating a restart scenario)
+  const hasBackup = localStorage.getItem('thinkube-session-backup') !== null
+  
+  if (hasBackup) {
+    console.log('Found session backup, attempting restart recovery...')
+    const sessionRestored = restoreSessionDataAfterRestart()
+    if (!sessionRestored) {
+      console.error('Failed to restore session data after restart')
+      alert('Session data could not be restored. Please restart the installation.')
+      router.push('/')
+      return
+    }
+    console.log('Session data restored successfully')
+  }
+  
+  // Check if we're coming from configuration screens (have session data)
+  const cameFromConfig = sessionStorage.getItem('sudoPassword') !== null && 
+                        sessionStorage.getItem('selectedServers') !== null
+  
+  console.log('Session check:', {
+    cameFromConfig,
+    hasBackup,
+    sudoPassword: !!sessionStorage.getItem('sudoPassword'),
+    selectedServers: !!sessionStorage.getItem('selectedServers')
+  })
+  
+  // Load deployment state
+  let savedState = await deploymentState.loadState()
+  
+  if (savedState && cameFromConfig && !hasBackup) {
+    // User just configured everything but there's old state - clear it
+    console.log('User completed configuration. Clearing old deployment state.')
+    await deploymentState.clearState()
+    savedState = null
+  }
   
   if (savedState) {
-    console.log('Found saved deployment state:', savedState)
+    console.log('Resuming deployment from saved state')
     
-    // Check if we need to restore session data (after restart)
-    if (savedState.awaitingRestart) {
-      console.log('Detected restart recovery needed...')
-      // Restore session data from backup
-      const sessionRestored = restoreSessionDataAfterRestart()
-      if (!sessionRestored) {
-        console.error('Failed to restore session data after restart')
-        alert('Session data could not be restored. Please restart the installation.')
-        router.push('/')
-        return
-      }
-      console.log('Session data restored successfully')
-    }
-    
-    // Resume from saved state
-    deploymentPhases.value = savedState.phases
-    playbookQueue.value = savedState.queue
-    currentPhase.value = savedState.currentPhase
-    showRestartNotice.value = false  // Don't show notice again
-    
-    console.log('Resuming deployment from saved state...')
-    // Clear the restart flag if it was set
-    if (savedState.awaitingRestart) {
-      savedState.awaitingRestart = false
-      localStorage.setItem('thinkube-deployment-state', JSON.stringify(savedState))
-    }
-    
-    // If queue is empty, we're done
-    if (playbookQueue.value.length === 0) {
-      console.log('Deployment queue is empty, marking as complete')
+    // Check if deployment is complete
+    if (await deploymentState.isComplete()) {
+      console.log('Deployment is already complete')
       deploymentComplete.value = true
-      clearDeploymentState()
+      await updateProgress()
       return
     }
     
-    // Continue deployment after a delay to ensure all services are ready
+    // Update progress
+    await updateProgress()
+    
+    // Continue deployment after a delay
     setTimeout(() => {
       executeNextPlaybook()
-    }, savedState.awaitingRestart ? 5000 : 500)  // Longer delay after restart
+    }, hasBackup ? 5000 : 500)  // Longer delay after restart
+    
   } else {
     // Fresh start - no saved state
-    console.log('No saved state found, starting fresh deployment')
-    clearDeploymentState()
-    buildPlaybookQueue()
-    // Add small delay to ensure component is ready
-    await new Promise(resolve => setTimeout(resolve, 500))
-    executeNextPlaybook()
+    console.log('Starting fresh deployment')
+    
+    // Build the playbook queue
+    const queue = buildPlaybookQueue()
+    
+    // Initialize deployment state with the full queue
+    try {
+      await deploymentState.initializeDeployment(queue)
+    } catch (e) {
+      console.error('Failed to initialize deployment state:', e)
+      alert(`Failed to initialize deployment: ${e.message}\n\nPlease check your system and try again.`)
+      router.push('/configuration')
+      return
+    }
+    
+    // Update initial progress
+    await updateProgress()
+    
+    // Start deployment
+    setTimeout(() => {
+      executeNextPlaybook()
+    }, 500)
   }
+  
+  // Set up periodic progress updates
+  const progressInterval = setInterval(async () => {
+    if (!deploymentComplete.value && !deploymentError.value) {
+      await updateProgress()
+    }
+  }, 2000)
+  
+  // Clean up interval on unmount
+  onUnmounted(() => {
+    clearInterval(progressInterval)
+  })
 })
 </script>
 

@@ -10,7 +10,7 @@
       <div>
         <h3 class="font-bold text-base-content">Important: Server Restart Required</h3>
         <div class="prose prose-sm max-w-none mt-1">
-          <p class="text-base-content/80">
+          <p class="text-base-content text-opacity-80">
             During deployment, all servers (including this one) will be automatically restarted to apply network configuration.
             Please ensure no critical workloads are running on these servers that cannot be interrupted.
           </p>
@@ -571,6 +571,8 @@ const saveAndContinue = async () => {
   
   // Get the already-verified sudo password from sessionStorage
   const sudoPassword = sessionStorage.getItem('sudoPassword')
+  // Get the system username from sessionStorage
+  const systemUsername = sessionStorage.getItem('systemUsername')
   
   // Save config WITHOUT the sensitive tokens (they're stored securely in ~/.env)
   const configToSave = {
@@ -578,7 +580,8 @@ const saveAndContinue = async () => {
     domainName: config.value.domainName,
     zerotierNetworkId: config.value.zerotierNetworkId,
     zerotierApiToken: config.value.zerotierApiToken,
-    sudoPassword: sudoPassword
+    sudoPassword: sudoPassword,
+    systemUsername: systemUsername
   }
   localStorage.setItem('thinkube-config', JSON.stringify(configToSave))
   

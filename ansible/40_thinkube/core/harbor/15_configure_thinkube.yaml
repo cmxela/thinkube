@@ -32,7 +32,7 @@
     # harbor_robot_name comes from inventory
     robot_duration: 36500  # 100 years (effectively never expires)
     harbor_admin_user: "admin"  # Harbor's built-in admin user
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
 
   tasks:
     - name: Get Harbor admin password

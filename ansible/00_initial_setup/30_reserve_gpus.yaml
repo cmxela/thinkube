@@ -475,6 +475,41 @@
         assigned_pci_slots is defined and
         assigned_pci_slots | length > 0
     
+    # Extract ALL GPU PCI IDs on the system for duplicate detection
+    - name: Extract all GPU PCI IDs for duplicate detection
+      ansible.builtin.set_fact:
+        all_gpu_pci_ids: "{{ all_gpu_pci_ids | default([]) + [detected_id] }}"
+      vars:
+        detected_id: "{{ item | regex_findall('\\[[0-9a-f]{4}:[0-9a-f]{4}\\]') | first | regex_replace('\\[([0-9a-f]{4}:[0-9a-f]{4})\\]', '\\1') }}"
+      loop: "{{ nvidia_gpus + amd_gpus + intel_gpus }}"
+      when: item is regex('\\[[0-9a-f]{4}:[0-9a-f]{4}\\]')
+
+    # Check if any assigned GPU has a PCI ID that appears multiple times in the system
+    - name: Check for duplicate PCI IDs between assigned and all GPUs
+      ansible.builtin.set_fact:
+        has_duplicate_pci_ids: false
+      
+    - name: Check each assigned GPU PCI ID against all system GPUs
+      ansible.builtin.set_fact:
+        has_duplicate_pci_ids: true
+      when: >
+        gpu_pci_ids is defined and
+        all_gpu_pci_ids is defined and
+        item in gpu_pci_ids and
+        all_gpu_pci_ids | select('equalto', item) | list | length > 1
+      loop: "{{ all_gpu_pci_ids | default([]) | unique }}"
+
+    - name: Display warning if duplicate PCI IDs detected
+      ansible.builtin.debug:
+        msg: |
+          WARNING: Identical GPUs detected (duplicate PCI IDs)
+          PCI IDs: {{ gpu_pci_ids | join(', ') }}
+          The modprobe configuration will NOT use PCI IDs to avoid binding all identical GPUs.
+          Only the systemd services will bind the specific PCI slots: {{ assigned_pci_slots | join(', ') }}
+      when: 
+        - has_duplicate_pci_ids | default(false)
+        - gpu_pci_ids is defined
+
     # Create VFIO configuration with specific PCI IDs only for assigned slots
     - name: Create VFIO configuration - specific slots only
       ansible.builtin.copy:
@@ -483,9 +518,15 @@
           # VFIO configuration for specific GPU passthrough
           # Only bind GPUs that are explicitly assigned for passthrough
           {% if assigned_pci_slots is defined and assigned_pci_slots | length > 0 and gpu_pci_ids is defined and gpu_pci_ids | length > 0 %}
+          {% if has_duplicate_pci_ids | default(false) %}
+          # WARNING: Duplicate PCI IDs detected (identical GPUs)
+          # Using driver override method instead of PCI IDs to avoid binding all identical GPUs
+          # GPU passthrough is handled by per-device systemd services
+          {% else %}
           # Using PCI IDs from assigned slots only
           # PCI IDs: {{ gpu_pci_ids | join(', ') }}
           options vfio-pci ids={{ gpu_pci_ids | select('match', '^[0-9a-f]{4}:[0-9a-f]{4}$') | list | join(',') }}
+          {% endif %}
           {% else %}
           # No specific slots assigned - VFIO will not auto-bind any devices
           # Devices must be manually bound if needed

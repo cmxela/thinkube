@@ -721,27 +721,27 @@ async def check_thinkube_installation():
 
 async def run_setup_script(sudo_password: str):
     """Background task to run the setup script"""
-    # Import main module to access installation_status and broadcast_status
-    import main
+    # Import shared state
+    from app.shared import app_state, broadcast_status
     
     try:
         logger.info("Starting thinkube setup script in background")
         
         # Reset installation status
-        main.installation_status["phase"] = "starting"
-        main.installation_status["progress"] = 0
-        main.installation_status["current_task"] = "Initializing installation..."
-        main.installation_status["logs"] = []
-        main.installation_status["errors"] = []
-        await main.broadcast_status(main.installation_status)
+        app_state.installation_status["phase"] = "starting"
+        app_state.installation_status["progress"] = 0
+        app_state.installation_status["current_task"] = "Initializing installation..."
+        app_state.installation_status["logs"] = []
+        app_state.installation_status["errors"] = []
+        await broadcast_status(app_state.installation_status)
         
         # Find the setup script - use 10_install-tools.sh directly
         script_path = Path.home() / "thinkube" / "scripts" / "10_install-tools.sh"
         if not script_path.exists():
             logger.error(f"Setup script not found at {script_path}")
-            main.installation_status["phase"] = "failed"
-            main.installation_status["errors"].append(f"Setup script not found at {script_path}")
-            await main.broadcast_status(main.installation_status)
+            app_state.installation_status["phase"] = "failed"
+            app_state.installation_status["errors"].append(f"Setup script not found at {script_path}")
+            await broadcast_status(app_state.installation_status)
             return
         
         # Set up environment
@@ -760,9 +760,9 @@ async def run_setup_script(sudo_password: str):
                 raise
         
         # Update status to running
-        main.installation_status["phase"] = "running"
-        main.installation_status["logs"].append("Starting installation script...")
-        await main.broadcast_status(main.installation_status)
+        app_state.installation_status["phase"] = "running"
+        app_state.installation_status["logs"].append("Starting installation script...")
+        await broadcast_status(app_state.installation_status)
         
         # Run the setup script with real-time output
         process = await asyncio.create_subprocess_exec(
@@ -784,7 +784,7 @@ async def run_setup_script(sudo_password: str):
             
             # Log the line
             logger.info(f"Setup output: {line_text}")
-            main.installation_status["logs"].append(line_text)
+            app_state.installation_status["logs"].append(line_text)
             
             # Parse [INSTALLER_STATUS] messages
             if "[INSTALLER_STATUS]" in line_text:
@@ -793,24 +793,24 @@ async def run_setup_script(sudo_password: str):
                 if status_part.startswith("PROGRESS:"):
                     try:
                         progress = int(status_part.split(":", 1)[1])
-                        main.installation_status["progress"] = progress
+                        app_state.installation_status["progress"] = progress
                     except:
                         pass
                 
                 elif status_part.startswith("COMPLETED:"):
                     status = status_part.split(":", 1)[1]
                     if status == "FAILED":
-                        main.installation_status["phase"] = "failed"
+                        app_state.installation_status["phase"] = "failed"
                     elif status == "SUCCESS":
-                        main.installation_status["phase"] = "completed"
-                        main.installation_status["progress"] = 100
+                        app_state.installation_status["phase"] = "completed"
+                        app_state.installation_status["progress"] = 100
                 
                 else:
                     # It's a status message
-                    main.installation_status["current_task"] = status_part
+                    app_state.installation_status["current_task"] = status_part
             
             # Broadcast the update
-            await main.broadcast_status(main.installation_status)
+            await broadcast_status(app_state.installation_status)
         
         # Wait for process to complete
         return_code = await process.wait()
@@ -824,23 +824,23 @@ async def run_setup_script(sudo_password: str):
         
         # Update final status
         if return_code == 0:
-            if main.installation_status["phase"] != "completed":
-                main.installation_status["phase"] = "completed"
-                main.installation_status["progress"] = 100
-                main.installation_status["current_task"] = "Installation completed successfully"
+            if app_state.installation_status["phase"] != "completed":
+                app_state.installation_status["phase"] = "completed"
+                app_state.installation_status["progress"] = 100
+                app_state.installation_status["current_task"] = "Installation completed successfully"
             logger.info("Setup script completed successfully")
         else:
-            main.installation_status["phase"] = "failed"
-            main.installation_status["errors"].append(f"Setup script failed with return code {return_code}")
+            app_state.installation_status["phase"] = "failed"
+            app_state.installation_status["errors"].append(f"Setup script failed with return code {return_code}")
             logger.error(f"Setup script failed with return code {return_code}")
         
-        await main.broadcast_status(main.installation_status)
+        await broadcast_status(app_state.installation_status)
         
     except Exception as e:
         logger.error(f"Error running setup script: {e}")
-        main.installation_status["phase"] = "failed"
-        main.installation_status["errors"].append(f"Error: {str(e)}")
-        await main.broadcast_status(main.installation_status)
+        app_state.installation_status["phase"] = "failed"
+        app_state.installation_status["errors"].append(f"Error: {str(e)}")
+        await broadcast_status(app_state.installation_status)
 
 
 @router.post("/verify-zerotier")
@@ -885,3 +885,102 @@ async def verify_zerotier(request: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Failed to verify ZeroTier credentials: {e}")
         return {"valid": False, "message": f"Verification error: {str(e)}"}
+
+
+@router.get("/system/check-inventory")
+async def check_inventory():
+    """Check if inventory.yaml exists and return its content"""
+    inventory_path = Path.home() / "thinkube" / "inventory" / "inventory.yaml"
+    
+    try:
+        if inventory_path.exists():
+            with open(inventory_path, 'r') as f:
+                content = f.read()
+            return {
+                "exists": True,
+                "path": str(inventory_path),
+                "content": content
+            }
+        else:
+            return {
+                "exists": False,
+                "path": str(inventory_path),
+                "content": None
+            }
+    except Exception as e:
+        logger.error(f"Error checking inventory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/system/deployment-state")
+async def get_deployment_state():
+    """Get the deployment state from persistent storage"""
+    state_dir = Path.home() / ".thinkube-installer"
+    state_file = state_dir / "deployment-state.json"
+    
+    try:
+        if state_file.exists():
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+            return {
+                "exists": True,
+                "state": state
+            }
+        else:
+            return {
+                "exists": False,
+                "state": None
+            }
+    except Exception as e:
+        logger.error(f"Error loading deployment state: {e}")
+        return {
+            "exists": False,
+            "state": None,
+            "error": str(e)
+        }
+
+
+@router.post("/system/deployment-state")
+async def save_deployment_state(request: Dict[str, Any]):
+    """Save the deployment state to persistent storage"""
+    state_dir = Path.home() / ".thinkube-installer"
+    state_file = state_dir / "deployment-state.json"
+    
+    try:
+        # Create directory if it doesn't exist
+        state_dir.mkdir(exist_ok=True)
+        
+        # Save the state
+        with open(state_file, 'w') as f:
+            json.dump(request.get("state", {}), f, indent=2)
+        
+        return {
+            "success": True,
+            "path": str(state_file)
+        }
+    except Exception as e:
+        logger.error(f"Error saving deployment state: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/system/deployment-state")
+async def clear_deployment_state():
+    """Clear the deployment state file"""
+    state_dir = Path.home() / ".thinkube-installer"
+    state_file = state_dir / "deployment-state.json"
+    
+    try:
+        if state_file.exists():
+            state_file.unlink()
+            return {
+                "success": True,
+                "message": "Deployment state cleared"
+            }
+        else:
+            return {
+                "success": True,
+                "message": "No deployment state to clear"
+            }
+    except Exception as e:
+        logger.error(f"Error clearing deployment state: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

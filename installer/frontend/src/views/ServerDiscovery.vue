@@ -59,7 +59,7 @@
           </div>
           <div class="flex-1">
             <p class="text-lg font-semibold">Scanning Network...</p>
-            <p class="text-sm text-base-content/70">{{ scanStatus }}</p>
+            <p class="text-sm text-base-content text-opacity-70">{{ scanStatus }}</p>
           </div>
         </div>
       </div>
@@ -95,7 +95,7 @@
                       </svg>
                     </div>
                     <div v-else class="tooltip" data-tip="Unknown OS">
-                      <svg class="w-8 h-8 text-base-content/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg class="w-8 h-8 text-base-content text-opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                       </svg>
                     </div>
@@ -105,11 +105,11 @@
                   <div>
                     <h3 class="font-semibold text-lg">
                       {{ server.ip }}
-                      <span v-if="server.hostname" class="text-sm text-base-content/70 ml-2">
+                      <span v-if="server.hostname" class="text-sm text-base-content text-opacity-70 ml-2">
                         ({{ server.hostname }})
                       </span>
                     </h3>
-                    <div class="text-sm text-base-content/70">
+                    <div class="text-sm text-base-content text-opacity-70">
                       <span v-if="server.os_info">{{ server.os_info }}</span>
                       <span v-else-if="server.ssh_available">SSH Available</span>
                       <span v-else>No SSH Access</span>

@@ -27,27 +27,26 @@
   serial: 1  # Process one host at a time for complete setup
   
   vars:
-    zerotier_network_id: "{{ lookup('env', 'ZEROTIER_NETWORK_ID') }}"
-    zerotier_api_token: "{{ lookup('env', 'ZEROTIER_API_TOKEN') }}"
+    # Use inventory variables directly
     zerotier_central_url: "https://api.zerotier.com/api/v1"
     management_host: "{{ groups['management'][0] }}"
   
   tasks:
     # Phase 1: Verify ZeroTier network ID and API token are available
-    - name: Debug environment variables
+    - name: Debug ZeroTier configuration
       ansible.builtin.debug:
         msg: |
-          ZEROTIER_NETWORK_ID from environment: {{ lookup('env', 'ZEROTIER_NETWORK_ID') }}
-          ZEROTIER_API_TOKEN from environment: {{ lookup('env', 'ZEROTIER_API_TOKEN') | regex_replace('^(.{4}).*(.{4})$', '\\1****\\2') }}
+          ZEROTIER_NETWORK_ID from inventory: {{ zerotier_network_id }}
+          ZEROTIER_API_TOKEN from inventory: {{ zerotier_api_token | regex_replace('^(.{4}).*(.{4})$', '\\1****\\2') }}
     
     - name: Verify ZeroTier network ID
       ansible.builtin.fail:
-        msg: "ZeroTier network ID not found. Please define zerotier_network_id in inventory variables or set ZEROTIER_NETWORK_ID environment variable."
+        msg: "ZeroTier network ID not found. Please define zerotier_network_id in inventory variables."
       when: zerotier_network_id == "" or zerotier_network_id is undefined
       
     - name: Verify ZeroTier API token
       ansible.builtin.fail:
-        msg: "ZeroTier API token not found. Please set ZEROTIER_API_TOKEN environment variable."
+        msg: "ZeroTier API token not found. Please define zerotier_api_token in inventory variables."
       when: zerotier_api_token is not defined or zerotier_api_token == ""
     
     - name: Display ZeroTier network ID
@@ -461,13 +460,13 @@
 
 # Final phase: Configure global network settings after all nodes are set up
 - name: Configure ZeroTier network settings
-  hosts: management
+  hosts: baremetal[0]
   gather_facts: false
   
   vars:
-    zerotier_network_id: "{{ lookup('env', 'ZEROTIER_NETWORK_ID') }}"
-    zerotier_api_token: "{{ lookup('env', 'ZEROTIER_API_TOKEN') }}"
+    # Use the same variables from inventory that worked in the previous plays
     zerotier_central_url: "https://api.zerotier.com/api/v1"
+    management_host: "{{ inventory_hostname }}"
   
   tasks:
     # Get current network configuration and update it
@@ -480,7 +479,7 @@
         status_code: 200
         validate_certs: yes
       register: network_config
-      no_log: true
+      delegate_to: "{{ management_host }}"
     
     # Don't modify global network configuration - leave it as is
     - name: Skip network-wide configuration
@@ -491,7 +490,6 @@
     - name: Skipping network configuration
       ansible.builtin.set_fact:
         update_result: {'json': {'config': {'v4AssignMode': {'zt': true}, 'ipAssignmentPools': []}}, 'status': 200}
-      no_log: true
     
     # Verify network configuration was applied correctly
     - name: Verify network configuration update
@@ -503,7 +501,7 @@
         status_code: 200
         validate_certs: yes
       register: verify_network
-      no_log: true
+      delegate_to: "{{ management_host }}"
     
     - name: Display network configuration verification
       ansible.builtin.debug:
@@ -522,7 +520,7 @@
         status_code: 200
         validate_certs: yes
       register: all_members
-      no_log: true
+      delegate_to: "{{ management_host }}"
       
     - name: Count authorized nodes
       ansible.builtin.set_fact:

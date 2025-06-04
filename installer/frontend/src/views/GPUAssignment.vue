@@ -6,16 +6,16 @@
     <div class="card bg-base-100 shadow-xl mb-6">
       <div class="card-body">
         <h2 class="card-title mb-4">Configure GPU</h2>
-        <p class="text-sm text-base-content/70 mb-6">
+        <p class="text-sm text-base-content text-opacity-70 mb-6">
           Configure GPU assignment for your cluster. GPUs can stay on the baremetal host or be passed through to VMs.
         </p>
 
         <!-- No GPUs available message -->
         <div v-if="!hasGPUs" class="text-center py-12">
-          <svg class="mx-auto h-12 w-12 text-base-content/30 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="mx-auto h-12 w-12 text-base-content text-opacity-30 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
-          <p class="text-base-content/70">No GPU-capable nodes detected. Proceeding without GPU configuration.</p>
+          <p class="text-base-content text-opacity-70">No GPU-capable nodes detected. Proceeding without GPU configuration.</p>
         </div>
 
         <!-- GPU Configuration -->
@@ -29,8 +29,8 @@
                 </svg>
                   {{ gpu.model }}
                 </h3>
-                <p class="text-sm text-base-content/70 ml-7">{{ gpu.hostname }} • PCI: {{ gpu.address }}</p>
-                <p class="text-sm text-base-content/70 ml-7">IOMMU Group: {{ gpu.iommu_group }}</p>
+                <p class="text-sm text-base-content text-opacity-70 ml-7">{{ gpu.hostname }} • PCI: {{ gpu.address }}</p>
+                <p class="text-sm text-base-content text-opacity-70 ml-7">IOMMU Group: {{ gpu.iommu_group }}</p>
               </div>
               
               <div class="ml-4 space-y-2">
@@ -64,7 +64,7 @@
                 <!-- GPU stays on host (either not eligible or no VMs) -->
                 <div v-else class="p-3 bg-base-200 rounded">
                   <p class="text-sm font-medium">Remains on {{ gpu.hostname }}</p>
-                  <p class="text-xs text-base-content/70">
+                  <p class="text-xs text-base-content text-opacity-70">
                     {{ gpu.passthrough_eligible ? 'No VMs on this host' : 'Not eligible for passthrough' }}
                   </p>
                 </div>
@@ -74,7 +74,7 @@
         </div>
 
         <!-- Summary -->
-        <div v-if="hasGPUs && Object.keys(gpuAssignments).length > 0" class="mt-6 p-4 bg-info/10 rounded-lg">
+        <div v-if="hasGPUs && Object.keys(gpuAssignments).length > 0" class="mt-6 p-4 bg-info bg-opacity-10 rounded-lg">
           <h4 class="font-semibold mb-2">GPU Assignment Summary</h4>
           <div class="text-sm">
             <p v-if="baremetalGPUs > 0">{{ baremetalGPUs }} GPU(s) assigned to baremetal hosts</p>
@@ -112,7 +112,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -121,6 +121,11 @@ const allGPUs = ref([])
 const gpuAssignments = ref({})
 
 const hasGPUs = computed(() => allGPUs.value.length > 0)
+
+// Debug assignments when they change
+watch(gpuAssignments, (newVal) => {
+  console.log('GPU assignments changed:', newVal)
+}, { deep: true })
 
 const baremetalGPUs = computed(() => {
   return Object.values(gpuAssignments.value).filter(assignment => assignment === 'baremetal').length
@@ -218,7 +223,12 @@ const goBack = () => {
 
 const saveAndContinue = () => {
   // Save GPU assignments
+  console.log('Saving GPU assignments:', gpuAssignments.value)
   sessionStorage.setItem('gpuAssignments', JSON.stringify(gpuAssignments.value))
+  
+  // Verify it was saved
+  const saved = sessionStorage.getItem('gpuAssignments')
+  console.log('Verified saved GPU assignments:', saved)
   
   // Navigate to review
   router.push('/review')

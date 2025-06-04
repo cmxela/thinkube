@@ -10,12 +10,14 @@
 #
 # Usage:
 #   ansible-playbook -i inventory/inventory.yaml ansible/40_thinkube/core/infrastructure/00_setup_python_k8s.yaml
+#
+# 🤖 [AI-assisted]
 
 - name: Setup Python Virtual Environment on All Nodes
-  hosts: all
-  become: true
+  hosts: baremetal
+  gather_facts: true
   vars:
-    venv_dir: "/home/{{ ansible_user }}/.venv"
+    venv_dir: "/home/{{ system_username }}/.venv"
     venv_marker: "# Ansible venv auto-activation for: {{ venv_dir }}"
     
   tasks:
@@ -26,6 +28,7 @@
           - python3-pip
           - python3-full
         state: present
+      become: true
 
     - name: Create Python virtual environment
       ansible.builtin.command: python3 -m venv "{{ venv_dir }}"
@@ -54,16 +57,16 @@
 
     - name: Ensure ~/.bashrc exists
       ansible.builtin.file:
-        path: "/home/{{ ansible_user }}/.bashrc"
+        path: "/home/{{ system_username }}/.bashrc"
         state: touch
-        owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        owner: "{{ system_username }}"
+        group: "{{ system_username }}"
         mode: '0644'
       become: false
 
     - name: Check if venv activation already exists in .bashrc
       ansible.builtin.lineinfile:
-        path: "/home/{{ ansible_user }}/.bashrc"
+        path: "/home/{{ system_username }}/.bashrc"
         regexp: "{{ venv_marker | regex_escape }}"
         state: absent
       check_mode: true
@@ -73,7 +76,7 @@
 
     - name: Add venv activation to .bashrc
       ansible.builtin.blockinfile:
-        path: "/home/{{ ansible_user }}/.bashrc"
+        path: "/home/{{ system_username }}/.bashrc"
         marker: "{{ venv_marker }}"
         block: |
           if [ -f "{{ venv_dir }}/bin/activate" ]; then

@@ -30,7 +30,7 @@
   vars:
     test_image: "alpine:latest"
     harbor_admin_user: "admin"  # Harbor's built-in admin user
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
 
   tasks:
     ########################################################################

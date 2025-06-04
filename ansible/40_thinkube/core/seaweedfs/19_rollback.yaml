@@ -25,7 +25,7 @@
     # Admin password for Keycloak cleanup
     keycloak_url: "https://{{ keycloak_hostname }}"
     keycloak_admin_username: "{{ admin_username }}"
-    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
     oauth2_proxy_client_id: "oauth2-proxy-seaweedfs"
 
   tasks:

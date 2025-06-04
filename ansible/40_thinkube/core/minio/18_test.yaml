@@ -38,7 +38,7 @@
     minio_console: "https://{{ minio_console_hostname }}"
     minio_alias: "minio-test"
     minio_root_user: "{{ admin_username }}"
-    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    minio_root_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
     mc_path: "/usr/local/bin/mc"
     test_bucket: "testbucket"
     test_file: "/tmp/test-file.txt"

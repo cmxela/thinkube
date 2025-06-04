@@ -1,7 +1,7 @@
 ---
 # Clean Thinkube Shell Configuration Playbook with modular structure
 - name: Configure Thinkube shell environments
-  hosts: baremetal:lxd_containers
+  hosts: baremetal
   become: no
   vars:
     user_home: "{{ ansible_env.HOME }}"

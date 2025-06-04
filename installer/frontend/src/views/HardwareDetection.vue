@@ -32,25 +32,25 @@
             <div class="stat place-items-center">
               <div class="stat-title font-medium">CPU</div>
               <div class="stat-value text-primary">{{ server.hardware.cpu_cores }}</div>
-              <div class="stat-desc text-base-content/60">cores</div>
+              <div class="stat-desc text-base-content text-opacity-60">cores</div>
             </div>
             
             <div class="stat place-items-center">
               <div class="stat-title font-medium">RAM</div>
               <div class="stat-value text-primary">{{ Math.round(server.hardware.memory_gb) }}</div>
-              <div class="stat-desc text-base-content/60">GB</div>
+              <div class="stat-desc text-base-content text-opacity-60">GB</div>
             </div>
             
             <div class="stat place-items-center">
               <div class="stat-title font-medium">Disk</div>
               <div class="stat-value text-primary">{{ Math.round(server.hardware.disk_gb) }}</div>
-              <div class="stat-desc text-base-content/60">GB</div>
+              <div class="stat-desc text-base-content text-opacity-60">GB</div>
             </div>
             
             <div v-if="server.hardware.gpu_detected" class="stat place-items-center">
               <div class="stat-title font-medium">GPU</div>
               <div class="stat-value text-primary">{{ server.hardware.gpu_count }}</div>
-              <div class="stat-desc text-base-content/60">{{ server.hardware.gpu_model?.split(' ').slice(-2).join(' ') || 'Detected' }}</div>
+              <div class="stat-desc text-base-content text-opacity-60">{{ server.hardware.gpu_model?.split(' ').slice(-2).join(' ') || 'Detected' }}</div>
             </div>
           </div>
           
@@ -72,7 +72,7 @@
         
         <div class="prose prose-sm max-w-none">
           <h3 class="font-semibold mb-2 text-base-content">Total Resources</h3>
-          <ul class="space-y-1 text-base-content/80">
+          <ul class="space-y-1 text-base-content text-opacity-80">
             <li>CPU Cores: <span class="font-medium text-base-content">{{ totalResources.cpu }}</span></li>
             <li>Memory: <span class="font-medium text-base-content">{{ Math.round(totalResources.memory) }}</span> GB</li>
             <li>Storage: <span class="font-medium text-base-content">{{ Math.round(totalResources.storage) }}</span> GB</li>

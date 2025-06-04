@@ -34,6 +34,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Import shared state
+from app.shared import app_state, broadcast_status
+
 # Initialize FastAPI app
 app = FastAPI(
     title="thinkube Installer Backend",
@@ -44,23 +47,11 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "file://"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Global state
-installation_status = {
-    "phase": "idle",
-    "progress": 0,
-    "current_task": "",
-    "logs": [],
-    "errors": []
-}
-
-# WebSocket connections
-active_connections: List[WebSocket] = []
 
 # Include API routers
 app.include_router(discovery_router)
@@ -104,37 +95,42 @@ async def get_current_user():
 
 
 # WebSocket for real-time updates
-@app.websocket("/api/ws")
+@app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    active_connections.append(websocket)
-    logger.info(f"Client connected. Total connections: {len(active_connections)}")
+    app_state.active_connections.append(websocket)
+    logger.info(f"WebSocket client connected. Total connections: {len(app_state.active_connections)}")
     
     try:
         # Send current status immediately
-        await websocket.send_json(installation_status)
+        logger.info(f"Sending initial status to new WebSocket client: {app_state.installation_status}")
+        await websocket.send_json(app_state.installation_status)
         
         # Keep connection alive
         while True:
             await asyncio.sleep(1)
     except WebSocketDisconnect:
-        active_connections.remove(websocket)
-        logger.info(f"Client disconnected. Total connections: {len(active_connections)}")
+        app_state.active_connections.remove(websocket)
+        logger.info(f"WebSocket client disconnected. Total connections: {len(app_state.active_connections)}")
 
-
-async def broadcast_status(status):
-    """Broadcast status update to all connected clients"""
-    if active_connections:
-        disconnected = []
-        for connection in active_connections:
-            try:
-                await connection.send_json(status)
-            except:
-                disconnected.append(connection)
+# Also keep the /api/ws endpoint for compatibility
+@app.websocket("/api/ws")
+async def api_websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    app_state.active_connections.append(websocket)
+    logger.info(f"API WebSocket client connected. Total connections: {len(app_state.active_connections)}")
+    
+    try:
+        # Send current status immediately
+        logger.info(f"Sending initial status to new WebSocket client: {app_state.installation_status}")
+        await websocket.send_json(app_state.installation_status)
         
-        # Remove disconnected clients
-        for connection in disconnected:
-            active_connections.remove(connection)
+        # Keep connection alive
+        while True:
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        app_state.active_connections.remove(websocket)
+        logger.info(f"API WebSocket client disconnected. Total connections: {len(app_state.active_connections)}")
 
 
 if __name__ == "__main__":
@@ -148,7 +144,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     uvicorn.run(
-        "main_new:app" if args.reload else app,
+        "main:app" if args.reload else app,
         host=args.host,
         port=args.port,
         reload=args.reload

@@ -27,7 +27,7 @@
     postgres_tls_secret_name: "{{ postgres_namespace }}-tls-secret"
     
     # User authentication using standard approach
-    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default(lookup('file', '~/.env') | regex_search('ADMIN_PASSWORD=(.+)', '\\1') | first, true) }}"
 
   pre_tasks:
     - name: Verify admin password available

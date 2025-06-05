@@ -1,0 +1,83 @@
+---
+# Generate Kubernetes manifests from templates
+# This task file is included in the main deployment playbook
+
+# First, copy all files from the subtree to the cloned repo
+- name: Copy files from subtree to cloned repository
+  ansible.builtin.shell: |
+    rsync -av --exclude='.git' --exclude='*.pyc' --exclude='__pycache__' --exclude='node_modules' \
+      {{ thinkube_control_source }}/ {{ local_repo_path }}/
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+# Now template the Kubernetes manifests
+- name: Template Kubernetes manifests
+  ansible.builtin.template:
+    src: "{{ local_repo_path }}/k8s/{{ item }}"
+    dest: "{{ local_repo_path }}/k8s/{{ item | replace('.jinja', '') }}"
+    mode: '0644'
+  loop:
+    - namespace.yaml.jinja
+    - backend-deployment.yaml.jinja
+    - backend-service.yaml.jinja
+    - frontend-deployment.yaml.jinja
+    - frontend-service.yaml.jinja
+    - ingress.yaml.jinja
+    - keycloak-setup.yaml.jinja
+    - kustomization.yaml.jinja
+  vars:
+    # Template variables
+    namespace: "{{ k8s_namespace }}"
+    control_subdomain: "control"
+    auth_subdomain: "auth"
+    registry_subdomain: "registry"
+    domain_name: "{{ domain_name }}"
+    keycloak_realm: "thinkube"
+    github_org: "{{ github_user }}"
+    project_name: "{{ app_name }}"
+
+# Template the workflow files
+- name: Template workflow files
+  ansible.builtin.template:
+    src: "{{ local_repo_path }}/workflows/{{ item }}"
+    dest: "{{ local_repo_path }}/workflows/{{ item | replace('.jinja', '') }}"
+    mode: '0644'
+  loop:
+    - build-workflow.yaml.jinja
+  ignore_errors: true  # In case the file doesn't exist yet
+
+# Remove the .jinja templates after processing
+- name: Remove .jinja template files
+  ansible.builtin.file:
+    path: "{{ local_repo_path }}/{{ item }}"
+    state: absent
+  loop:
+    - k8s/namespace.yaml.jinja
+    - k8s/backend-deployment.yaml.jinja
+    - k8s/backend-service.yaml.jinja
+    - k8s/frontend-deployment.yaml.jinja
+    - k8s/frontend-service.yaml.jinja
+    - k8s/ingress.yaml.jinja
+    - k8s/keycloak-setup.yaml.jinja
+    - k8s/kustomization.yaml.jinja
+    - workflows/build-workflow.yaml.jinja
+
+- name: Commit all changes
+  ansible.builtin.shell: |
+    cd {{ local_repo_path }}
+    git add -A
+    git diff --cached --exit-code || git commit -m "Configure thinkube-control for {{ domain_name }}"
+  args:
+    executable: /bin/bash
+  register: git_commit
+  changed_when: git_commit.rc == 0
+  failed_when: git_commit.rc not in [0, 1]
+
+- name: Push to GitHub
+  ansible.builtin.shell: |
+    cd {{ local_repo_path }}
+    git push origin main || git push --set-upstream origin main
+  args:
+    executable: /bin/bash
+  when: git_commit.changed

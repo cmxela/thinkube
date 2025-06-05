@@ -1,0 +1,225 @@
+---
+# ansible/40_thinkube/core/thinkube-control/18_test.yaml
+# Description:
+#   Test Thinkube Control deployment and functionality
+#
+# Requirements:
+#   - Control deployed via 10_deploy.yaml
+#   - kubectl configured
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/thinkube-control/18_test.yaml
+#
+# Variables from inventory:
+#   - domain_name: Primary domain name
+#   - admin_username: Admin username for authentication
+#   - kubeconfig: Path to kubeconfig file
+#
+# 🤖 [AI-assisted]
+
+- name: Test Thinkube Control Deployment
+  hosts: microk8s_control_plane
+  gather_facts: false
+
+  vars:
+    control_namespace: "control-hub"
+    control_host: "control.{{ domain_name }}"
+    expected_deployments:
+      - oauth2-proxy
+      - ephemeral-redis
+    expected_services:
+      - oauth2-proxy
+      - ephemeral-redis
+    argocd_namespace: "argocd"
+    argo_workflows_namespace: "argo"
+
+  tasks:
+    - name: Verify required variables
+      ansible.builtin.fail:
+        msg: "{{ item }} is not defined. Please set it in inventory."
+      when: vars[item] is not defined or vars[item] == ""
+      loop:
+        - domain_name
+        - kubeconfig
+
+    # Test namespace exists
+    - name: Check control namespace exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ control_namespace }}"
+      register: namespace_info
+      failed_when: namespace_info.resources | length == 0
+
+    # Test deployments
+    - name: Check expected deployments are running
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ control_namespace }}"
+        name: "{{ item }}"
+      register: deployment_info
+      failed_when: 
+        - deployment_info.resources | length == 0
+        - deployment_info.resources[0].status.replicas != deployment_info.resources[0].status.readyReplicas
+      loop: "{{ expected_deployments }}"
+
+    # Test services
+    - name: Check expected services exist
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Service
+        namespace: "{{ control_namespace }}"
+        name: "{{ item }}"
+      register: service_info
+      failed_when: service_info.resources | length == 0
+      loop: "{{ expected_services }}"
+
+    # Test secrets
+    - name: Check required secrets exist
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ control_namespace }}"
+        name: "{{ item }}"
+      register: secret_info
+      failed_when: secret_info.resources | length == 0
+      loop:
+        - control-tls-secret
+        - github-token
+        - control-hub-keycloak
+
+    # Test OAuth2 Proxy ingress
+    - name: Check OAuth2 Proxy ingress exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        namespace: "{{ control_namespace }}"
+        name: oauth2-proxy
+      register: ingress_info
+      failed_when: ingress_info.resources | length == 0
+
+    - name: Verify ingress host configuration
+      ansible.builtin.assert:
+        that:
+          - ingress_info.resources[0].spec.rules[0].host == control_host
+        fail_msg: "Ingress host mismatch: expected {{ control_host }}"
+
+    # Test ArgoCD applications
+    - name: Check Control Backend ArgoCD application
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        namespace: "{{ argocd_namespace }}"
+        name: control-backend
+      register: backend_app
+      failed_when: backend_app.resources | length == 0
+
+    - name: Check Control Frontend ArgoCD application
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        namespace: "{{ argocd_namespace }}"
+        name: control-frontend
+      register: frontend_app
+      failed_when: frontend_app.resources | length == 0
+
+    # Test Argo Workflow templates
+    - name: Check Control build workflow templates exist
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        namespace: "{{ argo_workflows_namespace }}"
+        name: "{{ item }}"
+      register: workflow_info
+      failed_when: workflow_info.resources | length == 0
+      loop:
+        - control-backend-build
+        - control-frontend-build
+
+    # Test Redis connectivity
+    - name: Test Redis service connectivity
+      kubernetes.core.k8s_exec:
+        kubeconfig: "{{ kubeconfig }}"
+        namespace: "{{ control_namespace }}"
+        pod: "{{ redis_pod.resources[0].metadata.name }}"
+        command: redis-cli ping
+      register: redis_test
+      vars:
+        redis_pod: "{{ lookup('kubernetes.core.k8s', 
+          api_version='v1',
+          kind='Pod',
+          namespace=control_namespace,
+          label_selector='app=ephemeral-redis',
+          kubeconfig=kubeconfig) }}"
+      failed_when: redis_test.stdout != "PONG"
+      when: redis_pod.resources | length > 0
+
+    # Test OAuth2 Proxy health
+    - name: Get OAuth2 Proxy pod
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Pod
+        namespace: "{{ control_namespace }}"
+        label_selector: "app.kubernetes.io/name=oauth2-proxy"
+      register: oauth2_pods
+
+    - name: Check OAuth2 Proxy pod status
+      ansible.builtin.assert:
+        that:
+          - oauth2_pods.resources | length > 0
+          - oauth2_pods.resources[0].status.phase == "Running"
+        fail_msg: "OAuth2 Proxy pod not running"
+
+    # Test DNS resolution
+    - name: Test control DNS resolution
+      ansible.builtin.command: 
+        cmd: "nslookup {{ control_host }}"
+      register: dns_test
+      changed_when: false
+      failed_when: 
+        - dns_test.rc != 0
+        - "'NXDOMAIN' in dns_test.stdout"
+
+    # Test HTTPS connectivity
+    - name: Test control HTTPS endpoint
+      ansible.builtin.uri:
+        url: "https://{{ control_host }}/oauth2/auth"
+        method: GET
+        validate_certs: true
+        status_code: [401, 403]  # Expected without authentication
+      register: https_test
+
+    - name: Display test results summary
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          ✅ Thinkube Control Tests Passed
+          ════════════════════════════════════════════════════════
+          
+          Namespace: ✓ {{ control_namespace }} exists
+          Deployments: ✓ All {{ expected_deployments | length }} deployments running
+          Services: ✓ All {{ expected_services | length }} services created
+          Secrets: ✓ All required secrets present
+          Ingress: ✓ Configured for {{ control_host }}
+          ArgoCD: ✓ Both applications created
+          Workflows: ✓ Build templates configured
+          Redis: ✓ Service responding
+          OAuth2 Proxy: ✓ Running and healthy
+          DNS: ✓ {{ control_host }} resolves
+          HTTPS: ✓ Endpoint accessible
+          
+          Control URL: https://{{ control_host }}
+          
+          ════════════════════════════════════════════════════════

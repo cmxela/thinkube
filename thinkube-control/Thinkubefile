@@ -1,0 +1,125 @@
+# Thinkubefile - Defines how this app works in Thinkube
+apiVersion: apps.thinkube.io/v1
+kind: Application
+metadata:
+  name: "{{ project_name }}"
+  description: "Central control interface for Thinkube platform"
+  
+spec:
+  # Development settings
+  development:
+    # Auto-sync on git push
+    sync: 
+      enabled: "{{ enable_dev_mode }}"
+      branch: main
+      
+    # Local development port forwarding
+    forward:
+      - service: backend
+        port: 8000
+        local: 8000
+      - service: frontend
+        port: 80
+        local: 3000
+        
+    # Hot reload
+    watch:
+      - path: backend/**/*.py
+        action: restart-backend
+      - path: frontend/src/**/*
+        action: rebuild-frontend
+        
+  # Build configuration
+  build:
+    # Build triggers
+    triggers:
+      push:
+        branches: ["main", "develop"]
+      pull_request:
+        branches: ["main"]
+        
+    # Build jobs
+    jobs:
+      backend:
+        context: ./backend
+        dockerfile: Dockerfile
+        target: production
+        cache: true
+        registry: harbor-core.registry.svc.cluster.local
+        repository: thinkube/{{ project_name }}-backend
+        
+      frontend:
+        context: ./frontend
+        dockerfile: Dockerfile
+        target: production
+        args:
+          API_URL: "/api"
+          PUBLIC_URL: "/"
+        cache: true
+        registry: harbor-core.registry.svc.cluster.local
+        repository: thinkube/{{ project_name }}-frontend
+        
+  # Deployment configuration
+  deploy:
+    namespace: "{{ namespace }}"
+    
+    # GitOps via ArgoCD
+    gitops:
+      enabled: true
+      path: k8s/
+      project: default
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+          
+    # Required services
+    dependencies:
+      - name: keycloak
+        namespace: keycloak
+        required: true
+      - name: harbor
+        namespace: registry
+        required: true
+      - name: argocd
+        namespace: argocd
+        required: true
+      - name: argo-workflows
+        namespace: argo
+        required: true
+        
+    # Health checks
+    health:
+      backend:
+        path: /health
+        interval: 30s
+        timeout: 5s
+      frontend:
+        path: /
+        interval: 30s
+        timeout: 5s
+        
+  # Integration points
+  integrations:
+    # OAuth2/OIDC
+    auth:
+      provider: keycloak
+      client_id: "{{ namespace }}"
+      realm: "{{ keycloak_realm }}"
+      
+    # Container registry
+    registry:
+      type: harbor
+      project: thinkube
+      
+    # Future: MCP server
+    mcp:
+      enabled: false
+      port: 9000
+      tools:
+        - name: component-install
+          description: Install a component from the marketplace
+        - name: component-list
+          description: List installed components
+        - name: component-status
+          description: Get status of a component

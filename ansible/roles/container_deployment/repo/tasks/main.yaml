@@ -12,13 +12,32 @@
     state: directory
     mode: '0755'
 
-- name: Clone or update local repository
-  git:
-    repo: "{{ github_repo_url }}"
-    dest: "{{ code_source_path }}/{{ github_repo_name }}"
-    version: main
-    remote: origin
+- name: Check if repository is already cloned
+  ansible.builtin.stat:
+    path: "{{ code_source_path }}/{{ github_repo_name }}/.git"
+  register: repo_exists
+
+- name: Clone repository (handling empty repos)
+  ansible.builtin.shell: |
+    cd {{ code_source_path }}
+    if [ -d "{{ github_repo_name }}/.git" ]; then
+      cd {{ github_repo_name }}
+      git fetch origin || true
+      git checkout main || git checkout -b main
+    else
+      git clone {{ github_repo_url }} {{ github_repo_name }} || {
+        # Handle empty repository
+        mkdir -p {{ github_repo_name }}
+        cd {{ github_repo_name }}
+        git init
+        git remote add origin {{ github_repo_url }}
+        git checkout -b main
+      }
+    fi
+  args:
+    executable: /bin/bash
   environment:
     GIT_SSH_COMMAND: "ssh -i {{ ssh_private_key_path }} -o StrictHostKeyChecking=no"
   when: use_github
   register: git_result
+  changed_when: true

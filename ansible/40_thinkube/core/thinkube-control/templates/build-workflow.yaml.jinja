@@ -1,0 +1,244 @@
+# workflows/build-workflow.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: build-{{ app_name }}-
+  namespace: {{ argo_workflows_namespace }}
+spec:
+  # Run on master node for SSH key access
+  nodeSelector:
+    kubernetes.io/hostname: {{ master_node_name }}
+  
+  # Parameters for the workflow
+  arguments:
+    parameters:
+    - name: repo-url
+      value: {{ github_repo_url }}
+    - name: repo-name
+      value: {{ github_repo_name }}
+    - name: repo-org
+      value: {{ github_org }}
+  
+  entrypoint: build-and-update
+  serviceAccountName: kaniko-builder
+  # Use the same artifact repository configuration as DevPi
+  artifactRepositoryRef:
+    configMap: artifact-repositories
+    key: default-v1
+    
+  # Volumes
+  volumes:
+  - name: docker-config
+    secret:
+      secretName: docker-config
+  - name: workspace
+    emptyDir: {}
+  - name: ssh-key
+    secret:
+      secretName: github-ssh-key-{{ github_repo_name }}
+      defaultMode: 0600
+
+  templates:
+  - name: build-and-update
+    dag:
+      tasks:
+      - name: timestamp
+        template: generate-timestamp
+        
+      - name: clone-repo
+        template: clone-repo
+        arguments:
+          parameters:
+          - name: repo-url
+            value: "{{workflow.parameters.repo-url}}"
+      
+      - name: build-backend
+        template: build-backend
+        dependencies:
+        - clone-repo
+        - timestamp
+        arguments:
+          parameters:
+          - name: image-tag
+            value: "{{tasks.timestamp.outputs.parameters.timestamp}}"
+          artifacts:
+          - name: repo
+            from: "{{tasks.clone-repo.outputs.artifacts.repo}}"
+      
+      - name: build-frontend
+        template: build-frontend
+        dependencies:
+        - clone-repo
+        - timestamp
+        arguments:
+          parameters:
+          - name: image-tag
+            value: "{{tasks.timestamp.outputs.parameters.timestamp}}"
+          artifacts:
+          - name: repo
+            from: "{{tasks.clone-repo.outputs.artifacts.repo}}"
+      
+      - name: update-kustomization
+        template: update-kustomization
+        dependencies:
+        - build-backend
+        - build-frontend
+        arguments:
+          parameters:
+          - name: image-tag
+            value: "{{tasks.timestamp.outputs.parameters.timestamp}}"
+          - name: repo-url
+            value: "{{workflow.parameters.repo-url}}"
+          artifacts:
+          - name: repo
+            from: "{{tasks.clone-repo.outputs.artifacts.repo}}"
+  
+  - name: generate-timestamp
+    container:
+      image: alpine:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo -n $(date +%Y%m%dT%H%M%S) > /tmp/timestamp.txt
+    outputs:
+      parameters:
+      - name: timestamp
+        valueFrom:
+          path: /tmp/timestamp.txt
+  
+  - name: clone-repo
+    inputs:
+      parameters:
+      - name: repo-url
+    container:
+      image: alpine/git:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -e
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          cp /mnt/ssh/ssh-privatekey ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+          
+          # Clone the repository
+          mkdir -p /workspace
+          git clone {{inputs.parameters.repo-url}} /workspace
+          
+          # Check if backend and frontend directories exist
+          if [ -d "/workspace/backend" ] && [ -d "/workspace/frontend" ]; then
+            echo "✓ Repository cloned successfully with backend and frontend directories"
+          else
+            echo "✗ ERROR: Repository missing required directories"
+            exit 1
+          fi
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: ssh-key
+          mountPath: /mnt/ssh
+          readOnly: true
+    outputs:
+      artifacts:
+        - name: repo
+          path: /workspace
+  
+  - name: build-backend
+    inputs:
+      parameters:
+      - name: image-tag
+      artifacts:
+        - name: repo
+          path: /workspace
+    container:
+      image: gcr.io/kaniko-project/executor:latest
+      args:
+        - --dockerfile=/workspace/backend/Dockerfile
+        - --context=/workspace/backend
+        - --destination={{ backend_image_repo }}:{{inputs.parameters.image-tag}}
+        - --insecure
+        - --insecure-pull
+        - --skip-tls-verify
+        - --verbosity=info
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker/
+  
+  - name: build-frontend
+    inputs:
+      parameters:
+      - name: image-tag
+      artifacts:
+        - name: repo
+          path: /workspace
+    container:
+      image: gcr.io/kaniko-project/executor:latest
+      args:
+        - --dockerfile=/workspace/frontend/Dockerfile
+        - --context=/workspace/frontend
+        - --destination={{ frontend_image_repo }}:{{inputs.parameters.image-tag}}
+        - --insecure
+        - --insecure-pull
+        - --skip-tls-verify
+        - --verbosity=info
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker/
+  
+  - name: update-kustomization
+    inputs:
+      parameters:
+      - name: image-tag
+      - name: repo-url
+      artifacts:
+        - name: repo
+          path: /workspace
+    container:
+      image: alpine/git:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -e
+          # Setup Git
+          git config --global user.email "argo@thinkube.com"
+          git config --global user.name "Argo Workflow"
+          
+          # Setup SSH
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          cp /mnt/ssh/ssh-privatekey ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+          
+          # Change to workspace directory
+          cd /workspace
+          
+          # Update image tags in kustomization.yaml
+          IMAGE_TAG="{{inputs.parameters.image-tag}}"
+          echo "Updating image tags in kustomization.yaml to $IMAGE_TAG"
+          
+          # Check if file exists
+          if [ ! -f /workspace/k8s/kustomization.yaml ]; then
+            echo "ERROR: kustomization.yaml not found at /workspace/k8s/kustomization.yaml"
+            exit 1
+          fi
+          
+          # Update both backend and frontend image tags
+          sed -i "s|newTag:.*# backend|newTag: $IMAGE_TAG # backend|g" /workspace/k8s/kustomization.yaml
+          sed -i "s|newTag:.*# frontend|newTag: $IMAGE_TAG # frontend|g" /workspace/k8s/kustomization.yaml
+          
+          # Display the changes
+          echo "Updated kustomization.yaml:"
+          cat /workspace/k8s/kustomization.yaml
+          
+          # Commit and push changes
+          git add /workspace/k8s/kustomization.yaml
+          git commit -m "Update image tags to $IMAGE_TAG [skip ci]"
+          git push origin HEAD:main
+          
+          echo "Successfully updated kustomization.yaml and pushed changes"
+      volumeMounts:
+        - name: ssh-key
+          mountPath: /mnt/ssh
+          readOnly: true

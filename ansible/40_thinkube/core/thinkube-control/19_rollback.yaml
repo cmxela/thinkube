@@ -1,0 +1,144 @@
+---
+# ansible/40_thinkube/core/thinkube-control/19_rollback.yaml
+# Description:
+#   Rollback Thinkube Control deployment and remove all related resources
+#
+# Requirements:
+#   - MicroK8s cluster running
+#   - kubectl configured
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/thinkube-control/19_rollback.yaml
+#
+# Variables from inventory:
+#   - kubeconfig: Path to kubeconfig file
+#
+# 🤖 [AI-assisted]
+
+- name: Rollback Thinkube Control Deployment
+  hosts: microk8s_control_plane
+  gather_facts: false
+
+  vars:
+    control_namespace: "control-hub"
+    argocd_namespace: "argocd"
+    argo_workflows_namespace: "argo"
+
+  tasks:
+    - name: Verify kubeconfig is defined
+      ansible.builtin.fail:
+        msg: "kubeconfig is not defined. Please set it in inventory."
+      when: kubeconfig is not defined or kubeconfig == ""
+
+    # Remove ArgoCD applications
+    - name: Delete Control Backend ArgoCD application
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: control-backend
+        namespace: "{{ argocd_namespace }}"
+        state: absent
+
+    - name: Delete Control Frontend ArgoCD application
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: control-frontend
+        namespace: "{{ argocd_namespace }}"
+        state: absent
+
+    # Remove Argo Workflows
+    - name: Delete Control build workflows
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        namespace: "{{ argo_workflows_namespace }}"
+        state: absent
+        name: "{{ item }}"
+      loop:
+        - control-backend-build
+        - control-frontend-build
+
+    # Remove OAuth2 Proxy resources
+    - name: Delete OAuth2 Proxy Helm release
+      kubernetes.core.helm:
+        kubeconfig: "{{ kubeconfig }}"
+        name: oauth2-proxy
+        namespace: "{{ control_namespace }}"
+        state: absent
+        wait: true
+      ignore_errors: true
+
+    # Remove Redis
+    - name: Delete Redis resources
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: "{{ item.api_version }}"
+        kind: "{{ item.kind }}"
+        name: ephemeral-redis
+        namespace: "{{ control_namespace }}"
+        state: absent
+      loop:
+        - { api_version: "v1", kind: "Service" }
+        - { api_version: "apps/v1", kind: "Deployment" }
+
+    # Remove secrets
+    - name: Delete Control secrets
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ control_namespace }}"
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - control-tls-secret
+        - github-token
+        - control-hub-keycloak
+        - docker-config
+
+    # Remove service account
+    - name: Delete Kaniko service account
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: ServiceAccount
+        name: kaniko-builder
+        namespace: "{{ control_namespace }}"
+        state: absent
+
+    # Remove namespace (this will clean up any remaining resources)
+    - name: Delete Control namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ control_namespace }}"
+        state: absent
+        wait: true
+        wait_condition:
+          type: Terminating
+          status: "False"
+        wait_timeout: 300
+
+    - name: Display rollback completion message
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          ✅ Thinkube Control Rollback Completed
+          ════════════════════════════════════════════════════════
+          
+          All Control resources have been removed:
+          - ArgoCD applications deleted
+          - Argo Workflows templates deleted
+          - OAuth2 Proxy removed
+          - Redis deployment removed
+          - Secrets cleaned up
+          - Namespace deleted
+          
+          ════════════════════════════════════════════════════════

@@ -1,0 +1,430 @@
+---
+# ansible/40_thinkube/core/thinkube-control/10_deploy.yaml
+# Description:
+#   Deploy the Thinkube Control Hub using Argo Workflows and ArgoCD with Keycloak integration
+#
+# Requirements:
+#   - MicroK8s cluster with Argo Workflows and ArgoCD installed
+#   - Keycloak instance for authentication
+#   - Environment variable: ADMIN_PASSWORD
+#   - GitHub token configured in inventory or environment
+#   - TLS certificates available at configured paths
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/thinkube-control/10_deploy.yaml
+#
+# Variables from inventory:
+#   - domain_name: Domain for Kubernetes services
+#   - admin_username: Admin username for service access
+#   - admin_password: Admin password (from environment ADMIN_PASSWORD)
+#   - primary_ingress_ip: Main ingress IP address
+#   - kubeconfig: Path to kubeconfig file
+#   - github_token: GitHub API token
+#
+# Dependencies:
+#   - CORE-004: SSL/TLS Certificates must be configured
+#   - CORE-006: Keycloak must be deployed
+#   - CORE-010: Argo Workflows must be deployed
+#   - CORE-011: ArgoCD must be deployed
+#
+# 🤖 [AI-assisted]
+
+- name: Deploy Control Hub using Argo Workflows and ArgoCD with Keycloak integration
+  hosts: microk8s_control_plane
+  gather_facts: true
+  
+  vars:
+    # Namespace configuration
+    k8s_namespace: "control-hub"
+    
+    # Domain configuration - using inventory variables
+    control_host: "control.{{ domain_name }}"
+    cookie_domain: ".{{ domain_name }}"
+    
+    # Git configuration
+    git_user_name: "Control Hub Automation"
+    git_user_email: "thinkube@thinkube.com"
+    
+    # TLS settings
+    tls_secret_name: "control-tls-secret"
+
+    # Keycloak client settings
+    keycloak_app_client_id: "control-hub"
+    keycloak_user_to_grant_access: "{{ auth_realm_username }}"
+    keycloak_admin_username: "{{ admin_username }}"
+    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    
+    # GitHub configuration
+    github_repo_name: "thinkube-control"
+    github_org: "{{ github_user }}"  # User's GitHub username
+    github_repo_url: "git@github.com:{{ github_org }}/{{ github_repo_name }}.git"
+    github_api_url: "https://api.github.com"
+    
+    # Path inside the code-server pod (needed by common/github_ssh_keys)
+    pod_code_path: "/home/coder"
+    
+    # Environment file location
+    env_file_path: "{{ ansible_env.HOME }}/.env"
+    
+    # Kubernetes/Deployment configuration
+    argocd_namespace: "argocd"
+    argo_workflows_namespace: "argo"
+    app_namespace: "{{ k8s_namespace }}"
+    app_name: "control-hub"
+    container_registry: "harbor.{{ domain_name }}"
+    backend_image_repo: "{{ container_registry }}/thinkube/control-backend"
+    frontend_image_repo: "{{ container_registry }}/thinkube/control-frontend"
+    image_tag: "{{ ansible_date_time.iso8601_basic_short }}"
+    
+    # ArgoCD configuration
+    argocd_server: "argocd.{{ domain_name }}:443"
+    
+    # Kaniko configuration
+    docker_config_secret_name: "docker-config"
+    kaniko_sa_name: "kaniko-builder"
+    
+    # Added for compatibility
+    image_repo: "{{ frontend_image_repo }}"
+    
+    # GitHub integration settings
+    use_github: true
+    app_dashboard_host: "{{ control_host }}"
+    
+    # Multi-node specific settings
+    check_interval: 5
+    
+    # Source of thinkube-control (local subtree)
+    thinkube_control_source: "{{ playbook_dir }}/../../../thinkube-control"
+    
+    # Shared code directory (accessible from code-server and jupyterhub)
+    shared_code_path: "/home/{{ system_username }}/shared-code"
+    code_source_path: "{{ shared_code_path }}"
+
+  pre_tasks:
+    - name: Get Kubernetes node name for current host
+      ansible.builtin.shell: |
+        # Get all node names and find the one that matches our hostname
+        for node in $({{ kubectl_bin }} get nodes -o jsonpath='{.items[*].metadata.name}'); do
+          if [[ "$node" == *"$(hostname)"* ]]; then
+            echo "$node"
+            exit 0
+          fi
+        done
+        # Fallback to first node if no match
+        {{ kubectl_bin }} get nodes -o jsonpath='{.items[0].metadata.name}'
+      register: k8s_node_result
+      changed_when: false
+      
+    - name: Set master_node_name fact
+      ansible.builtin.set_fact:
+        master_node_name: "{{ k8s_node_result.stdout }}"
+        
+    - name: Debug node name
+      ansible.builtin.debug:
+        msg: "Kubernetes node name: {{ master_node_name }}"
+    
+    - name: Verify required variables
+      ansible.builtin.fail:
+        msg: "{{ item }} is not defined. Please set it in inventory."
+      when: vars[item] is not defined or vars[item] == ""
+      loop:
+        - domain_name
+        - admin_username
+        - kubeconfig
+        - github_token
+        - github_user
+    
+    # Store the inventory github_token before it gets overwritten
+    - name: Store inventory github_token
+      ansible.builtin.set_fact:
+        inventory_github_token: "{{ github_token }}"
+      when: github_token is defined
+
+    - name: Load environment variables from .env file
+      ansible.builtin.include_role:
+        name: common/environment
+        
+    # Restore github_token from inventory if it was overwritten
+    - name: Use inventory github_token if environment doesn't have one
+      ansible.builtin.set_fact:
+        github_token: "{{ inventory_github_token }}"
+      when: 
+        - inventory_github_token is defined
+        - github_token is not defined or github_token == ""
+        
+    # Ensure CODE_SOURCE_PATH is set since code-server is not yet migrated
+    - name: Check if CODE_SOURCE_PATH is in .env
+      ansible.builtin.shell: grep -E '^CODE_SOURCE_PATH=' {{ ansible_env.HOME }}/.env || true
+      register: code_path_check
+      changed_when: false
+      
+    - name: Add CODE_SOURCE_PATH to .env if missing
+      ansible.builtin.lineinfile:
+        path: "{{ ansible_env.HOME }}/.env"
+        line: "CODE_SOURCE_PATH={{ shared_code_path }}"
+        create: false
+      when: code_path_check.stdout == ""
+      
+    - name: Ensure shared-code directory exists
+      ansible.builtin.file:
+        path: "{{ shared_code_path }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0775'
+      become: true
+      
+    # Set code_source_path and update local_repo_path
+    - name: Set code paths for repository
+      ansible.builtin.set_fact:
+        code_source_path: "{{ shared_code_path }}"
+        host_code_path: "{{ shared_code_path }}"
+        local_repo_path: "{{ shared_code_path }}/{{ github_repo_name }}"
+
+    - name: Ensure application namespace exists
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ k8s_namespace }}"
+
+    # Copy wildcard certificate from default namespace
+    - name: Get wildcard certificate from default namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: default
+        name: thinkube-com-tls
+      register: wildcard_cert
+      failed_when: wildcard_cert.resources | length == 0
+
+    - name: Copy wildcard certificate to control namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ tls_secret_name }}"
+            namespace: "{{ k8s_namespace }}"
+          type: kubernetes.io/tls
+          data:
+            tls.crt: "{{ wildcard_cert.resources[0].data['tls.crt'] }}"
+            tls.key: "{{ wildcard_cert.resources[0].data['tls.key'] }}"
+
+    - name: Create GitHub token secret
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "github-token"
+            namespace: "{{ k8s_namespace }}"
+          type: Opaque
+          stringData:
+            token: "{{ github_token }}"
+      when: github_token is defined
+
+  roles:
+    # GitHub and repository setup
+    - common/github_ssh_keys
+    
+    # Clone to the repository location
+    - role: container_deployment/repo
+    
+  tasks:
+    # Setup Docker and container build components
+    - name: Include Docker/Kaniko setup
+      ansible.builtin.include_role:
+        name: container_deployment/docker_kaniko
+        
+    - name: Include Git push setup
+      ansible.builtin.include_role:
+        name: container_deployment/git_push
+
+- name: Continue deployment with Keycloak and remaining services
+  hosts: microk8s_control_plane
+  gather_facts: false
+  vars:
+    # Inherit all variables from the first play
+    k8s_namespace: "control-hub"
+    control_host: "control.{{ domain_name }}"
+    cookie_domain: ".{{ domain_name }}"
+    git_user_name: "Control Hub Automation"
+    git_user_email: "thinkube@thinkube.com"
+    tls_secret_name: "control-tls-secret"
+    keycloak_app_client_id: "control-hub"
+    keycloak_user_to_grant_access: "{{ auth_realm_username }}"
+    keycloak_admin_username: "{{ admin_username }}"
+    keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    keycloak_validate_certs: true
+    github_repo_name: "thinkube-control"
+    github_org: "{{ github_user }}"
+    github_repo_url: "git@github.com:{{ github_org }}/{{ github_repo_name }}.git"
+    github_api_url: "https://api.github.com"
+    pod_code_path: "/home/coder"
+    env_file_path: "{{ ansible_env.HOME }}/.env"
+    argocd_namespace: "argocd"
+    argo_workflows_namespace: "argo"
+    app_namespace: "{{ k8s_namespace }}"
+    app_name: "control-hub"
+    container_registry: "harbor.{{ domain_name }}"
+    backend_image_repo: "{{ container_registry }}/thinkube/control-backend"
+    frontend_image_repo: "{{ container_registry }}/thinkube/control-frontend"
+    image_tag: "{{ ansible_date_time.iso8601_basic_short }}"
+    argocd_server: "argocd.{{ domain_name }}:443"
+    docker_config_secret_name: "docker-config"
+    kaniko_sa_name: "kaniko-builder"
+    image_repo: "{{ frontend_image_repo }}"
+    use_github: true
+    app_dashboard_host: "{{ control_host }}"
+    master_node_name: "{{ hostvars[groups['microk8s_control_plane'][0]]['master_node_name'] }}"
+    check_interval: 5
+    thinkube_control_source: "{{ playbook_dir }}/../../../thinkube-control"
+    shared_code_path: "/home/{{ system_username }}/shared-code"
+    code_source_path: "{{ shared_code_path }}"
+    local_repo_path: "{{ shared_code_path }}/{{ github_repo_name }}"
+    
+  roles:
+    # Set up Keycloak client
+    - role: keycloak/keycloak_client
+      vars:
+        keycloak_client_id: "{{ keycloak_app_client_id }}"
+        keycloak_client_body:
+          clientId: "{{ keycloak_app_client_id }}"
+          enabled: true
+          rootUrl: "https://{{ control_host }}"
+          baseUrl: "https://{{ control_host }}"
+          redirectUris:
+            - "https://{{ control_host }}/*"
+          webOrigins:
+            - "https://{{ control_host }}"
+          directAccessGrantsEnabled: false
+          standardFlowEnabled: true
+          implicitFlowEnabled: false
+          publicClient: false
+          protocol: "openid-connect"
+    
+    # Set up a basic role for dashboard access
+    - role: keycloak/keycloak_realm_role
+      vars:
+        keycloak_role_name: "control-user"
+        keycloak_role_description: "Access to the control hub"
+    
+    # Assign the role to the user
+    - role: keycloak/keycloak_user
+      vars:
+        keycloak_user_name: "{{ keycloak_user_to_grant_access }}"
+        keycloak_realm_role_name: "control-user"
+        keycloak_realm_role_description: "Access to the control hub"
+    
+    # Build and deploy
+    - container_deployment/workflow
+    - role: waiting_for_image
+      vars:
+        image_repo: "{{ frontend_image_repo }}"
+    - container_deployment/argocd
+    - container_deployment/sync_status
+    - container_deployment/deployment
+
+  tasks:
+    # Generate manifests from templates after repo is cloned
+    - name: Generate Kubernetes manifests from templates
+      ansible.builtin.include_tasks: tasks/generate_manifests.yaml
+      when: local_repo_path is defined
+      
+    # Set default Git configuration values
+    - name: Set default Git configuration values if not provided
+      ansible.builtin.set_fact:
+        git_user_name: "{{ git_user_name | default('Ansible Automation') }}"
+        git_user_email: "{{ git_user_email | default('devops@example.com') }}"
+      when: code_source_path is defined and code_source_path != ""
+
+    # Configure Git in the repository
+    - name: Configure Git user name and email in repository
+      ansible.builtin.shell: |
+        cd {{ local_repo_path }}
+        git config user.name "{{ git_user_name }}"
+        git config user.email "{{ git_user_email }}"
+        git config pull.rebase true
+        if [[ "{{ local_repo_path }}" == "{{ code_source_path }}/"* ]]; then
+          git config core.sshCommand "ssh -i /home/coder/.ssh/{{ github_repo_name }}/id_ed25519 -o StrictHostKeyChecking=no"
+        fi
+      args:
+        executable: /bin/bash
+      failed_when: false
+      changed_when: false
+      when: local_repo_path is defined and local_repo_path != ""
+
+    # Create .git/hooks directory
+    - name: Ensure .git/hooks directory exists
+      ansible.builtin.file:
+        path: "{{ local_repo_path }}/.git/hooks"
+        state: directory
+        mode: '0755'
+      when: local_repo_path is defined and local_repo_path != ""
+
+    # Create pre-push hook
+    - name: Create pre-push hook script
+      ansible.builtin.template:
+        src: pre-push-hook.j2
+        dest: "{{ local_repo_path }}/.git/hooks/pre-push"
+        mode: '0755'
+      when: local_repo_path is defined and local_repo_path != ""
+        
+    # Copy Keycloak client secret to Kubernetes
+    - name: Create Keycloak client secret in Kubernetes
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "control-hub-keycloak"
+            namespace: "{{ k8s_namespace }}"
+          type: Opaque
+          stringData:
+            client_id: "{{ keycloak_app_client_id }}"
+            client_secret: "{{ keycloak_client_secret }}"
+            realm: "thinkube"
+      when: keycloak_client_secret is defined
+        
+    # Display setup summary
+    - name: Display setup summary
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          ✅ Control Hub Deployment Completed
+          ════════════════════════════════════════════════════════
+          
+          Control URL: https://{{ control_host }}
+          Backend image: {{ backend_image_repo }}:{{ image_tag }}
+          Frontend image: {{ frontend_image_repo }}:{{ image_tag }}
+          GitHub repository: {{ github_repo_url }}
+          
+          Authentication:
+          - Keycloak: https://auth.{{ domain_name }}/realms/thinkube
+          - Client ID: {{ keycloak_app_client_id }}
+          - User with access: {{ keycloak_user_to_grant_access }}
+          
+          Architecture:
+          - Frontend: Vue.js with DaisyUI
+          - Backend: FastAPI with Keycloak integration
+          - Build: Argo Workflows with Kaniko
+          - Deployment: ArgoCD
+          - Authentication: OAuth2 Proxy and Keycloak
+          - Session storage: Redis
+          
+          Repository location: {{ local_repo_path | default('TBD') }}
+          
+          ════════════════════════════════════════════════════════

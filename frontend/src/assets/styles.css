@@ -1,0 +1,54 @@
+/* src/assets/styles.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .dashboard-card {
+    @apply card bg-base-100 shadow-lg hover:shadow-xl transition-all duration-200 h-full;
+  }
+  
+  .btn-nav {
+    @apply btn btn-ghost;
+  }
+  
+  .btn-icon {
+    @apply btn btn-circle btn-sm;
+  }
+  
+  .card-bordered {
+    @apply border border-base-300;
+  }
+  
+  .category-badge {
+    @apply badge;
+  }
+  
+  .category-badge-storage {
+    @apply badge-warning;
+  }
+  
+  .category-badge-monitoring {
+    @apply badge-success;
+  }
+  
+  .category-badge-devops {
+    @apply badge-info;
+  }
+  
+  .category-badge-ai {
+    @apply badge-secondary;
+  }
+  
+  .category-badge-database {
+    @apply badge-primary;
+  }
+  
+  .category-badge-development {
+    @apply badge-accent;
+  }
+  
+  .category-badge-documentation {
+    @apply badge-ghost;
+  }
+}

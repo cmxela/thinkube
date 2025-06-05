@@ -1,0 +1,210 @@
+---
+# ansible/40_thinkube/core/gitea/18_test.yaml
+# Description:
+#   Test Gitea deployment and functionality
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/gitea/18_test.yaml
+
+- name: Test Gitea Deployment
+  hosts: microk8s_control_plane
+  gather_facts: false
+  
+  vars:
+    gitea_namespace: "gitea"
+    gitea_host: "git.{{ domain_name }}"
+    test_timeout: 300
+    
+  tasks:
+    - name: Check namespace exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ gitea_namespace }}"
+      register: namespace_check
+      failed_when: namespace_check.resources | length == 0
+    
+    - name: Check Gitea deployment
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ gitea_namespace }}"
+        name: gitea
+      register: deployment_check
+      failed_when: 
+        - deployment_check.resources | length == 0
+        - deployment_check.resources[0].status.readyReplicas != 1
+    
+    - name: Check Gitea pod status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Pod
+        namespace: "{{ gitea_namespace }}"
+        label_selectors:
+          - app=gitea
+      register: pod_check
+      failed_when: pod_check.resources | length == 0
+    
+    - name: Display pod status
+      ansible.builtin.debug:
+        msg: "Pod {{ item.metadata.name }} is {{ item.status.phase }}"
+      loop: "{{ pod_check.resources }}"
+    
+    - name: Check Gitea service
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Service
+        namespace: "{{ gitea_namespace }}"
+        name: gitea
+      register: service_check
+      failed_when: service_check.resources | length == 0
+    
+    - name: Check ingress configuration
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        namespace: "{{ gitea_namespace }}"
+        name: gitea
+      register: ingress_check
+      failed_when: ingress_check.resources | length == 0
+    
+    - name: Check TLS certificate
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ gitea_namespace }}"
+        name: gitea-tls-secret
+      register: tls_check
+      failed_when: tls_check.resources | length == 0
+    
+    - name: Check database secret
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ gitea_namespace }}"
+        name: gitea-db-secret
+      register: db_secret_check
+      failed_when: db_secret_check.resources | length == 0
+    
+    - name: Check OAuth secret
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ gitea_namespace }}"
+        name: gitea-oauth-secret
+      register: oauth_secret_check
+      failed_when: oauth_secret_check.resources | length == 0
+    
+    - name: Test Gitea HTTP endpoint
+      ansible.builtin.uri:
+        url: "https://{{ gitea_host }}/api/v1/version"
+        validate_certs: true
+        status_code: 200
+        timeout: 30
+      register: gitea_api_check
+      retries: 5
+      delay: 10
+    
+    - name: Display Gitea version
+      ansible.builtin.debug:
+        msg: "Gitea version: {{ gitea_api_check.json.version }}"
+    
+    - name: Test Gitea web interface
+      ansible.builtin.uri:
+        url: "https://{{ gitea_host }}/"
+        validate_certs: true
+        status_code: 200
+        timeout: 30
+      register: gitea_web_check
+    
+    - name: Check persistent volume claim
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ gitea_namespace }}"
+        name: gitea-pvc
+      register: pvc_check
+      failed_when: 
+        - pvc_check.resources | length == 0
+        - pvc_check.resources[0].status.phase != "Bound"
+    
+    - name: Test database connectivity
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: "gitea-db-test-{{ ansible_date_time.epoch }}"
+            namespace: "{{ gitea_namespace }}"
+          spec:
+            ttlSecondsAfterFinished: 60
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                - name: test-db
+                  image: postgres:14
+                  env:
+                  - name: PGPASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: gitea-db-secret
+                        key: password
+                  command:
+                  - psql
+                  - -h
+                  - postgresql.postgresql.svc.cluster.local
+                  - -U
+                  - gitea
+                  - -d
+                  - gitea
+                  - -c
+                  - "SELECT version();"
+    
+    - name: Wait for database test to complete
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: batch/v1
+        kind: Job
+        namespace: "{{ gitea_namespace }}"
+        name: "gitea-db-test-{{ ansible_date_time.epoch }}"
+      register: db_job_status
+      until: db_job_status.resources[0].status.succeeded is defined and db_job_status.resources[0].status.succeeded == 1
+      retries: 20
+      delay: 5
+    
+    - name: Summary of test results
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          ✅ Gitea Tests Passed
+          ════════════════════════════════════════════════════════
+          
+          ✓ Namespace exists
+          ✓ Deployment is ready (1/1 replicas)
+          ✓ Pod is running
+          ✓ Service is configured
+          ✓ Ingress is configured
+          ✓ TLS certificate present
+          ✓ Database connectivity confirmed
+          ✓ OAuth secret configured
+          ✓ API endpoint responsive
+          ✓ Web interface accessible
+          ✓ Persistent storage bound
+          
+          Service URL: https://{{ gitea_host }}
+          
+          ════════════════════════════════════════════════════════

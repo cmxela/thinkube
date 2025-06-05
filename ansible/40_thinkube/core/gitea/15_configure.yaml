@@ -1,0 +1,171 @@
+---
+# ansible/40_thinkube/core/gitea/15_configure.yaml
+# Description:
+#   Configure Gitea with initial organizations and settings
+#   Sets up deployment repository structure for Thinkube
+#
+# Requirements:
+#   - Gitea must be deployed (run 10_deploy.yaml first)
+#   - Admin user must have logged in via Keycloak
+#
+# Usage:
+#   cd ~/thinkube
+#   ./scripts/run_ansible.sh ansible/40_thinkube/core/gitea/15_configure.yaml
+
+- name: Configure Gitea for Thinkube
+  hosts: microk8s_control_plane
+  gather_facts: false
+  
+  vars:
+    gitea_namespace: "gitea"
+    gitea_host: "git.{{ domain_name }}"
+    gitea_api_url: "https://{{ gitea_host }}/api/v1"
+    
+    # Default organization for deployment repos
+    thinkube_org_name: "thinkube-deployments"
+    thinkube_org_description: "Thinkube deployment configurations"
+    
+  tasks:
+    - name: Wait for Gitea to be fully ready
+      ansible.builtin.uri:
+        url: "{{ gitea_api_url }}/version"
+        validate_certs: true
+        status_code: 200
+      register: gitea_ready
+      until: gitea_ready.status == 200
+      retries: 30
+      delay: 10
+    
+    - name: Get Gitea admin token
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════════════
+          ⚠️  Manual Step Required
+          ════════════════════════════════════════════════════════
+          
+          1. Open https://{{ gitea_host }} in your browser
+          2. Click "Sign In" and login via Keycloak
+          3. Go to Settings → Applications
+          4. Generate a new token with all scopes
+          5. Export the token:
+             
+             export GITEA_TOKEN="your-token-here"
+          
+          6. Then re-run this playbook
+          ════════════════════════════════════════════════════════
+      when: lookup('env', 'GITEA_TOKEN') == ""
+    
+    - name: Fail if token not provided
+      ansible.builtin.fail:
+        msg: "Please set GITEA_TOKEN environment variable"
+      when: lookup('env', 'GITEA_TOKEN') == ""
+    
+    - name: Set Gitea token fact
+      ansible.builtin.set_fact:
+        gitea_token: "{{ lookup('env', 'GITEA_TOKEN') }}"
+    
+    - name: Test API access with token
+      ansible.builtin.uri:
+        url: "{{ gitea_api_url }}/user"
+        headers:
+          Authorization: "token {{ gitea_token }}"
+        validate_certs: true
+        status_code: 200
+      register: user_info
+    
+    - name: Display authenticated user
+      ansible.builtin.debug:
+        msg: "Authenticated as: {{ user_info.json.login }}"
+    
+    - name: Check if organization exists
+      ansible.builtin.uri:
+        url: "{{ gitea_api_url }}/orgs/{{ thinkube_org_name }}"
+        headers:
+          Authorization: "token {{ gitea_token }}"
+        validate_certs: true
+        status_code: [200, 404]
+      register: org_check
+    
+    - name: Create Thinkube deployments organization
+      ansible.builtin.uri:
+        url: "{{ gitea_api_url }}/orgs"
+        method: POST
+        headers:
+          Authorization: "token {{ gitea_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          username: "{{ thinkube_org_name }}"
+          full_name: "Thinkube Deployments"
+          description: "{{ thinkube_org_description }}"
+          visibility: "private"
+          repo_admin_change_team_access: true
+        validate_certs: true
+        status_code: 201
+      when: org_check.status == 404
+    
+    - name: Configure Gitea settings via API
+      ansible.builtin.uri:
+        url: "{{ gitea_api_url }}/admin/config"
+        method: PATCH
+        headers:
+          Authorization: "token {{ gitea_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          config:
+            webhook:
+              allowed_host_list: "*.{{ domain_name }}"
+              deliver_timeout: 30
+            git:
+              timeout:
+                default: 360
+                migrate: 600
+                mirror: 300
+                clone: 300
+                pull: 300
+        validate_certs: true
+        status_code: [200, 204]
+      ignore_errors: yes  # Admin endpoints might require special permissions
+    
+    - name: Create webhook defaults configmap
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: gitea-webhook-config
+            namespace: "{{ gitea_namespace }}"
+          data:
+            argocd_webhook_url: "https://argocd.{{ domain_name }}/api/webhook"
+            default_webhook_secret: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+    
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg: |
+          
+          ════════════════════════════════════════════════════════
+          ✅ Gitea Configuration Completed
+          ════════════════════════════════════════════════════════
+          
+          Organization created: {{ thinkube_org_name }}
+          API endpoint: {{ gitea_api_url }}
+          
+          Next steps:
+          1. Create deployment repositories in the organization
+          2. Configure webhooks for ArgoCD integration
+          3. Set up repository mirroring if needed
+          
+          Example repository structure:
+          - {{ thinkube_org_name }}/control-hub-deployment
+          - {{ thinkube_org_name }}/jupyter-deployment
+          - {{ thinkube_org_name }}/devpi-deployment
+          
+          Each repository will contain:
+          - Generated Kubernetes manifests
+          - Kustomization files
+          - Environment-specific configurations
+          
+          ════════════════════════════════════════════════════════

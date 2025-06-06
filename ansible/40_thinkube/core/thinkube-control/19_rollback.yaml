@@ -99,6 +99,42 @@
         namespace: "{{ control_namespace }}"
         state: absent
     
+    # Remove Keycloak client
+    - name: Include common Keycloak tasks to get admin token
+      include_role:
+        name: keycloak/keycloak_common
+      vars:
+        keycloak_namespace: "keycloak"
+        keycloak_realm: "thinkube"
+        keycloak_url: "https://auth.{{ domain_name }}"
+        keycloak_admin_username: "{{ admin_username }}"
+        keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+        keycloak_validate_certs: true
+
+    - name: Get control-hub client details from Keycloak
+      uri:
+        url: "https://auth.{{ domain_name }}/admin/realms/thinkube/clients?clientId=control-hub"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: true
+        status_code: [200]
+      register: control_hub_client
+      when: keycloak_token is defined
+
+    - name: Delete control-hub client from Keycloak
+      uri:
+        url: "https://auth.{{ domain_name }}/admin/realms/thinkube/clients/{{ control_hub_client.json[0].id }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ keycloak_token.json.access_token }}"
+        validate_certs: true
+        status_code: [204]
+      when: 
+        - keycloak_token is defined
+        - control_hub_client.json is defined
+        - control_hub_client.json | length > 0
+
     # Remove Gitea repository
     - name: Get Gitea admin token
       kubernetes.core.k8s_info:

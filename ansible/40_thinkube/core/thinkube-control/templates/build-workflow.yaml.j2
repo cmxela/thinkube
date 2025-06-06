@@ -50,7 +50,7 @@ spec:
         arguments:
           parameters:
           - name: repo-url
-            value: "{{workflow.parameters.repo-url}}"
+            value: "{{ '{{workflow.parameters.repo-url}}' }}"
       
       - name: build-backend
         template: build-backend
@@ -60,10 +60,10 @@ spec:
         arguments:
           parameters:
           - name: image-tag
-            value: "{{tasks.timestamp.outputs.parameters.timestamp}}"
+            value: "{{ '{{tasks.timestamp.outputs.parameters.timestamp}}' }}"
           artifacts:
           - name: repo
-            from: "{{tasks.clone-repo.outputs.artifacts.repo}}"
+            from: "{{ '{{tasks.clone-repo.outputs.artifacts.repo}}' }}"
       
       - name: build-frontend
         template: build-frontend
@@ -73,10 +73,10 @@ spec:
         arguments:
           parameters:
           - name: image-tag
-            value: "{{tasks.timestamp.outputs.parameters.timestamp}}"
+            value: "{{ '{{tasks.timestamp.outputs.parameters.timestamp}}' }}"
           artifacts:
           - name: repo
-            from: "{{tasks.clone-repo.outputs.artifacts.repo}}"
+            from: "{{ '{{tasks.clone-repo.outputs.artifacts.repo}}' }}"
       
       - name: update-kustomization
         template: update-kustomization
@@ -86,12 +86,12 @@ spec:
         arguments:
           parameters:
           - name: image-tag
-            value: "{{tasks.timestamp.outputs.parameters.timestamp}}"
+            value: "{{ '{{tasks.timestamp.outputs.parameters.timestamp}}' }}"
           - name: repo-url
-            value: "{{workflow.parameters.repo-url}}"
+            value: "{{ '{{workflow.parameters.repo-url}}' }}"
           artifacts:
           - name: repo
-            from: "{{tasks.clone-repo.outputs.artifacts.repo}}"
+            from: "{{ '{{tasks.clone-repo.outputs.artifacts.repo}}' }}"
   
   - name: generate-timestamp
     container:
@@ -124,7 +124,7 @@ spec:
           
           # Clone the repository
           mkdir -p /workspace
-          git clone {{inputs.parameters.repo-url}} /workspace
+          git clone {% raw %}{{inputs.parameters.repo-url}}{% endraw %} /workspace
           
           # Check if backend and frontend directories exist
           if [ -d "/workspace/backend" ] && [ -d "/workspace/frontend" ]; then
@@ -156,7 +156,8 @@ spec:
       args:
         - --dockerfile=/workspace/backend/Dockerfile
         - --context=/workspace/backend
-        - --destination={{ backend_image_repo }}:{{inputs.parameters.image-tag}}
+        - --destination={{ backend_image_repo }}:{% raw %}{{inputs.parameters.image-tag}}
+{% endraw %}
         - --insecure
         - --insecure-pull
         - --skip-tls-verify
@@ -177,7 +178,8 @@ spec:
       args:
         - --dockerfile=/workspace/frontend/Dockerfile
         - --context=/workspace/frontend
-        - --destination={{ frontend_image_repo }}:{{inputs.parameters.image-tag}}
+        - --destination={{ frontend_image_repo }}:{% raw %}{{inputs.parameters.image-tag}}
+{% endraw %}
         - --insecure
         - --insecure-pull
         - --skip-tls-verify
@@ -197,43 +199,47 @@ spec:
     container:
       image: alpine/git:latest
       command: ["/bin/sh", "-c"]
+      env:
+      - name: GITEA_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: gitea-admin-token
+            key: token
       args:
         - |
           set -e
           # Setup Git
-          git config --global user.email "argo@thinkube.com"
+          git config --global user.email "argo@{{ domain_name }}"
           git config --global user.name "Argo Workflow"
           
-          # Setup SSH
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          cp /mnt/ssh/ssh-privatekey ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+          # Configure Git to use token authentication
+          git config --global url."https://{{ admin_username }}:${GITEA_TOKEN}@git.{{ domain_name }}/".insteadOf "https://git.{{ domain_name }}/"
           
-          # Change to workspace directory
-          cd /workspace
+          # Clone the Gitea deployment repository
+          echo "Cloning deployment repository from Gitea..."
+          git clone https://{{ admin_username }}:${GITEA_TOKEN}@git.{{ domain_name }}/thinkube-deployments/{{ app_name }}-deployment.git /deployment
+          cd /deployment
           
           # Update image tags in kustomization.yaml
-          IMAGE_TAG="{{inputs.parameters.image-tag}}"
+          IMAGE_TAG="{% raw %}{{inputs.parameters.image-tag}}{% endraw %}"
           echo "Updating image tags in kustomization.yaml to $IMAGE_TAG"
           
           # Check if file exists
-          if [ ! -f /workspace/k8s/kustomization.yaml ]; then
-            echo "ERROR: kustomization.yaml not found at /workspace/k8s/kustomization.yaml"
+          if [ ! -f k8s/kustomization.yaml ]; then
+            echo "ERROR: kustomization.yaml not found at k8s/kustomization.yaml"
             exit 1
           fi
           
           # Update both backend and frontend image tags
-          sed -i "s|newTag:.*# backend|newTag: $IMAGE_TAG # backend|g" /workspace/k8s/kustomization.yaml
-          sed -i "s|newTag:.*# frontend|newTag: $IMAGE_TAG # frontend|g" /workspace/k8s/kustomization.yaml
+          sed -i "s|newTag:.*# backend|newTag: $IMAGE_TAG # backend|g" k8s/kustomization.yaml
+          sed -i "s|newTag:.*# frontend|newTag: $IMAGE_TAG # frontend|g" k8s/kustomization.yaml
           
           # Display the changes
           echo "Updated kustomization.yaml:"
-          cat /workspace/k8s/kustomization.yaml
+          cat k8s/kustomization.yaml
           
           # Commit and push changes
-          git add /workspace/k8s/kustomization.yaml
+          git add k8s/kustomization.yaml
           git commit -m "Update image tags to $IMAGE_TAG [skip ci]"
           git push origin HEAD:main
           

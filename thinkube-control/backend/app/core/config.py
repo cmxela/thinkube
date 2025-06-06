@@ -32,15 +32,20 @@ class Settings(BaseSettings):
     
     # Dashboard service URLs - configured via environment variables
     SEAWEEDFS_URL: str
-    OPENSEARCH_URL: str
     HARBOR_URL: str
-    QDRANT_URL: str
-    AWX_URL: str
-    PGADMIN_URL: str
-    DEVPI_URL: str
-    JUPYTERHUB_URL: str
-    CODE_SERVER_URL: str
-    MKDOCS_URL: str
+    GITEA_URL: str
+    ARGOCD_URL: str
+    ARGO_WORKFLOWS_URL: str
+    KEYCLOAK_URL: str
+    # Services not yet deployed - uncomment when ready
+    # OPENSEARCH_URL: str
+    # QDRANT_URL: str
+    # AWX_URL: str
+    # PGADMIN_URL: str
+    # DEVPI_URL: str
+    # JUPYTERHUB_URL: str
+    # CODE_SERVER_URL: str
+    # MKDOCS_URL: str
 
     class Config:
         case_sensitive = True

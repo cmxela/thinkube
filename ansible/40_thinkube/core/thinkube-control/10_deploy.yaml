@@ -94,9 +94,6 @@
     # Multi-node specific settings
     check_interval: 5
     
-    # Source of thinkube-control (local subtree)
-    thinkube_control_source: "{{ playbook_dir }}"
-    
     # Shared code directory (accessible from code-server and jupyterhub)
     shared_code_path: "/home/{{ system_username }}/shared-code"
     code_source_path: "{{ shared_code_path }}"
@@ -246,11 +243,34 @@
       ansible.builtin.include_role:
         name: container_deployment/docker_kaniko
     
+    # Copy Gitea token to Argo namespace for workflow access
+    - name: Get Gitea admin token from gitea namespace
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: gitea
+        name: gitea-admin-token
+      register: gitea_token_secret
+      
+    - name: Copy Gitea token to Argo namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: gitea-admin-token
+            namespace: "{{ argo_workflows_namespace }}"
+          type: Opaque
+          data:
+            token: "{{ gitea_token_secret.resources[0].data.token }}"
+      when: gitea_token_secret.resources | length > 0
+    
     # Generate manifests from templates before pushing to Gitea
     - name: Generate Kubernetes manifests from templates
       ansible.builtin.include_tasks: tasks/generate_manifests.yaml
-      vars:
-        local_repo_path: "{{ repo_path }}"
         
     - name: Include Git push setup to push to Gitea
       ansible.builtin.include_role:
@@ -259,7 +279,6 @@
         gitea_org: "thinkube-deployments"
         gitea_repo_name: "{{ app_name }}-deployment"
         gitea_repo_description: "Thinkube Control Hub deployment manifests"
-        local_repo_path: "{{ repo_path }}"
 
 - name: Continue deployment with Keycloak and remaining services
   hosts: microk8s_control_plane
@@ -276,6 +295,7 @@
     keycloak_user_to_grant_access: "{{ auth_realm_username }}"
     keycloak_admin_username: "{{ admin_username }}"
     keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
     keycloak_validate_certs: true
     github_repo_name: "thinkube-control"
     github_org: "{{ github_user }}"
@@ -343,23 +363,30 @@
       ansible.builtin.include_role:
         name: container_deployment/workflow
     
-    - name: Wait for images to be available
+    - name: Wait for frontend image to be available
       ansible.builtin.include_role:
         name: waiting_for_image
       vars:
         image_repo: "{{ frontend_image_repo }}"
     
+    - name: Wait for backend image to be available
+      ansible.builtin.include_role:
+        name: waiting_for_image
+      vars:
+        image_repo: "{{ backend_image_repo }}"
+        # Skip workflow wait since we already waited in frontend check
+        skip_workflow_wait: true
+    
+    # Deploy with ArgoCD, specifying Gitea repository URL
     - name: Deploy with ArgoCD
       ansible.builtin.include_role:
         name: container_deployment/argocd
+      vars:
+        argocd_repo_url: "https://git.{{ domain_name }}/thinkube-deployments/{{ app_name }}-deployment.git"
     
     - name: Check sync status
       ansible.builtin.include_role:
         name: container_deployment/sync_status
-    
-    - name: Deploy application
-      ansible.builtin.include_role:
-        name: container_deployment/deployment
       
     # Set default Git configuration values
     - name: Set default Git configuration values if not provided

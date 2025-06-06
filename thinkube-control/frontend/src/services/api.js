@@ -30,7 +30,7 @@ axios.interceptors.response.use(
  */
 export const getDashboards = async () => {
   try {
-    const response = await axios.get('/dashboards/dashboards');
+    const response = await axios.get('/dashboards');
     return response.data;
   } catch (error) {
     console.error('Failed to get dashboards', error);
@@ -43,7 +43,7 @@ export const getDashboards = async () => {
  */
 export const getDashboardCategories = async () => {
   try {
-    const response = await axios.get('/dashboards/dashboards/categories');
+    const response = await axios.get('/dashboards/categories');
     return response.data.categories;
   } catch (error) {
     console.error('Failed to get dashboard categories', error);
@@ -56,7 +56,7 @@ export const getDashboardCategories = async () => {
  */
 export const getDashboard = async (id) => {
   try {
-    const response = await axios.get(`/dashboards/dashboards/${id}`);
+    const response = await axios.get(`/dashboards/${id}`);
     return response.data;
   } catch (error) {
     console.error(`Failed to get dashboard with ID ${id}`, error);

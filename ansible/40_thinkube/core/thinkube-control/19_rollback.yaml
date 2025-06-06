@@ -24,6 +24,9 @@
     control_namespace: "control-hub"
     argocd_namespace: "argocd"
     argo_workflows_namespace: "argo"
+    gitea_namespace: "gitea"
+    gitea_hostname: "git.{{ domain_name }}"
+    app_name: "control-hub"
 
   tasks:
     - name: Verify kubeconfig is defined
@@ -31,47 +34,25 @@
         msg: "kubeconfig is not defined. Please set it in inventory."
       when: kubeconfig is not defined or kubeconfig == ""
 
-    # Remove ArgoCD applications
-    - name: Delete Control Backend ArgoCD application
+    # Remove ArgoCD application
+    - name: Delete Control Hub ArgoCD application
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig }}"
         api_version: argoproj.io/v1alpha1
         kind: Application
-        name: control-backend
-        namespace: "{{ argocd_namespace }}"
-        state: absent
-
-    - name: Delete Control Frontend ArgoCD application
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        api_version: argoproj.io/v1alpha1
-        kind: Application
-        name: control-frontend
+        name: "{{ app_name }}"
         namespace: "{{ argocd_namespace }}"
         state: absent
 
     # Remove Argo Workflows
-    - name: Delete Control build workflows
+    - name: Delete Control build workflow
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig }}"
         api_version: argoproj.io/v1alpha1
         kind: WorkflowTemplate
         namespace: "{{ argo_workflows_namespace }}"
         state: absent
-        name: "{{ item }}"
-      loop:
-        - control-backend-build
-        - control-frontend-build
-
-    # Remove OAuth2 Proxy resources
-    - name: Delete OAuth2 Proxy Helm release
-      kubernetes.core.helm:
-        kubeconfig: "{{ kubeconfig }}"
-        name: oauth2-proxy
-        namespace: "{{ control_namespace }}"
-        state: absent
-        wait: true
-      ignore_errors: true
+        name: "{{ app_name }}-build"
 
     # Remove Redis
     - name: Delete Redis resources
@@ -110,6 +91,53 @@
         name: kaniko-builder
         namespace: "{{ control_namespace }}"
         state: absent
+    
+    # Remove Gitea repository
+    - name: Get Gitea admin token
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ gitea_namespace }}"
+        name: gitea-admin-token
+      register: gitea_token_secret
+      failed_when: false
+    
+    - name: Delete Gitea repository
+      uri:
+        url: "https://{{ gitea_hostname }}/api/v1/repos/thinkube-deployments/{{ app_name }}-deployment"
+        method: DELETE
+        headers:
+          Authorization: "token {{ gitea_token_secret.resources[0].data.token | b64decode }}"
+        validate_certs: true
+        status_code: [204, 404]
+      when: 
+        - gitea_token_secret.resources is defined
+        - gitea_token_secret.resources | length > 0
+      register: gitea_delete_result
+
+    - name: Verify Gitea repository was deleted
+      uri:
+        url: "https://{{ gitea_hostname }}/api/v1/repos/thinkube-deployments/{{ app_name }}-deployment"
+        method: GET
+        headers:
+          Authorization: "token {{ gitea_token_secret.resources[0].data.token | b64decode }}"
+        validate_certs: true
+        status_code: [404]
+      when: 
+        - gitea_token_secret.resources is defined
+        - gitea_token_secret.resources | length > 0
+        - gitea_delete_result is defined
+    
+    # Remove Gitea token from Argo namespace
+    - name: Delete Gitea token from Argo namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        name: gitea-admin-token
+        namespace: "{{ argo_workflows_namespace }}"
+        state: absent
 
     # Remove namespace (this will clean up any remaining resources)
     - name: Delete Control namespace
@@ -125,6 +153,18 @@
           status: "False"
         wait_timeout: 300
 
+    # Clean up cloned repository
+    - name: Check if cloned repository exists
+      ansible.builtin.stat:
+        path: "/home/{{ system_username | default('thinkube') }}/shared-code/thinkube-control"
+      register: repo_dir
+
+    - name: Remove cloned repository from shared-code directory
+      ansible.builtin.file:
+        path: "/home/{{ system_username | default('thinkube') }}/shared-code/thinkube-control"
+        state: absent
+      when: repo_dir.stat.exists
+
     - name: Display rollback completion message
       ansible.builtin.debug:
         msg: |
@@ -136,9 +176,9 @@
           All Control resources have been removed:
           - ArgoCD applications deleted
           - Argo Workflows templates deleted
-          - OAuth2 Proxy removed
           - Redis deployment removed
           - Secrets cleaned up
+          - Gitea repository deleted
           - Namespace deleted
           
           ════════════════════════════════════════════════════════

@@ -2,12 +2,10 @@
 # Generate Kubernetes manifests from templates
 # This task file is included in the main deployment playbook
 
-# Template the Kubernetes manifests directly in the cloned repository
-- name: Template Kubernetes manifests
-  ansible.builtin.template:
-    src: "{{ local_repo_path }}/k8s/{{ item }}"
-    dest: "{{ local_repo_path }}/k8s/{{ item | replace('.jinja', '') }}"
-    mode: '0644'
+# First verify that the templates exist in the cloned repository
+- name: Check if k8s templates exist in cloned repository
+  ansible.builtin.stat:
+    path: "{{ local_repo_path }}/k8s/{{ item }}"
   loop:
     - namespace.yaml.jinja
     - backend-deployment.yaml.jinja
@@ -17,73 +15,126 @@
     - ingress.yaml.jinja
     - keycloak-setup.yaml.jinja
     - kustomization.yaml.jinja
-  vars:
+  register: template_checks
+
+- name: Verify all templates exist
+  ansible.builtin.fail:
+    msg: "Template {{ item.item }} not found at {{ item.stat.path }}"
+  when: not item.stat.exists
+  loop: "{{ template_checks.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# Template the Kubernetes manifests directly in the cloned repository
+- name: Process Kubernetes manifest templates
+  ansible.builtin.shell: |
+    cd {{ local_repo_path }}
+    
+    # Create a temporary Jinja2 template processor script
+    cat > process_template.py << 'EOF'
+    import sys
+    from jinja2 import Template
+    import os
+    
+    template_file = sys.argv[1]
+    output_file = sys.argv[2]
+    
     # Template variables
-    namespace: "{{ k8s_namespace }}"
-    control_subdomain: "control"
-    auth_subdomain: "auth"
-    registry_subdomain: "registry"
-    domain_name: "{{ domain_name }}"
-    keycloak_realm: "thinkube"
-    github_org: "{{ github_user }}"
-    project_name: "{{ app_name }}"
+    vars = {
+        'namespace': '{{ k8s_namespace }}',
+        'control_subdomain': 'control',
+        'auth_subdomain': 'auth', 
+        'registry_subdomain': 'registry',
+        'domain_name': '{{ domain_name }}',
+        'keycloak_realm': 'thinkube',
+        'github_org': '{{ github_user }}',
+        'project_name': '{{ app_name }}',
+        'container_registry': '{{ container_registry }}',
+        'backend_image_repo': '{{ backend_image_repo }}',
+        'frontend_image_repo': '{{ frontend_image_repo }}',
+        'image_tag': '{{ image_tag }}'
+    }
+    
+    with open(template_file, 'r') as f:
+        template = Template(f.read())
+    
+    with open(output_file, 'w') as f:
+        f.write(template.render(**vars))
+    
+    os.chmod(output_file, 0o644)
+    EOF
+    
+    # Process each template
+    for template in namespace.yaml.jinja backend-deployment.yaml.jinja backend-service.yaml.jinja frontend-deployment.yaml.jinja frontend-service.yaml.jinja ingress.yaml.jinja keycloak-setup.yaml.jinja kustomization.yaml.jinja; do
+      if [ -f "k8s/$template" ]; then
+        echo "Processing k8s/$template"
+        python3 process_template.py "k8s/$template" "k8s/${template%.jinja}"
+      else
+        echo "ERROR: k8s/$template not found"
+        exit 1
+      fi
+    done
+    
+    # Clean up
+    rm -f process_template.py
+  args:
+    executable: /bin/bash
+  register: template_result
+  changed_when: true
 
 # Template the workflow files
-- name: Template workflow files
-  ansible.builtin.template:
-    src: "{{ local_repo_path }}/workflows/{{ item }}"
-    dest: "{{ local_repo_path }}/workflows/{{ item | replace('.jinja', '') }}"
-    mode: '0644'
-  loop:
-    - build-workflow.yaml.jinja
-  ignore_errors: true  # In case the file doesn't exist yet
+- name: Process workflow templates
+  ansible.builtin.shell: |
+    cd {{ local_repo_path }}
+    
+    # Use the same template processor
+    cat > process_template.py << 'EOF'
+    import sys
+    from jinja2 import Template
+    import os
+    
+    template_file = sys.argv[1]
+    output_file = sys.argv[2]
+    
+    # Template variables for workflows
+    vars = {
+        'app_name': '{{ app_name }}',
+        'argo_workflows_namespace': '{{ argo_workflows_namespace }}',
+        'master_node_name': '{{ master_node_name }}',
+        'github_repo_url': '{{ github_repo_url }}',
+        'github_repo_name': '{{ github_repo_name }}',
+        'github_org': '{{ github_org }}',
+        'backend_image_repo': '{{ backend_image_repo }}',
+        'frontend_image_repo': '{{ frontend_image_repo }}'
+    }
+    
+    with open(template_file, 'r') as f:
+        template = Template(f.read())
+    
+    with open(output_file, 'w') as f:
+        f.write(template.render(**vars))
+    
+    os.chmod(output_file, 0o644)
+    EOF
+    
+    # Process workflow templates
+    if [ -f "workflows/build-workflow.yaml.jinja" ]; then
+      echo "Processing workflows/build-workflow.yaml.jinja"
+      python3 process_template.py "workflows/build-workflow.yaml.jinja" "workflows/build-workflow.yaml"
+    else
+      echo "Warning: workflows/build-workflow.yaml.jinja not found"
+    fi
+    
+    # Clean up
+    rm -f process_template.py
+  args:
+    executable: /bin/bash
+  register: workflow_template_result
+  changed_when: true
 
-# Keep templates for reference and regeneration
-- name: Create templates directory
-  ansible.builtin.file:
-    path: "{{ local_repo_path }}/templates"
-    state: directory
-    mode: '0755'
-
-- name: Copy templates to templates directory
-  ansible.builtin.copy:
-    src: "{{ local_repo_path }}/{{ item }}"
-    dest: "{{ local_repo_path }}/templates/{{ item }}"
-    mode: '0644'
-  loop:
-    - k8s/namespace.yaml.jinja
-    - k8s/backend-deployment.yaml.jinja
-    - k8s/backend-service.yaml.jinja
-    - k8s/frontend-deployment.yaml.jinja
-    - k8s/frontend-service.yaml.jinja
-    - k8s/ingress.yaml.jinja
-    - k8s/keycloak-setup.yaml.jinja
-    - k8s/kustomization.yaml.jinja
-    - workflows/build-workflow.yaml.jinja
-  ignore_errors: yes
-
-- name: Add README for templates
-  ansible.builtin.copy:
-    content: |
-      # Templates Directory
-      
-      This directory contains the original Jinja2 templates used to generate the Kubernetes manifests.
-      
-      **DO NOT EDIT THESE FILES DIRECTLY IN GITEA**
-      
-      To update templates:
-      1. Make changes in the GitHub repository
-      2. Re-run the deployment playbook to regenerate manifests
-      
-      Template variables used:
-      - domain_name: {{ domain_name }}
-      - namespace: {{ k8s_namespace }}
-      - registry: registry.{{ domain_name }}
-      
-      Generated from GitHub commit: {{ github_commit | default('unknown') }}
-      Generated on: {{ ansible_date_time.iso8601 }}
-    dest: "{{ local_repo_path }}/templates/README.md"
-    mode: '0644'
+# No need to copy templates - they already exist in the repository
+# The .jinja files will remain in place alongside the generated .yaml files
+# Git hooks will handle template processing during development
 
 - name: Create deployment metadata
   ansible.builtin.copy:
@@ -109,9 +160,15 @@
     dest: "{{ local_repo_path }}/DEPLOYMENT_INFO.yaml"
     mode: '0644'
 
-- name: Commit all changes
+- name: Configure git and commit all changes
   ansible.builtin.shell: |
     cd {{ local_repo_path }}
+    
+    # Configure git user
+    git config user.name "{{ git_user_name | default('Thinkube Automation') }}"
+    git config user.email "{{ git_user_email | default('automation@' + domain_name) }}"
+    
+    # Add and commit changes
     git add -A
     git diff --cached --exit-code || git commit -m "Configure thinkube-control for {{ domain_name }}"
   args:
@@ -120,10 +177,4 @@
   changed_when: git_commit.rc == 0
   failed_when: git_commit.rc not in [0, 1]
 
-- name: Push to GitHub
-  ansible.builtin.shell: |
-    cd {{ local_repo_path }}
-    git push origin main || git push --set-upstream origin main
-  args:
-    executable: /bin/bash
-  when: git_commit.changed
+# Don't push to GitHub - the git_push role will handle pushing to Gitea

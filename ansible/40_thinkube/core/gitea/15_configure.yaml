@@ -195,6 +195,58 @@
             argocd_webhook_url: "https://argocd.{{ domain_name }}/api/webhook"
             default_webhook_secret: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
     
+    # Configure ArgoCD to access Gitea repositories
+    - name: Check if ArgoCD is installed
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: argocd
+      register: argocd_namespace_check
+    
+    - name: Configure ArgoCD with Gitea credentials
+      when: argocd_namespace_check.resources | length > 0
+      block:
+        - name: Add Gitea repository credentials to ArgoCD
+          kubernetes.core.k8s:
+            kubeconfig: "{{ kubeconfig }}"
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: gitea-repo-creds
+                namespace: argocd
+                labels:
+                  argocd.argoproj.io/secret-type: repo-creds
+              stringData:
+                url: "https://{{ gitea_host }}"
+                type: git
+                username: "{{ admin_username }}"
+                password: "{{ gitea_token }}"
+        
+        - name: Restart ArgoCD repo server to pick up new credentials
+          ansible.builtin.shell: |
+            {{ kubectl_bin }} -n argocd rollout restart deployment argocd-repo-server
+          changed_when: true
+        
+        - name: Wait for ArgoCD repo server to be ready
+          ansible.builtin.shell: |
+            for i in $(seq 1 12); do
+              READY=$({{ kubectl_bin }} -n argocd get deployment argocd-repo-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+              if [ "$READY" = "1" ]; then
+                echo "ArgoCD repo server is ready"
+                exit 0
+              fi
+              echo "Waiting for ArgoCD repo server to be ready... attempt $i/12"
+              sleep 10
+            done
+            echo "ArgoCD repo server ready"
+            exit 0
+          changed_when: false
+          args:
+            executable: /bin/bash
+    
     - name: Display configuration summary
       ansible.builtin.debug:
         msg: |
@@ -205,6 +257,11 @@
           
           Organization created: {{ thinkube_org_name }}
           API endpoint: {{ gitea_api_url }}
+          {% if argocd_namespace_check.resources | length > 0 %}
+          ArgoCD configured: Yes (credentials added)
+          {% else %}
+          ArgoCD configured: No (ArgoCD not installed)
+          {% endif %}
           
           Next steps:
           1. Create deployment repositories in the organization

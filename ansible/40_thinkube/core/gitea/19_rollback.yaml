@@ -9,15 +9,12 @@
 
 - name: Rollback Gitea Deployment
   hosts: microk8s_control_plane
-  gather_facts: false
+  gather_facts: true
   
   vars:
-    gitea_namespace: "gitea"
     gitea_db_name: "gitea"
-    gitea_db_user: "gitea"
     keycloak_client_id: "gitea"
-    keycloak_realm: "thinkube"
-    postgres_host: "postgresql.postgresql.svc.cluster.local"
+    postgres_host: "postgresql-official.{{ postgres_namespace }}.svc.cluster.local"
     
   tasks:
     - name: Remove Gitea namespace (this will delete all resources)
@@ -50,7 +47,7 @@
           kind: Job
           metadata:
             name: "gitea-db-cleanup-{{ ansible_date_time.epoch }}"
-            namespace: postgresql
+            namespace: "{{ postgres_namespace }}"
           spec:
             ttlSecondsAfterFinished: 300
             template:
@@ -67,12 +64,9 @@
                   - -c
                   - |
                     # Drop database
-                    psql -h {{ postgres_host }} -U postgres -c "DROP DATABASE IF EXISTS {{ gitea_db_name }};"
+                    psql -h {{ postgres_host }} -U {{ admin_username }} -d mydatabase -c "DROP DATABASE IF EXISTS {{ gitea_db_name }};"
                     
-                    # Drop user
-                    psql -h {{ postgres_host }} -U postgres -c "DROP USER IF EXISTS {{ gitea_db_user }};"
-                    
-                    echo "Database and user cleaned up"
+                    echo "Database cleaned up"
       when: lookup('env', 'ADMIN_PASSWORD') != ""
     
     - name: Remove Keycloak client
@@ -105,6 +99,8 @@
         status_code: 204
       when: 
         - client_response is defined
+        - client_response is not skipped
+        - client_response.json is defined
         - client_response.json | length > 0
         - keycloak_admin_token is defined
     
@@ -118,9 +114,10 @@
           
           Removed:
           ✓ Gitea namespace and all resources
-          ✓ PostgreSQL database and user
+          ✓ PostgreSQL database
           ✓ Keycloak client configuration
           ✓ All persistent data
+          ✓ Admin API tokens and secrets
           
           Note: If you redeploy Gitea, it will start fresh
           with no existing repositories or users.

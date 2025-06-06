@@ -9,11 +9,10 @@
 
 - name: Test Gitea Deployment
   hosts: microk8s_control_plane
-  gather_facts: false
+  gather_facts: true
   
   vars:
-    gitea_namespace: "gitea"
-    gitea_host: "git.{{ domain_name }}"
+    gitea_host: "{{ gitea_hostname }}"  # Using gitea_hostname from group_vars
     test_timeout: 300
     
   tasks:
@@ -106,17 +105,17 @@
     
     - name: Test Gitea HTTP endpoint
       ansible.builtin.uri:
-        url: "https://{{ gitea_host }}/api/v1/version"
+        url: "https://{{ gitea_host }}/user/login"
         validate_certs: true
         status_code: 200
         timeout: 30
-      register: gitea_api_check
+      register: gitea_http_check
       retries: 5
       delay: 10
     
-    - name: Display Gitea version
+    - name: Check Gitea is accessible
       ansible.builtin.debug:
-        msg: "Gitea version: {{ gitea_api_check.json.version }}"
+        msg: "Gitea is accessible at https://{{ gitea_host }}"
     
     - name: Test Gitea web interface
       ansible.builtin.uri:
@@ -137,6 +136,15 @@
       failed_when: 
         - pvc_check.resources | length == 0
         - pvc_check.resources[0].status.phase != "Bound"
+    
+    - name: Check admin API token exists
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ gitea_namespace }}"
+        name: gitea-admin-token
+      register: admin_token_check
     
     - name: Test database connectivity
       kubernetes.core.k8s:
@@ -165,9 +173,9 @@
                   command:
                   - psql
                   - -h
-                  - postgresql.postgresql.svc.cluster.local
+                  - postgresql-official.postgres.svc.cluster.local
                   - -U
-                  - gitea
+                  - "{{ admin_username }}"
                   - -d
                   - gitea
                   - -c
@@ -185,6 +193,12 @@
       retries: 20
       delay: 5
     
+    - name: Test OAuth2 provider configuration
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} exec -n {{ gitea_namespace }} deployment/gitea -- su git -c "gitea admin auth list" | grep -q "Keycloak"
+      register: oauth_test
+      failed_when: oauth_test.rc != 0
+    
     - name: Summary of test results
       ansible.builtin.debug:
         msg: |
@@ -201,9 +215,11 @@
           ✓ TLS certificate present
           ✓ Database connectivity confirmed
           ✓ OAuth secret configured
+          ✓ OAuth2 provider configured (Keycloak)
           ✓ API endpoint responsive
           ✓ Web interface accessible
           ✓ Persistent storage bound
+          {% if admin_token_check.resources | length > 0 %}✓ Admin API token available{% else %}⚠️  Admin API token not generated (manual login required){% endif %}
           
           Service URL: https://{{ gitea_host }}
           

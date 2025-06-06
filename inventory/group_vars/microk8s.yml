@@ -104,6 +104,11 @@ devpi_dashboard_hostname: "devpi.{{ domain_name }}"
 devpi_api_hostname: "devpi-api.{{ domain_name }}"
 devpi_index_name: "prod"
 
+# Gitea configuration
+gitea_namespace: "gitea"
+gitea_subdomain: "git"
+gitea_hostname: "{{ gitea_subdomain }}.{{ domain_name }}"
+
 # GitHub organization for Thinkube
 github_org: "thinkube"
 

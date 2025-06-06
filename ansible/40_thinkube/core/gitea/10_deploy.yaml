@@ -34,13 +34,9 @@
   gather_facts: true
   
   vars:
-    # Namespace and basic configuration
-    gitea_namespace: "gitea"
+    # Basic configuration
     gitea_release_name: "gitea"
-    
-    # Service configuration
-    gitea_subdomain: "git"
-    gitea_host: "{{ gitea_subdomain }}.{{ domain_name }}"
+    gitea_host: "{{ gitea_hostname }}"  # Using gitea_hostname from group_vars
     
     # Resource limits
     gitea_memory_limit: "512Mi"
@@ -52,15 +48,13 @@
     gitea_storage_size: "10Gi"
     gitea_storage_class: "microk8s-hostpath"
     
-    # PostgreSQL configuration
-    postgres_host: "postgresql.postgresql.svc.cluster.local"
+    # PostgreSQL configuration (postgres_namespace comes from group_vars)
+    postgres_host: "postgresql-official.{{ postgres_namespace }}.svc.cluster.local"
     postgres_port: "5432"
     gitea_db_name: "gitea"
-    gitea_db_user: "gitea"
     
     # Keycloak configuration
     keycloak_realm: "thinkube"
-    keycloak_client_id: "gitea"
     keycloak_issuer_url: "https://auth.{{ domain_name }}/realms/{{ keycloak_realm }}"
     
     # Admin configuration
@@ -98,10 +92,6 @@
             name: "{{ gitea_namespace }}"
     
     # Database setup
-    - name: Generate secure database password
-      ansible.builtin.set_fact:
-        gitea_db_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
-    
     - name: Create database secret
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig }}"
@@ -115,8 +105,8 @@
           type: Opaque
           stringData:
             database: "{{ gitea_db_name }}"
-            username: "{{ gitea_db_user }}"
-            password: "{{ gitea_db_password }}"
+            username: "{{ admin_username }}"
+            password: "{{ admin_password }}"
     
     - name: Create PostgreSQL database for Gitea
       kubernetes.core.k8s:
@@ -127,7 +117,7 @@
           kind: Job
           metadata:
             name: "gitea-db-setup-{{ ansible_date_time.epoch }}"
-            namespace: postgresql
+            namespace: "{{ postgres_namespace }}"
           spec:
             ttlSecondsAfterFinished: 300
             template:
@@ -143,23 +133,16 @@
                   - /bin/bash
                   - -c
                   - |
-                    # Create user if not exists
-                    psql -h {{ postgres_host }} -U postgres -tc "SELECT 1 FROM pg_user WHERE usename = '{{ gitea_db_user }}'" | grep -q 1 || \
-                    psql -h {{ postgres_host }} -U postgres -c "CREATE USER {{ gitea_db_user }} WITH PASSWORD '{{ gitea_db_password }}';"
-                    
                     # Create database if not exists
-                    psql -h {{ postgres_host }} -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '{{ gitea_db_name }}'" | grep -q 1 || \
-                    psql -h {{ postgres_host }} -U postgres -c "CREATE DATABASE {{ gitea_db_name }} OWNER {{ gitea_db_user }};"
-                    
-                    # Grant privileges
-                    psql -h {{ postgres_host }} -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE {{ gitea_db_name }} TO {{ gitea_db_user }};"
+                    psql -h {{ postgres_host }} -U {{ admin_username }} -d mydatabase -tc "SELECT 1 FROM pg_database WHERE datname = '{{ gitea_db_name }}'" | grep -q 1 || \
+                    psql -h {{ postgres_host }} -U {{ admin_username }} -d mydatabase -c "CREATE DATABASE {{ gitea_db_name }} OWNER {{ admin_username }};"
     
     - name: Wait for database setup to complete
       kubernetes.core.k8s_info:
         kubeconfig: "{{ kubeconfig }}"
         api_version: batch/v1
         kind: Job
-        namespace: postgresql
+        namespace: "{{ postgres_namespace }}"
         label_selectors:
           - "job-name=gitea-db-setup-{{ ansible_date_time.epoch }}"
       register: job_status
@@ -200,9 +183,9 @@
       vars:
         keycloak_admin_username: "{{ admin_username }}"
         keycloak_admin_password: "{{ admin_password }}"
-        keycloak_client_id: "{{ keycloak_client_id }}"
+        keycloak_client_id: "gitea"
         keycloak_client_body:
-          clientId: "{{ keycloak_client_id }}"
+          clientId: "gitea"
           enabled: true
           rootUrl: "https://{{ gitea_host }}"
           baseUrl: "https://{{ gitea_host }}"
@@ -228,81 +211,10 @@
             namespace: "{{ gitea_namespace }}"
           type: Opaque
           stringData:
-            client_id: "{{ keycloak_client_id }}"
+            client_id: "gitea"
             client_secret: "{{ keycloak_client_secret }}"
       when: keycloak_client_secret is defined
     
-    # Gitea configuration
-    - name: Create Gitea configuration
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        state: present
-        definition:
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: gitea-config
-            namespace: "{{ gitea_namespace }}"
-          data:
-            app.ini: |
-              APP_NAME = Thinkube Git Service
-              RUN_MODE = prod
-              
-              [server]
-              DOMAIN = {{ gitea_host }}
-              ROOT_URL = https://{{ gitea_host }}/
-              DISABLE_SSH = false
-              SSH_DOMAIN = {{ gitea_host }}
-              SSH_PORT = 22
-              SSH_LISTEN_PORT = 2222
-              LFS_START_SERVER = true
-              OFFLINE_MODE = false
-              
-              [database]
-              DB_TYPE = postgres
-              HOST = {{ postgres_host }}:{{ postgres_port }}
-              NAME = {{ gitea_db_name }}
-              USER = {{ gitea_db_user }}
-              PASSWD = {{ gitea_db_password }}
-              SSL_MODE = disable
-              
-              [service]
-              DISABLE_REGISTRATION = true
-              REQUIRE_SIGNIN_VIEW = true
-              REGISTER_EMAIL_CONFIRM = false
-              ENABLE_NOTIFY_MAIL = false
-              ALLOW_ONLY_EXTERNAL_REGISTRATION = true
-              ENABLE_CAPTCHA = false
-              DEFAULT_KEEP_EMAIL_PRIVATE = true
-              DEFAULT_ALLOW_CREATE_ORGANIZATION = true
-              DEFAULT_ENABLE_TIMETRACKING = true
-              
-              [oauth2]
-              ENABLE = true
-              
-              [openid]
-              ENABLE_OPENID_SIGNIN = false
-              ENABLE_OPENID_SIGNUP = false
-              
-              [picture]
-              DISABLE_GRAVATAR = true
-              ENABLE_FEDERATED_AVATAR = false
-              
-              [log]
-              MODE = console
-              LEVEL = Info
-              
-              [security]
-              INSTALL_LOCK = true
-              SECRET_KEY = {{ lookup('password', '/dev/null length=64 chars=ascii_letters,digits') }}
-              INTERNAL_TOKEN = {{ lookup('password', '/dev/null length=105 chars=ascii_letters,digits') }}
-              
-              [oauth2_client]
-              REGISTER_EMAIL_CONFIRM = false
-              OPENID_CONNECT_SCOPES = openid profile email
-              ENABLE_AUTO_REGISTRATION = true
-              USERNAME = preferred_username
-              ACCOUNT_LINKING = auto
     
     # Deployment
     - name: Deploy Gitea
@@ -330,50 +242,25 @@
                 initContainers:
                 - name: init-directories
                   image: busybox:latest
-                  command: ['sh', '-c', 'mkdir -p /data/git /data/gitea && chown -R 1000:1000 /data']
+                  command: ['sh', '-c', 'mkdir -p /data/git/.ssh /data/gitea && chown -R 1000:1000 /data && chmod 700 /data/git/.ssh']
                   volumeMounts:
                   - name: data
                     mountPath: /data
-                - name: configure-oauth
+                - name: init-config
                   image: gitea/gitea:1.21
-                  command:
-                  - /bin/bash
-                  - -c
-                  - |
-                    # Wait for Gitea to be ready
-                    until gitea admin auth list; do
-                      echo "Waiting for Gitea to initialize..."
-                      sleep 5
-                    done
-                    
-                    # Check if OAuth provider already exists
-                    if ! gitea admin auth list | grep -q "Keycloak"; then
-                      gitea admin auth add-oauth \
-                        --name "Keycloak" \
-                        --provider "openidConnect" \
-                        --key "$CLIENT_ID" \
-                        --secret "$CLIENT_SECRET" \
-                        --auto-discover-url "{{ keycloak_issuer_url }}/.well-known/openid-configuration" \
-                        --skip-local-2fa
-                    fi
-                  env:
-                  - name: CLIENT_ID
-                    valueFrom:
-                      secretKeyRef:
-                        name: gitea-oauth-secret
-                        key: client_id
-                  - name: CLIENT_SECRET
-                    valueFrom:
-                      secretKeyRef:
-                        name: gitea-oauth-secret
-                        key: client_secret
-                  - name: GITEA_WORK_DIR
-                    value: /data
+                  command: ['sh', '-c']
+                  args:
+                    - |
+                      # Create app.ini with install lock to prevent setup screen
+                      mkdir -p /data/gitea/conf
+                      if [ ! -f /data/gitea/conf/app.ini ]; then
+                        echo "[security]" > /data/gitea/conf/app.ini
+                        echo "INSTALL_LOCK = true" >> /data/gitea/conf/app.ini
+                      fi
+                      chown -R 1000:1000 /data/gitea
                   volumeMounts:
                   - name: data
                     mountPath: /data
-                  - name: config
-                    mountPath: /data/gitea/conf
                 containers:
                 - name: gitea
                   image: gitea/gitea:1.21
@@ -387,13 +274,105 @@
                     value: "1000"
                   - name: USER_GID
                     value: "1000"
-                  - name: GITEA_WORK_DIR
-                    value: /data
+                  - name: GITEA__APP_NAME
+                    value: "Thinkube Git Service"
+                  - name: GITEA__RUN_MODE
+                    value: "prod"
+                  # Server settings
+                  - name: GITEA__server__DOMAIN
+                    value: "{{ gitea_host }}"
+                  - name: GITEA__server__ROOT_URL
+                    value: "https://{{ gitea_host }}/"
+                  - name: GITEA__server__SSH_DOMAIN
+                    value: "{{ gitea_host }}"
+                  - name: GITEA__server__SSH_PORT
+                    value: "22"
+                  - name: GITEA__server__SSH_LISTEN_PORT
+                    value: "2222"
+                  - name: GITEA__server__LFS_START_SERVER
+                    value: "true"
+                  # Database settings
+                  - name: GITEA__database__DB_TYPE
+                    value: "postgres"
+                  - name: GITEA__database__HOST
+                    value: "{{ postgres_host }}:{{ postgres_port }}"
+                  - name: GITEA__database__NAME
+                    value: "{{ gitea_db_name }}"
+                  - name: GITEA__database__USER
+                    value: "{{ admin_username }}"
                   - name: GITEA__database__PASSWD
                     valueFrom:
                       secretKeyRef:
                         name: gitea-db-secret
                         key: password
+                  # Service settings
+                  - name: GITEA__service__DISABLE_REGISTRATION
+                    value: "true"
+                  - name: GITEA__service__REQUIRE_SIGNIN_VIEW
+                    value: "true"
+                  - name: GITEA__service__REGISTER_EMAIL_CONFIRM
+                    value: "false"
+                  - name: GITEA__service__ENABLE_NOTIFY_MAIL
+                    value: "false"
+                  - name: GITEA__service__ALLOW_ONLY_EXTERNAL_REGISTRATION
+                    value: "true"
+                  - name: GITEA__service__ENABLE_CAPTCHA
+                    value: "false"
+                  - name: GITEA__service__DEFAULT_KEEP_EMAIL_PRIVATE
+                    value: "true"
+                  - name: GITEA__service__DEFAULT_ALLOW_CREATE_ORGANIZATION
+                    value: "true"
+                  # Admin account settings
+                  - name: GITEA__security__INSTALL_LOCK
+                    value: "true"
+                  - name: GITEA__admin__USERNAME
+                    value: "{{ admin_username }}"
+                  - name: GITEA__admin__PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: gitea-db-secret
+                        key: password
+                  - name: GITEA__admin__EMAIL
+                    value: "{{ gitea_admin_email }}"
+                  # OAuth2 settings
+                  - name: GITEA__oauth2__ENABLE
+                    value: "true"
+                  - name: GITEA__openid__ENABLE_OPENID_SIGNIN
+                    value: "false"
+                  - name: GITEA__openid__ENABLE_OPENID_SIGNUP
+                    value: "false"
+                  # Picture settings
+                  - name: GITEA__picture__DISABLE_GRAVATAR
+                    value: "true"
+                  - name: GITEA__picture__ENABLE_FEDERATED_AVATAR
+                    value: "false"
+                  # OAuth2 client settings
+                  - name: GITEA__oauth2_client__REGISTER_EMAIL_CONFIRM
+                    value: "false"
+                  - name: GITEA__oauth2_client__OPENID_CONNECT_SCOPES
+                    value: "openid profile email"
+                  - name: GITEA__oauth2_client__ENABLE_AUTO_REGISTRATION
+                    value: "true"
+                  - name: GITEA__oauth2_client__USERNAME
+                    value: "preferred_username"
+                  - name: GITEA__oauth2_client__ACCOUNT_LINKING
+                    value: "auto"
+                  # Webhook settings for GitOps
+                  - name: GITEA__webhook__ALLOWED_HOST_LIST
+                    value: "*.{{ domain_name }}"
+                  - name: GITEA__webhook__DELIVER_TIMEOUT
+                    value: "30"
+                  # Git operation timeouts
+                  - name: GITEA__git.timeout__DEFAULT
+                    value: "360"
+                  - name: GITEA__git.timeout__MIGRATE
+                    value: "600"
+                  - name: GITEA__git.timeout__MIRROR
+                    value: "300"
+                  - name: GITEA__git.timeout__CLONE
+                    value: "300"
+                  - name: GITEA__git.timeout__PULL
+                    value: "300"
                   resources:
                     requests:
                       cpu: "{{ gitea_cpu_request }}"
@@ -404,8 +383,6 @@
                   volumeMounts:
                   - name: data
                     mountPath: /data
-                  - name: config
-                    mountPath: /data/gitea/conf
                   livenessProbe:
                     httpGet:
                       path: /
@@ -422,9 +399,6 @@
                 - name: data
                   persistentVolumeClaim:
                     claimName: gitea-pvc
-                - name: config
-                  configMap:
-                    name: gitea-config
     
     - name: Create PVC for Gitea
       kubernetes.core.k8s:
@@ -511,6 +485,102 @@
       retries: 60
       delay: 10
     
+    - name: Wait for Gitea to be accessible
+      ansible.builtin.uri:
+        url: "https://{{ gitea_host }}/user/login"
+        validate_certs: true
+        status_code: 200
+      register: gitea_check
+      until: gitea_check.status == 200
+      retries: 30
+      delay: 10
+    
+    - name: Create admin user
+      ansible.builtin.shell: |
+        # Check if admin user exists
+        if {{ kubectl_bin }} exec -n {{ gitea_namespace }} deployment/gitea -- su git -c "gitea admin user list" | grep -q "{{ admin_username }}"; then
+          echo "Admin user already exists"
+        else
+          # Create admin user
+          {{ kubectl_bin }} exec -n {{ gitea_namespace }} deployment/gitea -- su git -c "gitea admin user create \
+            --username '{{ admin_username }}' \
+            --password '{{ admin_password }}' \
+            --email '{{ gitea_admin_email }}' \
+            --admin \
+            --must-change-password=false"
+          echo "Admin user created"
+        fi
+      register: admin_user_creation
+      changed_when: "'Admin user created' in admin_user_creation.stdout"
+    
+    - name: Configure OAuth2 provider
+      ansible.builtin.shell: |
+        # Wait a bit for Gitea to fully initialize
+        sleep 10
+        
+        # Check if OAuth provider already exists
+        if {{ kubectl_bin }} exec -n {{ gitea_namespace }} deployment/gitea -- su git -c "gitea admin auth list" | grep -q "Keycloak"; then
+          echo "OAuth provider already configured"
+        else
+          # Add OAuth provider
+          {{ kubectl_bin }} exec -n {{ gitea_namespace }} deployment/gitea -- su git -c "gitea admin auth add-oauth \
+            --name 'Keycloak' \
+            --provider 'openidConnect' \
+            --key 'gitea' \
+            --secret '{{ keycloak_client_secret }}' \
+            --auto-discover-url '{{ keycloak_issuer_url }}/.well-known/openid-configuration' \
+            --skip-local-2fa"
+          echo "OAuth provider configured"
+        fi
+      when: keycloak_client_secret is defined
+      register: oauth_config
+      changed_when: "'OAuth provider configured' in oauth_config.stdout"
+    
+    - name: Generate admin API token  
+      ansible.builtin.shell: |
+        # Give Gitea a moment to settle after OAuth configuration
+        sleep 5
+        
+        # Generate token using CLI as git user
+        TOKEN_OUTPUT=$({{ kubectl_bin }} exec -n {{ gitea_namespace }} deployment/gitea -- su git -c "gitea admin user generate-access-token \
+          --username {{ admin_username }} \
+          --token-name 'automation-{{ ansible_date_time.epoch }}' \
+          --scopes 'all'" 2>&1)
+        
+        # Check for success message and extract token
+        if echo "$TOKEN_OUTPUT" | grep -q "Access token was successfully created:"; then
+          TOKEN=$(echo "$TOKEN_OUTPUT" | grep "Access token was successfully created:" | awk '{print $NF}')
+          echo "TOKEN_GENERATED:$TOKEN"
+        else
+          echo "Failed to generate token: $TOKEN_OUTPUT"
+          exit 1
+        fi
+      register: token_generation
+      changed_when: "'TOKEN_GENERATED' in token_generation.stdout"
+    
+    - name: Store generated token in secret
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: gitea-admin-token
+            namespace: "{{ gitea_namespace }}"
+          stringData:
+            token: "{{ token_generation.stdout | regex_search('TOKEN_GENERATED:(.+)', '\\1') | first }}"
+      when: "'TOKEN_GENERATED' in token_generation.stdout"
+    
+    - name: Check if API token was generated
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ gitea_namespace }}"
+        name: gitea-admin-token
+      register: token_check
+    
     - name: Display deployment summary
       ansible.builtin.debug:
         msg: |
@@ -541,8 +611,9 @@
           Storage: {{ gitea_storage_size }} persistent volume
           
           Next steps:
-          1. Login via Keycloak SSO
-          2. Create organizations for projects
-          3. Configure webhooks for ArgoCD
+          1. Wait for OAuth configuration to complete
+          2. Login via Keycloak SSO
+          3. Create organizations for projects
+          4. Configure webhooks for ArgoCD
           
           ════════════════════════════════════════════════════════

@@ -38,6 +38,20 @@ cd ~/thinkube
 ./scripts/run_ansible.sh ansible/40_thinkube/core/gitea/10_deploy.yaml
 ```
 
+## Configuration
+
+### Manual Configuration
+For manual setup with custom repositories:
+```bash
+./scripts/run_ansible.sh ansible/40_thinkube/core/gitea/15_configure.yaml
+```
+
+### Unattended Configuration
+For fully automated setup with default repositories:
+```bash
+./scripts/run_ansible.sh ansible/40_thinkube/core/gitea/16_configure_unattended.yaml
+```
+
 ## Testing
 
 ```bash
@@ -47,14 +61,31 @@ cd ~/thinkube
 
 ## Default Configuration
 
-- Admin user: Created via Keycloak
+- Admin user: Created automatically ({{ admin_username }})
+- OAuth2: Keycloak provider configured automatically
+- API Token: Generated and stored in `gitea-admin-token` secret
 - Database: PostgreSQL with `gitea` database
 - Storage: 10Gi PVC for repositories
 - Resources: 256Mi memory, 100m CPU
 
+## Unattended Installation
+
+The deployment now supports fully unattended installation:
+1. Admin user created with environment variable credentials
+2. OAuth2 provider configured automatically post-deployment
+3. API token generated and stored in Kubernetes secret
+4. Optional: Run `16_configure_unattended.yaml` to create default repositories
+
 ## Integration Points
 
-- **Keycloak**: OAuth2 authentication
+- **Keycloak**: OAuth2 authentication (auto-configured)
 - **PostgreSQL**: Database backend
-- **ArgoCD**: Repository watching
+- **ArgoCD**: Repository watching with webhooks
 - **Harbor**: Container images
+
+## API Access
+
+After deployment, an admin API token is available:
+```bash
+kubectl get secret -n gitea gitea-admin-token -o jsonpath='{.data.token}' | base64 -d
+```

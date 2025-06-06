@@ -2,16 +2,7 @@
 # Generate Kubernetes manifests from templates
 # This task file is included in the main deployment playbook
 
-# First, copy all files from the subtree to the cloned repo
-- name: Copy files from subtree to cloned repository
-  ansible.builtin.shell: |
-    rsync -av --exclude='.git' --exclude='*.pyc' --exclude='__pycache__' --exclude='node_modules' \
-      {{ thinkube_control_source }}/ {{ local_repo_path }}/
-  args:
-    executable: /bin/bash
-  changed_when: true
-
-# Now template the Kubernetes manifests
+# Template the Kubernetes manifests directly in the cloned repository
 - name: Template Kubernetes manifests
   ansible.builtin.template:
     src: "{{ local_repo_path }}/k8s/{{ item }}"
@@ -47,11 +38,18 @@
     - build-workflow.yaml.jinja
   ignore_errors: true  # In case the file doesn't exist yet
 
-# Remove the .jinja templates after processing
-- name: Remove .jinja template files
+# Keep templates for reference and regeneration
+- name: Create templates directory
   ansible.builtin.file:
-    path: "{{ local_repo_path }}/{{ item }}"
-    state: absent
+    path: "{{ local_repo_path }}/templates"
+    state: directory
+    mode: '0755'
+
+- name: Copy templates to templates directory
+  ansible.builtin.copy:
+    src: "{{ local_repo_path }}/{{ item }}"
+    dest: "{{ local_repo_path }}/templates/{{ item }}"
+    mode: '0644'
   loop:
     - k8s/namespace.yaml.jinja
     - k8s/backend-deployment.yaml.jinja
@@ -62,6 +60,54 @@
     - k8s/keycloak-setup.yaml.jinja
     - k8s/kustomization.yaml.jinja
     - workflows/build-workflow.yaml.jinja
+  ignore_errors: yes
+
+- name: Add README for templates
+  ansible.builtin.copy:
+    content: |
+      # Templates Directory
+      
+      This directory contains the original Jinja2 templates used to generate the Kubernetes manifests.
+      
+      **DO NOT EDIT THESE FILES DIRECTLY IN GITEA**
+      
+      To update templates:
+      1. Make changes in the GitHub repository
+      2. Re-run the deployment playbook to regenerate manifests
+      
+      Template variables used:
+      - domain_name: {{ domain_name }}
+      - namespace: {{ k8s_namespace }}
+      - registry: registry.{{ domain_name }}
+      
+      Generated from GitHub commit: {{ github_commit | default('unknown') }}
+      Generated on: {{ ansible_date_time.iso8601 }}
+    dest: "{{ local_repo_path }}/templates/README.md"
+    mode: '0644'
+
+- name: Create deployment metadata
+  ansible.builtin.copy:
+    content: |
+      # Deployment Metadata
+      
+      source_repo: {{ github_repo_url | default('https://github.com/user/repo') }}
+      source_commit: {{ github_commit | default('unknown') }}
+      generated_date: {{ ansible_date_time.iso8601 }}
+      domain_name: {{ domain_name }}
+      
+      # Template Variables Used
+      namespace: {{ k8s_namespace }}
+      registry_url: registry.{{ domain_name }}
+      control_url: control.{{ domain_name }}
+      auth_url: auth.{{ domain_name }}
+      
+      # Version Control Strategy
+      This repository contains processed Kubernetes manifests generated from templates.
+      - Original templates are in the /templates directory
+      - DO NOT edit manifests directly - changes will be overwritten
+      - To update: modify templates in GitHub and re-run deployment
+    dest: "{{ local_repo_path }}/DEPLOYMENT_INFO.yaml"
+    mode: '0644'
 
 - name: Commit all changes
   ansible.builtin.shell: |

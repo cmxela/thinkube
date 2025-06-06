@@ -17,18 +17,27 @@
   gather_facts: false
   
   vars:
-    gitea_namespace: "gitea"
-    gitea_host: "git.{{ domain_name }}"
+    gitea_host: "{{ gitea_hostname }}"  # Using gitea_hostname from group_vars
     gitea_api_url: "https://{{ gitea_host }}/api/v1"
     
     # Default organization for deployment repos
     thinkube_org_name: "thinkube-deployments"
     thinkube_org_description: "Thinkube deployment configurations"
     
+  pre_tasks:
+    - name: Check admin password
+      ansible.builtin.fail:
+        msg: "ADMIN_PASSWORD environment variable must be set"
+      when: lookup('env', 'ADMIN_PASSWORD') == ""
+    
+    - name: Set admin password from environment
+      ansible.builtin.set_fact:
+        admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+    
   tasks:
     - name: Wait for Gitea to be fully ready
       ansible.builtin.uri:
-        url: "{{ gitea_api_url }}/version"
+        url: "https://{{ gitea_host }}/user/login"
         validate_certs: true
         status_code: 200
       register: gitea_ready
@@ -36,12 +45,69 @@
       retries: 30
       delay: 10
     
+    - name: Check for automated token
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Secret
+        namespace: "{{ gitea_namespace }}"
+        name: gitea-admin-token
+      register: automated_token
+    
+    - name: Use automated token if available
+      ansible.builtin.set_fact:
+        gitea_token: "{{ automated_token.resources[0].data.token | b64decode }}"
+      when: 
+        - automated_token.resources | length > 0
+        - lookup('env', 'GITEA_TOKEN') == ""
+    
+    - name: Automate token generation with basic auth
+      when: 
+        - gitea_token is not defined
+        - lookup('env', 'GITEA_TOKEN') == ""
+      block:
+        - name: Generate API token using basic auth
+          ansible.builtin.uri:
+            url: "{{ gitea_api_url }}/users/{{ admin_username }}/tokens"
+            method: POST
+            user: "{{ admin_username }}"
+            password: "{{ admin_password }}"
+            force_basic_auth: true
+            body_format: json
+            body:
+              name: "automation-{{ ansible_date_time.epoch }}"
+              scopes: ["all"]
+            validate_certs: true
+            status_code: 201
+          register: token_response
+        
+        - name: Store generated token
+          kubernetes.core.k8s:
+            kubeconfig: "{{ kubeconfig }}"
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: gitea-admin-token
+                namespace: "{{ gitea_namespace }}"
+              stringData:
+                token: "{{ token_response.json.sha1 }}"
+          when: token_response.json.sha1 is defined
+        
+        - name: Use generated token
+          ansible.builtin.set_fact:
+            gitea_token: "{{ token_response.json.sha1 }}"
+          when: token_response.json.sha1 is defined
+    
     - name: Get Gitea admin token
       ansible.builtin.debug:
         msg: |
           ════════════════════════════════════════════════════════
           ⚠️  Manual Step Required
           ════════════════════════════════════════════════════════
+          
+          Note: Automated token generation failed or not available.
           
           1. Open https://{{ gitea_host }} in your browser
           2. Click "Sign In" and login via Keycloak
@@ -53,16 +119,23 @@
           
           6. Then re-run this playbook
           ════════════════════════════════════════════════════════
-      when: lookup('env', 'GITEA_TOKEN') == ""
+      when: 
+        - lookup('env', 'GITEA_TOKEN') == ""
+        - gitea_token is not defined
     
     - name: Fail if token not provided
       ansible.builtin.fail:
-        msg: "Please set GITEA_TOKEN environment variable"
-      when: lookup('env', 'GITEA_TOKEN') == ""
+        msg: "Please set GITEA_TOKEN environment variable or ensure automated token generation succeeded"
+      when: 
+        - lookup('env', 'GITEA_TOKEN') == ""
+        - gitea_token is not defined
     
-    - name: Set Gitea token fact
+    - name: Set Gitea token fact from environment
       ansible.builtin.set_fact:
         gitea_token: "{{ lookup('env', 'GITEA_TOKEN') }}"
+      when: 
+        - lookup('env', 'GITEA_TOKEN') != ""
+        - gitea_token is not defined
     
     - name: Test API access with token
       ansible.builtin.uri:
@@ -104,29 +177,9 @@
         status_code: 201
       when: org_check.status == 404
     
-    - name: Configure Gitea settings via API
-      ansible.builtin.uri:
-        url: "{{ gitea_api_url }}/admin/config"
-        method: PATCH
-        headers:
-          Authorization: "token {{ gitea_token }}"
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          config:
-            webhook:
-              allowed_host_list: "*.{{ domain_name }}"
-              deliver_timeout: 30
-            git:
-              timeout:
-                default: 360
-                migrate: 600
-                mirror: 300
-                clone: 300
-                pull: 300
-        validate_certs: true
-        status_code: [200, 204]
-      ignore_errors: yes  # Admin endpoints might require special permissions
+    # Note: Gitea webhook and timeout settings are configured via environment variables
+    # in the deployment playbook (10_deploy.yaml) using GITEA__webhook__ and GITEA__git.timeout__ vars
+    # The /admin/config API endpoint doesn't exist in Gitea v1 API
     
     - name: Create webhook defaults configmap
       kubernetes.core.k8s:

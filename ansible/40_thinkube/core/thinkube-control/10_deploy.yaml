@@ -72,7 +72,7 @@
     argo_workflows_namespace: "argo"
     app_namespace: "{{ k8s_namespace }}"
     app_name: "control-hub"
-    container_registry: "harbor.{{ domain_name }}"
+    container_registry: "registry.{{ domain_name }}"
     backend_image_repo: "{{ container_registry }}/thinkube/control-backend"
     frontend_image_repo: "{{ container_registry }}/thinkube/control-frontend"
     image_tag: "{{ ansible_date_time.iso8601_basic_short }}"
@@ -95,7 +95,7 @@
     check_interval: 5
     
     # Source of thinkube-control (local subtree)
-    thinkube_control_source: "{{ playbook_dir }}/../../../thinkube-control"
+    thinkube_control_source: "{{ playbook_dir }}"
     
     # Shared code directory (accessible from code-server and jupyterhub)
     shared_code_path: "/home/{{ system_username }}/shared-code"
@@ -276,7 +276,7 @@
     argo_workflows_namespace: "argo"
     app_namespace: "{{ k8s_namespace }}"
     app_name: "control-hub"
-    container_registry: "harbor.{{ domain_name }}"
+    container_registry: "registry.{{ domain_name }}"
     backend_image_repo: "{{ container_registry }}/thinkube/control-backend"
     frontend_image_repo: "{{ container_registry }}/thinkube/control-frontend"
     image_tag: "{{ ansible_date_time.iso8601_basic_short }}"
@@ -326,20 +326,34 @@
         keycloak_realm_role_name: "control-user"
         keycloak_realm_role_description: "Access to the control hub"
     
-    # Build and deploy
-    - container_deployment/workflow
-    - role: waiting_for_image
-      vars:
-        image_repo: "{{ frontend_image_repo }}"
-    - container_deployment/argocd
-    - container_deployment/sync_status
-    - container_deployment/deployment
-
   tasks:
     # Generate manifests from templates after repo is cloned
     - name: Generate Kubernetes manifests from templates
       ansible.builtin.include_tasks: tasks/generate_manifests.yaml
       when: local_repo_path is defined
+
+    # Now build and deploy after manifests are generated
+    - name: Include workflow role to build containers
+      ansible.builtin.include_role:
+        name: container_deployment/workflow
+    
+    - name: Wait for images to be available
+      ansible.builtin.include_role:
+        name: waiting_for_image
+      vars:
+        image_repo: "{{ frontend_image_repo }}"
+    
+    - name: Deploy with ArgoCD
+      ansible.builtin.include_role:
+        name: container_deployment/argocd
+    
+    - name: Check sync status
+      ansible.builtin.include_role:
+        name: container_deployment/sync_status
+    
+    - name: Deploy application
+      ansible.builtin.include_role:
+        name: container_deployment/deployment
       
     # Set default Git configuration values
     - name: Set default Git configuration values if not provided

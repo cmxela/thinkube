@@ -45,9 +45,9 @@
       metadata:
         name: "{{ docker_config_secret_name }}"
         namespace: "{{ argo_namespace }}"
-      type: kubernetes.io/dockerconfigjson
+      type: Opaque
       data:
-        .dockerconfigjson: "{{ docker_config_content.content }}"
+        config.json: "{{ docker_config_content.content }}"
 
 - name: Create Docker pull secret for app in the app namespace
   ansible.builtin.copy:

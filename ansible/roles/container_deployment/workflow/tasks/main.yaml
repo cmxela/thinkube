@@ -2,7 +2,7 @@
 # The playbook MUST provide a workflow template
 - name: Create temporary workflow file from playbook template
   ansible.builtin.template:
-    src: "{{ playbook_dir }}/templates/build-workflow.yaml.jinja"
+    src: "{{ playbook_dir }}/templates/build-workflow.yaml.j2"
     dest: /tmp/build-{{ app_name }}-workflow.yaml
   register: workflow_template
 

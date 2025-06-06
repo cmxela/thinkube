@@ -296,6 +296,59 @@ All playbooks MUST include a standardized header:
 
 Test and rollback playbooks can use a simplified header focusing on their specific purpose.
 
+## GitOps Workflow with Gitea
+
+Thinkube uses Gitea to solve the domain configuration problem in GitOps deployments:
+
+### The Problem
+- Templates in GitHub use variables like `{{ domain_name }}`
+- ArgoCD needs actual values like `registry.thinkube.com`
+- We cannot hardcode domains as each installation is different
+
+### The Solution
+1. **GitHub** → Contains templates with variables (.jinja files)
+2. **Ansible** → Processes templates during deployment
+3. **Gitea** → Hosts processed manifests with actual domain values
+4. **ArgoCD** → Deploys from Gitea repositories
+
+### Development Workflow
+
+When deploying applications that need domain-specific configuration:
+
+1. **Use the git_push role** to push to Gitea:
+   ```yaml
+   - name: Push to Gitea
+     include_role:
+       name: container_deployment/git_push
+     vars:
+       gitea_org: "thinkube-deployments"
+       gitea_repo_name: "{{ app_name }}-deployment"
+       local_repo_path: "{{ temp_dir }}"
+   ```
+
+2. **Repository includes**:
+   - Git hooks for auto-processing templates
+   - Helper scripts for development
+   - Auto-generated warnings on processed files
+
+3. **Developer workflow**:
+   - Edit `.jinja` templates (NOT processed `.yaml` files)
+   - Commit changes (hook auto-processes)
+   - Push to Gitea → ArgoCD deploys
+
+4. **Contributing back**:
+   - Run `./prepare-for-github.sh`
+   - Push to GitHub (only templates)
+
+### Template Processing
+
+- **Ansible templates** (`.j2`) - For deployment configuration
+- **Application templates** (`.jinja`) - For GitOps workflow
+
+Never confuse these two types!
+
 ## Memory Section
 
 - Never use docker
+- Always use Gitea for domain-specific deployments
+- Templates (.jinja) are source of truth, not processed files

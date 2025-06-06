@@ -10,7 +10,19 @@ The control system consists of:
 - **Authentication**: OAuth2 Proxy with Keycloak OIDC
 - **Session Management**: Redis for OAuth2 session storage
 - **Build System**: Argo Workflows with Kaniko
-- **Deployment**: GitOps via ArgoCD
+- **Deployment**: GitOps via ArgoCD watching Gitea repositories
+
+## GitOps Workflow
+
+Thinkube Control demonstrates the platform's GitOps pattern:
+
+1. **Source Code**: Stored in GitHub with `.jinja` templates
+2. **Templates**: Use variables like `{{ domain_name }}` for portability
+3. **Processing**: Ansible processes templates during deployment
+4. **Gitea Repository**: Hosts processed manifests with actual domain values
+5. **ArgoCD**: Deploys from Gitea, not GitHub
+
+This enables domain-specific deployments while maintaining upstream compatibility.
 
 ## Prerequisites
 
@@ -19,6 +31,7 @@ Before deploying the control system, ensure the following components are deploye
 - CORE-006: Keycloak (authentication provider)
 - CORE-010: Argo Workflows (for container builds)
 - CORE-011: ArgoCD (for GitOps deployment)
+- CORE-014: Gitea (for hosting processed manifests)
 - GitHub token configured in inventory or environment
 
 ## Deployment
@@ -36,9 +49,11 @@ This will:
 3. Deploy Redis for session storage
 4. Configure Keycloak client for OIDC authentication
 5. Deploy OAuth2 Proxy for authentication
-6. Setup GitHub repository integration
-7. Configure Argo Workflows for building containers
-8. Deploy frontend and backend via ArgoCD
+6. Clone source from GitHub repository
+7. Process `.jinja` templates with domain values
+8. Push to Gitea with git hooks for development
+9. Configure Argo Workflows for building containers
+10. Deploy frontend and backend via ArgoCD from Gitea
 
 ## Testing
 
@@ -82,8 +97,9 @@ Once deployed, the control interface is accessible at:
 
 ### GitOps Deployment
 - ArgoCD manages application deployment
-- Monitors Git repository for changes
+- Monitors Gitea repository (not GitHub) for changes
 - Automatic sync and rollout
+- Repository includes processed manifests with actual domain values
 
 ## Configuration
 
@@ -131,9 +147,41 @@ This application is designed to evolve into an MCP server that will:
 - Offer structured tool interfaces following the MCP specification
 - Support autonomous platform operations
 
+## Development Workflow
+
+After deployment, the thinkube-control code is available in Gitea:
+
+1. **Clone from Gitea**:
+   ```bash
+   git clone https://git.thinkube.com/thinkube-deployments/thinkube-control-deployment.git
+   ```
+
+2. **Make changes**:
+   - Edit `.jinja` templates (not processed `.yaml` files)
+   - Commit changes (git hook auto-processes)
+   - Push to Gitea
+
+3. **Contribute upstream**:
+   - Run `./prepare-for-github.sh`
+   - Push to GitHub (templates only)
+
+## Template Structure
+
+The deployment processes these templates:
+- `k8s/*.yaml.jinja` - Kubernetes manifests
+- `workflows/*.yaml.jinja` - Argo Workflow definitions
+
+Variables replaced during processing:
+- `{{ domain_name }}` - Your configured domain
+- `{{ registry_subdomain }}.{{ domain_name }}` - Harbor registry URL
+- `{{ namespace }}` - Kubernetes namespace
+- `{{ github_org }}` - GitHub organization/user
+
 ## Notes
 
-- The control system uses the GitHub repository at `thinkube-control/` (local subtree)
-- Images are built automatically when code is pushed to the repository
-- Frontend and backend are deployed as separate applications
-- OAuth2 Proxy provides the authentication layer for all control access
+- Source code stored in GitHub at `thinkube-control/` (local subtree)
+- Processed manifests pushed to Gitea for ArgoCD deployment
+- Images built automatically by Argo Workflows
+- Frontend and backend deployed as separate ArgoCD applications
+- OAuth2 Proxy provides authentication for all access
+- Git hooks ensure templates and manifests stay synchronized

@@ -1,0 +1,293 @@
+# GitOps Developer Workflow Guide
+
+This guide explains how to develop applications in Thinkube using the GitOps workflow with Gitea.
+
+## Overview
+
+Thinkube provides a complete GitOps development platform where:
+- **GitHub** stores generic templates
+- **Gitea** hosts domain-specific deployments
+- **Harbor** provides local container registry
+- **Argo Workflows** builds containers
+- **ArgoCD** deploys from Gitea
+
+## The Domain Configuration Problem
+
+### Why We Need Gitea
+
+Every Thinkube installation has a unique domain (e.g., `thinkube.com`, `mylab.local`). This creates a challenge:
+
+1. **Templates need variables**: `registry.{{ domain_name }}/myapp:latest`
+2. **Kubernetes needs real values**: `registry.thinkube.com/myapp:latest`
+3. **GitHub cannot store** installation-specific values
+
+### The Solution
+
+```
+GitHub (templates) → Process → Gitea (manifests) → ArgoCD → Kubernetes
+     ↑                              ↓
+     └──── Contribute back ─────────┘
+           (templates only)
+```
+
+## Developer Workflow
+
+### 1. Starting a New Project
+
+When you deploy an application via Ansible:
+
+```bash
+cd ~/thinkube
+./scripts/run_ansible.sh ansible/40_thinkube/apps/myapp/10_deploy.yaml
+```
+
+The deployment playbook:
+1. Clones code from GitHub
+2. Processes `.jinja` templates with your domain
+3. Creates repository in Gitea
+4. Installs git hooks
+5. Pushes to Gitea
+6. Configures ArgoCD to watch Gitea
+
+### 2. Development Cycle
+
+#### Clone from Gitea
+```bash
+git clone https://git.thinkube.com/thinkube-deployments/myapp-deployment.git
+cd myapp-deployment
+```
+
+#### Understanding the Repository Structure
+```
+myapp-deployment/
+├── k8s/                        # Processed Kubernetes manifests
+│   ├── deployment.yaml         # AUTO-GENERATED - DO NOT EDIT
+│   ├── service.yaml           # AUTO-GENERATED - DO NOT EDIT
+│   └── ingress.yaml           # AUTO-GENERATED - DO NOT EDIT
+├── templates/                  # Preserved original templates
+│   ├── k8s/
+│   │   ├── deployment.yaml.jinja  # EDIT THIS
+│   │   ├── service.yaml.jinja     # EDIT THIS
+│   │   └── ingress.yaml.jinja     # EDIT THIS
+│   └── README.md
+├── .git-hooks/                 # Git hooks for processing
+│   └── pre-commit
+├── reprocess-templates.sh      # Manual processing script
+├── prepare-for-github.sh       # Cleanup for upstream
+├── install-hooks.sh           # Hook installation
+├── DEPLOYMENT_INFO.yaml       # Metadata about generation
+└── DEVELOPMENT.md             # This workflow guide
+```
+
+#### Making Changes
+
+**IMPORTANT**: Only edit `.jinja` files in the root directories, never the processed `.yaml` files!
+
+1. Edit the template:
+```bash
+vim k8s/deployment.yaml.jinja
+```
+
+2. Add your changes:
+```yaml
+# k8s/deployment.yaml.jinja
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  namespace: {{ namespace }}
+spec:
+  replicas: 2  # Changed from 1
+  template:
+    spec:
+      containers:
+      - name: myapp
+        image: registry.{{ domain_name }}/myapp:{{ version | default('latest') }}
+        # Added new environment variable
+        env:
+        - name: FEATURE_FLAG
+          value: "enabled"
+```
+
+3. Commit your changes:
+```bash
+git add k8s/deployment.yaml.jinja
+git commit -m "Increase replicas and add feature flag"
+```
+
+The pre-commit hook automatically:
+- Detects changed `.jinja` files
+- Processes them with domain values
+- Adds warning headers to generated files
+- Includes processed files in commit
+
+4. Push to Gitea:
+```bash
+git push origin main
+```
+
+5. ArgoCD automatically:
+- Detects changes in Gitea
+- Syncs to Kubernetes
+- Deploys your updates
+
+### 3. Testing Your Changes
+
+Watch the deployment:
+```bash
+kubectl get pods -n myapp-namespace -w
+```
+
+Check ArgoCD UI:
+```bash
+open https://argocd.thinkube.com
+```
+
+### 4. Contributing Back to GitHub
+
+When your changes are ready to share:
+
+1. Prepare for GitHub (removes processed files):
+```bash
+./prepare-for-github.sh
+```
+
+2. Add GitHub as upstream:
+```bash
+git remote add upstream https://github.com/original/myapp.git
+git fetch upstream
+```
+
+3. Create feature branch:
+```bash
+git checkout -b feature/increase-replicas
+```
+
+4. Push to GitHub:
+```bash
+git push upstream feature/increase-replicas
+```
+
+5. Create Pull Request on GitHub
+
+## Template Variables
+
+Common variables available in `.jinja` templates:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `{{ domain_name }}` | Base domain | `thinkube.com` |
+| `{{ namespace }}` | Kubernetes namespace | `myapp` |
+| `{{ registry_subdomain }}.{{ domain_name }}` | Registry URL | `registry.thinkube.com` |
+| `{{ admin_username }}` | Admin user | `tkadmin` |
+| `{{ gitea_hostname }}` | Gitea URL | `git.thinkube.com` |
+
+## File Headers
+
+All processed files include warnings:
+
+```yaml
+# AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
+# This file is automatically generated from k8s/deployment.yaml.jinja
+# Any changes made directly to this file will be lost on next commit
+# To make changes, edit the template file and commit
+# Generated for domain: thinkube.com
+#
+
+apiVersion: apps/v1
+kind: Deployment
+...
+```
+
+## Troubleshooting
+
+### Git Hook Not Working
+
+Check if hooks are installed:
+```bash
+ls -la .git/hooks/pre-commit
+```
+
+Reinstall if needed:
+```bash
+./install-hooks.sh
+```
+
+### Manual Template Processing
+
+If automatic processing fails:
+```bash
+./reprocess-templates.sh
+```
+
+### Domain Values Wrong
+
+Check the git hook configuration:
+```bash
+head -20 .git/hooks/pre-commit
+```
+
+The domain values are hardcoded during deployment.
+
+### Cannot Push to GitHub
+
+Ensure processed files are removed:
+```bash
+git status
+# Should not show any .yaml files without .jinja
+```
+
+Run prepare script again:
+```bash
+./prepare-for-github.sh
+```
+
+## Best Practices
+
+1. **Always edit `.jinja` files**, never processed `.yaml`
+2. **Test locally** before pushing to Gitea
+3. **Use meaningful commit messages** for ArgoCD history
+4. **Keep templates generic** for GitHub contributions
+5. **Document template variables** in comments
+
+## Advanced Usage
+
+### Adding New Templates
+
+1. Create the `.jinja` file:
+```bash
+vim k8s/configmap.yaml.jinja
+```
+
+2. Add template content:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: myapp-config
+  namespace: {{ namespace }}
+data:
+  api_url: "https://api.{{ domain_name }}"
+  registry: "registry.{{ domain_name }}"
+```
+
+3. Commit (hook processes automatically):
+```bash
+git add k8s/configmap.yaml.jinja
+git commit -m "Add configuration ConfigMap"
+git push
+```
+
+### Using Custom Variables
+
+Add variables to the git hook or reprocess script as needed. The deployment playbook can pass additional variables through the git_push role.
+
+## Summary
+
+The GitOps workflow enables:
+- **Local development** with your specific domain
+- **Automatic deployment** via ArgoCD
+- **Clean contributions** back to GitHub
+- **No manual YAML editing** for domain values
+
+This creates a seamless development experience while maintaining portability across different Thinkube installations!

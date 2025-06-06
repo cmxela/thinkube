@@ -245,10 +245,21 @@
     - name: Include Docker/Kaniko setup
       ansible.builtin.include_role:
         name: container_deployment/docker_kaniko
+    
+    # Generate manifests from templates before pushing to Gitea
+    - name: Generate Kubernetes manifests from templates
+      ansible.builtin.include_tasks: tasks/generate_manifests.yaml
+      vars:
+        local_repo_path: "{{ repo_path }}"
         
-    - name: Include Git push setup
+    - name: Include Git push setup to push to Gitea
       ansible.builtin.include_role:
         name: container_deployment/git_push
+      vars:
+        gitea_org: "thinkube-deployments"
+        gitea_repo_name: "{{ app_name }}-deployment"
+        gitea_repo_description: "Thinkube Control Hub deployment manifests"
+        local_repo_path: "{{ repo_path }}"
 
 - name: Continue deployment with Keycloak and remaining services
   hosts: microk8s_control_plane
@@ -327,11 +338,6 @@
         keycloak_realm_role_description: "Access to the control hub"
     
   tasks:
-    # Generate manifests from templates after repo is cloned
-    - name: Generate Kubernetes manifests from templates
-      ansible.builtin.include_tasks: tasks/generate_manifests.yaml
-      when: local_repo_path is defined
-
     # Now build and deploy after manifests are generated
     - name: Include workflow role to build containers
       ansible.builtin.include_role:

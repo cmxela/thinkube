@@ -39,7 +39,7 @@ spec:
         - name: FRONTEND_URL
           value: "https://{{ control_subdomain }}.{{ domain_name }}"
         - name: BACKEND_CORS_ORIGINS
-          value: "https://{{ control_subdomain }}.{{ domain_name }}"
+          value: '["https://{{ control_subdomain }}.{{ domain_name }}"]'
         # Dashboard service URLs - only deployed services
         - name: SEAWEEDFS_URL
           value: "https://seaweedfs.{{ domain_name }}"

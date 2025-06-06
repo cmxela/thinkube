@@ -148,15 +148,17 @@ async def exchange_code_for_token(code: str, redirect_uri: str) -> Dict:
     """Exchange authorization code for access token."""
     try:
         async with httpx.AsyncClient(verify=settings.KEYCLOAK_VERIFY_SSL) as client:
+            # For public clients, don't send client_secret
+            token_data = {
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": settings.KEYCLOAK_CLIENT_ID
+            }
+            
             response = await client.post(
                 f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}/protocol/openid-connect/token",
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": redirect_uri,
-                    "client_id": settings.KEYCLOAK_CLIENT_ID,
-                    "client_secret": settings.KEYCLOAK_CLIENT_SECRET
-                }
+                data=token_data
             )
             response.raise_for_status()
             return response.json()

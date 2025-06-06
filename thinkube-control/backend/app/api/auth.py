@@ -26,11 +26,17 @@ async def get_auth_config():
         end_session_endpoint=f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}/protocol/openid-connect/logout",
     )
 
+from pydantic import BaseModel
+
+class TokenRequest(BaseModel):
+    code: str
+    redirect_uri: str
+
 @router.post("/token", response_model=Token)
-async def get_token(code: str, redirect_uri: str):
+async def get_token(request: TokenRequest):
     """Exchange authorization code for access token."""
     try:
-        token_response = await exchange_code_for_token(code, redirect_uri)
+        token_response = await exchange_code_for_token(request.code, request.redirect_uri)
         return Token(
             access_token=token_response.get("access_token"),
             token_type="Bearer",

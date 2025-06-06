@@ -341,7 +341,7 @@
           directAccessGrantsEnabled: false
           standardFlowEnabled: true
           implicitFlowEnabled: false
-          publicClient: false
+          publicClient: true
           protocol: "openid-connect"
     
     # Set up a basic role for dashboard access

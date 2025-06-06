@@ -1,7 +1,6 @@
 # app/core/config.py
-from typing import List, Optional, Union
+from typing import List, Optional
 from pydantic_settings import BaseSettings
-from pydantic import field_validator, Field
 
 
 class Settings(BaseSettings):
@@ -9,17 +8,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "K8s Dashboard Hub"
     
-    # CORS settings - Field with mode='before' to process before JSON parsing
-    BACKEND_CORS_ORIGINS: List[str] = Field(default_factory=list)
-
-    @field_validator("BACKEND_CORS_ORIGINS", mode='before')
-    @classmethod
-    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, list):
-            return v
-        raise ValueError(v)
+    # CORS settings
+    BACKEND_CORS_ORIGINS: List[str] = []
     
     # Keycloak settings
     KEYCLOAK_URL: str

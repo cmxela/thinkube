@@ -156,7 +156,7 @@ spec:
       args:
         - --dockerfile=/workspace/backend/Dockerfile
         - --context=/workspace/backend
-        - --destination=harbor-core.registry.svc.cluster.local/thinkube/control-backend:{{inputs.parameters.image-tag}}
+        - --destination={{ backend_image_repo }}:{{inputs.parameters.image-tag}}
         - --insecure
         - --insecure-pull
         - --skip-tls-verify
@@ -177,7 +177,7 @@ spec:
       args:
         - --dockerfile=/workspace/frontend/Dockerfile
         - --context=/workspace/frontend
-        - --destination=harbor-core.registry.svc.cluster.local/thinkube/control-frontend:{{inputs.parameters.image-tag}}
+        - --destination={{ frontend_image_repo }}:{{inputs.parameters.image-tag}}
         - --insecure
         - --insecure-pull
         - --skip-tls-verify

@@ -38,27 +38,36 @@ spec:
           value: "true"
         - name: FRONTEND_URL
           value: "https://{{ control_subdomain }}.{{ domain_name }}"
-        # Dashboard service URLs - will be templated
+        - name: BACKEND_CORS_ORIGINS
+          value: "https://{{ control_subdomain }}.{{ domain_name }}"
+        # Dashboard service URLs - only deployed services
         - name: SEAWEEDFS_URL
           value: "https://seaweedfs.{{ domain_name }}"
-        - name: OPENSEARCH_URL
-          value: "https://osd.{{ domain_name }}"
         - name: HARBOR_URL
           value: "https://{{ registry_subdomain }}.{{ domain_name }}"
-        - name: QDRANT_URL
-          value: "https://qdrantc.{{ domain_name }}"
-        - name: AWX_URL
-          value: "https://awx.{{ domain_name }}"
-        - name: PGADMIN_URL
-          value: "https://pgadm.{{ domain_name }}"
-        - name: DEVPI_URL
-          value: "https://devpi.{{ domain_name }}"
-        - name: JUPYTERHUB_URL
-          value: "https://jupyterhub.{{ domain_name }}"
-        - name: CODE_SERVER_URL
-          value: "https://code-server.{{ domain_name }}"
-        - name: MKDOCS_URL
-          value: "https://docs.{{ domain_name }}"
+        - name: GITEA_URL
+          value: "https://git.{{ domain_name }}"
+        - name: ARGOCD_URL
+          value: "https://argocd.{{ domain_name }}"
+        - name: ARGO_WORKFLOWS_URL
+          value: "https://argo.{{ domain_name }}"
+        # Services not yet deployed - uncomment when ready
+        # - name: OPENSEARCH_URL
+        #   value: "https://osd.{{ domain_name }}"
+        # - name: QDRANT_URL
+        #   value: "https://qdrantc.{{ domain_name }}"
+        # - name: AWX_URL
+        #   value: "https://awx.{{ domain_name }}"
+        # - name: PGADMIN_URL
+        #   value: "https://pgadm.{{ domain_name }}"
+        # - name: DEVPI_URL
+        #   value: "https://devpi.{{ domain_name }}"
+        # - name: JUPYTERHUB_URL
+        #   value: "https://jupyterhub.{{ domain_name }}"
+        # - name: CODE_SERVER_URL
+        #   value: "https://code-server.{{ domain_name }}"
+        # - name: MKDOCS_URL
+        #   value: "https://docs.{{ domain_name }}"
         resources:
           limits:
             cpu: 500m

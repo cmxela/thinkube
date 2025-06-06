@@ -16,23 +16,13 @@ logger.setLevel(logging.DEBUG)
 # Define dashboards with their metadata - REMOVE ALL ROLE REQUIREMENTS FOR TESTING
 DASHBOARD_ITEMS = [
     DashboardItem(
-        id="minio",
-        name="MinIO Console",
-        description="Object storage management interface",
-        url=settings.MINIO_URL,
+        id="seaweedfs",
+        name="SeaweedFS",
+        description="Distributed object storage system",
+        url=settings.SEAWEEDFS_URL,
         icon="database",
         color="amber",
         category="storage",
-        requires_role=None  # Removed role requirement
-    ),
-    DashboardItem(
-        id="opensearch",
-        name="OpenSearch Dashboard",
-        description="Log and metrics visualization",
-        url=settings.OPENSEARCH_URL,
-        icon="chart-bar",
-        color="green",
-        category="monitoring",
         requires_role=None  # Removed role requirement
     ),
     DashboardItem(
@@ -46,75 +36,126 @@ DASHBOARD_ITEMS = [
         requires_role=None  # Removed role requirement
     ),
     DashboardItem(
-        id="qdrant",
-        name="Qdrant",
-        description="Vector database management",
-        url=settings.QDRANT_URL,
-        icon="database",
-        color="purple",
-        category="ai",
-        requires_role=None  # Removed role requirement
-    ),
-    DashboardItem(
-        id="awx",
-        name="AWX",
-        description="Ansible automation platform",
-        url=settings.AWX_URL,
-        icon="cog",
-        color="red",
+        id="gitea",
+        name="Gitea",
+        description="Git service for version control",
+        url=settings.GITEA_URL,
+        icon="git-branch",
+        color="green",
         category="devops",
         requires_role=None  # Removed role requirement
     ),
     DashboardItem(
-        id="pgadmin",
-        name="pgAdmin 4",
-        description="PostgreSQL database management",
-        url=settings.PGADMIN_URL,
-        icon="table",
-        color="blue",
-        category="database",
-        requires_role=None  # Removed role requirement
-    ),
-    DashboardItem(
-        id="devpi",
-        name="DevPI",
-        description="Python package index mirror",
-        url=settings.DEVPI_URL,
-        icon="code",
-        color="yellow",
-        category="development",
-        requires_role=None  # Removed role requirement
-    ),
-    DashboardItem(
-        id="jupyterhub",
-        name="JupyterHub",
-        description="Interactive notebooks for data science",
-        url=settings.JUPYTERHUB_URL,
-        icon="notebook",
+        id="argocd",
+        name="ArgoCD",
+        description="GitOps continuous delivery",
+        url=settings.ARGOCD_URL,
+        icon="sync",
         color="orange",
-        category="ai",
+        category="devops",
         requires_role=None  # Removed role requirement
     ),
     DashboardItem(
-        id="code-server",
-        name="Code Server",
-        description="VS Code in the browser",
-        url=settings.CODE_SERVER_URL,
-        icon="code",
-        color="blue",
-        category="development",
+        id="argo-workflows",
+        name="Argo Workflows",
+        description="Workflow automation platform",
+        url=settings.ARGO_WORKFLOWS_URL,
+        icon="workflow",
+        color="purple",
+        category="devops",
         requires_role=None  # Removed role requirement
     ),
     DashboardItem(
-        id="mkdocs",
-        name="Documentation",
-        description="Platform documentation",
-        url=settings.MKDOCS_URL,
-        icon="book-open",
-        color="indigo",
-        category="documentation",
+        id="keycloak",
+        name="Keycloak",
+        description="Identity and access management",
+        url=settings.KEYCLOAK_URL,
+        icon="shield-check",
+        color="red",
+        category="security",
         requires_role=None  # Removed role requirement
-    )
+    ),
+    # Services not yet deployed - uncomment when ready
+    # DashboardItem(
+    #     id="opensearch",
+    #     name="OpenSearch Dashboard",
+    #     description="Log and metrics visualization",
+    #     url=settings.OPENSEARCH_URL,
+    #     icon="chart-bar",
+    #     color="green",
+    #     category="monitoring",
+    #     requires_role=None  # Removed role requirement
+    # ),
+    # DashboardItem(
+    #     id="qdrant",
+    #     name="Qdrant",
+    #     description="Vector database management",
+    #     url=settings.QDRANT_URL,
+    #     icon="database",
+    #     color="purple",
+    #     category="ai",
+    #     requires_role=None  # Removed role requirement
+    # ),
+    # DashboardItem(
+    #     id="awx",
+    #     name="AWX",
+    #     description="Ansible automation platform",
+    #     url=settings.AWX_URL,
+    #     icon="cog",
+    #     color="red",
+    #     category="devops",
+    #     requires_role=None  # Removed role requirement
+    # ),
+    # DashboardItem(
+    #     id="pgadmin",
+    #     name="pgAdmin 4",
+    #     description="PostgreSQL database management",
+    #     url=settings.PGADMIN_URL,
+    #     icon="table",
+    #     color="blue",
+    #     category="database",
+    #     requires_role=None  # Removed role requirement
+    # ),
+    # DashboardItem(
+    #     id="devpi",
+    #     name="DevPI",
+    #     description="Python package index mirror",
+    #     url=settings.DEVPI_URL,
+    #     icon="code",
+    #     color="yellow",
+    #     category="development",
+    #     requires_role=None  # Removed role requirement
+    # ),
+    # DashboardItem(
+    #     id="jupyterhub",
+    #     name="JupyterHub",
+    #     description="Interactive notebooks for data science",
+    #     url=settings.JUPYTERHUB_URL,
+    #     icon="notebook",
+    #     color="orange",
+    #     category="ai",
+    #     requires_role=None  # Removed role requirement
+    # ),
+    # DashboardItem(
+    #     id="code-server",
+    #     name="Code Server",
+    #     description="VS Code in the browser",
+    #     url=settings.CODE_SERVER_URL,
+    #     icon="code",
+    #     color="blue",
+    #     category="development",
+    #     requires_role=None  # Removed role requirement
+    # ),
+    # DashboardItem(
+    #     id="mkdocs",
+    #     name="Documentation",
+    #     description="Platform documentation",
+    #     url=settings.MKDOCS_URL,
+    #     icon="book-open",
+    #     color="indigo",
+    #     category="documentation",
+    #     requires_role=None  # Removed role requirement
+    # )
 ]
 
 

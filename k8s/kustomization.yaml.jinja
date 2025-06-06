@@ -11,10 +11,10 @@ resources:
 - keycloak-setup.yaml
 
 images:
-- name: harbor-core.registry.svc.cluster.local/thinkube/control-backend
-  newTag: 20250409T170716 # backend
-- name: harbor-core.registry.svc.cluster.local/thinkube/control-frontend
-  newTag: 20250409T170716 # frontend
+- name: {{ backend_image_repo }}
+  newTag: {{ image_tag | default('latest') }} # backend
+- name: {{ frontend_image_repo }}
+  newTag: {{ image_tag | default('latest') }} # frontend
 
 commonLabels:
   app.kubernetes.io/name: control-hub

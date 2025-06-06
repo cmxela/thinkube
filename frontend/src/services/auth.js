@@ -49,7 +49,7 @@ const isTokenExpired = () => {
  */
 export const getAuthConfig = async () => {
   try {
-    const response = await axios.get('/api/v1/auth/auth-config');
+    const response = await axios.get('/auth/auth-config');
     return response.data;
   } catch (error) {
     console.error('Failed to get auth config', error);
@@ -77,7 +77,7 @@ export const getAuthorizationUrl = async () => {
  */
 export const handleAuthCallback = async (code) => {
   try {
-    const response = await axios.post('/api/v1/auth/token', {
+    const response = await axios.post('/auth/token', {
       code,
       redirect_uri: `${window.location.origin}/auth/callback`
     });
@@ -100,7 +100,7 @@ export const getUserInfo = async () => {
       throw new Error('No access token available');
     }
     
-    const response = await axios.get('/api/v1/auth/user-info', {
+    const response = await axios.get('/auth/user-info', {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -172,7 +172,7 @@ export const refreshToken = async () => {
   }
   
   try {
-    const response = await axios.post('/api/v1/auth/refresh-token', {
+    const response = await axios.post('/auth/refresh-token', {
       refresh_token: refreshTokenValue
     });
     

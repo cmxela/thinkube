@@ -45,7 +45,15 @@
         state: absent
 
     # Remove Argo Workflows
-    - name: Delete Control build workflow
+    - name: Delete all Control workflows
+      ansible.builtin.shell: |
+        {{ kubectl_bin }} delete workflows -n {{ argo_workflows_namespace }} -l app={{ app_name }} --ignore-not-found=true
+        # Also delete by name pattern in case labels are missing
+        {{ kubectl_bin }} get workflows -n {{ argo_workflows_namespace }} -o name | grep -i "control" | xargs -r {{ kubectl_bin }} delete -n {{ argo_workflows_namespace }}
+      register: workflow_cleanup
+      failed_when: false
+
+    - name: Delete Control build workflow template if exists
       kubernetes.core.k8s:
         kubeconfig: "{{ kubeconfig }}"
         api_version: argoproj.io/v1alpha1
@@ -153,6 +161,31 @@
           status: "False"
         wait_timeout: 300
 
+    # Clean up Harbor images
+    - name: Delete control-backend images from Harbor
+      uri:
+        url: "https://registry.{{ domain_name }}/api/v2.0/projects/thinkube/repositories/control-backend"
+        method: DELETE
+        user: admin
+        password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+        force_basic_auth: yes
+        validate_certs: true
+        status_code: [200, 202, 404]
+      register: backend_image_delete
+      failed_when: false
+
+    - name: Delete control-frontend images from Harbor
+      uri:
+        url: "https://registry.{{ domain_name }}/api/v2.0/projects/thinkube/repositories/control-frontend"
+        method: DELETE
+        user: admin
+        password: "{{ lookup('env', 'ADMIN_PASSWORD') }}"
+        force_basic_auth: yes
+        validate_certs: true
+        status_code: [200, 202, 404]
+      register: frontend_image_delete
+      failed_when: false
+
     # Clean up cloned repository
     - name: Check if cloned repository exists
       ansible.builtin.stat:
@@ -175,10 +208,12 @@
           
           All Control resources have been removed:
           - ArgoCD applications deleted
-          - Argo Workflows templates deleted
+          - Argo Workflows and old runs deleted
           - Redis deployment removed
           - Secrets cleaned up
+          - Harbor images deleted
           - Gitea repository deleted
+          - Local repository cleaned up
           - Namespace deleted
           
           ════════════════════════════════════════════════════════

@@ -113,7 +113,10 @@
 - name: Set fact for client secret
   set_fact:
     keycloak_client_secret: "{{ keycloak_client_secret_response.json.value }}"
-  when: keycloak_client_secret_response is defined and keycloak_client_secret_response.status == 200
+  when: 
+    - is_confidential_client
+    - keycloak_client_secret_response is defined 
+    - keycloak_client_secret_response.status == 200
 
 - name: Debug final results
   debug:

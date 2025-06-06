@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: control-frontend
-  namespace: control-hub
+  namespace: {{ namespace }}
 spec:
   replicas: 2
   selector:
@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: control-frontend
-        image: harbor-core.registry.svc.cluster.local/thinkube/control-frontend:latest
+        image: {{ frontend_image_repo }}:{{ image_tag | default('latest') }}
         imagePullPolicy: Always
         ports:
         - containerPort: 80

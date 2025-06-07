@@ -160,6 +160,7 @@ DASHBOARD_ITEMS = [
 
 
 @router.get("/", response_model=List[DashboardItem])
+@router.get("", response_model=List[DashboardItem])
 async def get_dashboards(request: Request, user_data: dict = Depends(get_current_active_user)):
     """Return all dashboards - no role filtering for now."""
     logger.debug(f"User data received: {user_data}")
@@ -170,6 +171,7 @@ async def get_dashboards(request: Request, user_data: dict = Depends(get_current
 
 
 @router.get("/categories")
+@router.get("/categories/")
 async def get_dashboard_categories(user_data: dict = Depends(get_current_active_user)):
     """Return all dashboard categories."""
     categories = set()

@@ -36,3 +36,6 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+# Export the app for uvicorn
+__all__ = ["app"]

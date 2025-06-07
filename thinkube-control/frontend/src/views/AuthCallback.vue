@@ -40,8 +40,12 @@ export default {
     
     try {
       await handleAuthCallback(code);
-      // Redirect to dashboard after successful authentication
-      this.$router.push('/dashboard');
+      this.message = 'Authentication successful. Redirecting to dashboard...';
+      // Small delay to ensure token is properly stored
+      setTimeout(() => {
+        // Redirect to dashboard after successful authentication
+        this.$router.push('/dashboard');
+      }, 100);
     } catch (error) {
       console.error('Auth callback failed:', error);
       this.message = 'Authentication failed. Redirecting...';

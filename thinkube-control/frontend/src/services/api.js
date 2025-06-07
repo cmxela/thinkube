@@ -7,20 +7,14 @@ const API_URL = '/api/v1';
 // Setup axios defaults
 axios.defaults.baseURL = API_URL;
 
-// With OAuth2 Proxy we don't need to set auth headers manually
-// as the proxy will handle this for us
-
 // Add a response interceptor to handle errors
 axios.interceptors.response.use(
   (response) => {
     return response;
   },
   (error) => {
-    // Handle 401/403 errors (should be rare with OAuth2 Proxy)
-    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-      // Redirect to OAuth2 Proxy auth
-      window.location.href = '/oauth2/start?rd=' + encodeURIComponent(window.location.pathname);
-    }
+    // For auth errors, let the auth service handle them
+    // Don't redirect here as we're using direct Keycloak auth
     return Promise.reject(error);
   }
 );

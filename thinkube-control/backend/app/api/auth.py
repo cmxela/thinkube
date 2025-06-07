@@ -48,17 +48,26 @@ async def get_token(request: TokenRequest):
         logger.error(f"Token exchange error: {e}")
         raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
 
-# This endpoint is no longer used with OAuth2 Proxy
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
 @router.post("/refresh-token", response_model=Token)
-async def refresh_token(refresh_token: str):
-    """Return a dummy token for compatibility."""
-    return Token(
-        access_token="dummy-token-for-compatibility",
-        token_type="Bearer",
-        expires_in=3600,
-        refresh_token="dummy-refresh-token",
-        refresh_expires_in=86400
-    )
+async def refresh_token(request: RefreshTokenRequest):
+    """Refresh access token using refresh token."""
+    from app.core.security import refresh_token_with_keycloak
+    
+    try:
+        token_response = await refresh_token_with_keycloak(request.refresh_token)
+        return Token(
+            access_token=token_response.get("access_token"),
+            token_type="Bearer",
+            expires_in=token_response.get("expires_in", 3600),
+            refresh_token=token_response.get("refresh_token"),
+            refresh_expires_in=token_response.get("refresh_expires_in", 86400)
+        )
+    except Exception as e:
+        logger.error(f"Token refresh error: {e}")
+        raise HTTPException(status_code=401, detail="Failed to refresh token")
 
 @router.get("/user-info", response_model=UserInfo)
 async def get_user_info(current_user: User = Depends(get_current_active_user)):

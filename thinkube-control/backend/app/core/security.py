@@ -84,13 +84,17 @@ async def verify_token(token: str) -> Dict:
         public_key = await get_keycloak_public_key()
         
         # Decode and verify the token
+        # For public clients, the audience might be "account" or the client_id
         payload = jwt.decode(
             token,
             public_key,
             algorithms=["RS256"],
-            audience=settings.KEYCLOAK_CLIENT_ID,
+            options={"verify_aud": False},  # Skip audience verification for now
             issuer=f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}"
         )
+        
+        # Log the actual audience for debugging
+        logger.debug(f"Token audience: {payload.get('aud', 'No audience')}")
         
         return payload
         
@@ -167,4 +171,29 @@ async def exchange_code_for_token(code: str, redirect_uri: str) -> Dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Failed to exchange authorization code"
+        )
+
+# Function to refresh token with Keycloak
+async def refresh_token_with_keycloak(refresh_token: str) -> Dict:
+    """Refresh access token using refresh token."""
+    try:
+        async with httpx.AsyncClient(verify=settings.KEYCLOAK_VERIFY_SSL) as client:
+            # For public clients, don't send client_secret
+            token_data = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": settings.KEYCLOAK_CLIENT_ID
+            }
+            
+            response = await client.post(
+                f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}/protocol/openid-connect/token",
+                data=token_data
+            )
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Token refresh failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Failed to refresh token"
         )

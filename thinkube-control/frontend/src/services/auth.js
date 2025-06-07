@@ -100,6 +100,8 @@ export const getUserInfo = async () => {
       throw new Error('No access token available');
     }
     
+    console.log('Getting user info with token:', token.substring(0, 20) + '...');
+    
     const response = await axios.get('/auth/user-info', {
       headers: {
         'Authorization': `Bearer ${token}`
@@ -110,11 +112,11 @@ export const getUserInfo = async () => {
     return response.data;
   } catch (error) {
     console.error('Failed to get user info', error);
-    // If unauthorized, clear tokens and redirect to login
-    if (error.response && error.response.status === 401) {
-      clearTokens();
-      await redirectToLogin();
-    }
+    console.error('Error response:', error.response?.data);
+    console.error('Error status:', error.response?.status);
+    
+    // Don't automatically redirect on error - let the component handle it
+    // This prevents redirect loops
     throw error;
   }
 };
